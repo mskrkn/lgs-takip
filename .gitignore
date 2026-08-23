@@ -1,0 +1,13 @@
+# Öğrenci kişisel verisi içeren dosyalar - herkese açık yayına dahil edilmemeli
+deneme_sonuclari.csv
+*.csv
+
+# Yardımcı Python betikleri (örnek/gerçek öğrenci verisi gömülü olabilir,
+# uygulamanın çalışması için gerekli değil - tarayıcı IndexedDB kullanıyor)
+*.py
+__pycache__/
+
+# Yerel/geçici
+agentler
+.DS_Store
+Thumbs.db

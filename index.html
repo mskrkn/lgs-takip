@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="description" content="LGS Deneme Takip Sistemi - Öğrenci deneme sınav sonuçlarını takip edin, analiz edin ve tüm cihazlarınızdan yönetin.">
+  <title>LGS Deneme Takip Sistemi</title>
+
+  <!-- PWA & Mobile Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#070913">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LGS Takip">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <!-- Fonts & Styles -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- CDN Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.7/dist/dexie.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Firebase SDK (Compat version for lightweight client-side usage) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+</head>
+<body>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Mobile Sidebar Overlay -->
+  <div class="sidebar-overlay"></div>
+
+  <!-- App Layout -->
+  <div class="app-layout" id="app-layout">
+
+    <!-- ======== SIDEBAR ======== -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">📊</div>
+          <div class="sidebar-logo-text">
+            <h1>LGS Deneme Takip</h1>
+            <p>Öğrenci Performans Sistemi</p>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Ana Menü</div>
+        <div class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">🏠</span>
+          <span>Dashboard</span>
+        </div>
+        <div class="nav-item" data-page="students">
+          <span class="nav-icon">👥</span>
+          <span>Öğrenciler</span>
+        </div>
+        <div class="nav-item" data-page="exams">
+          <span class="nav-icon">📝</span>
+          <span>Denemeler</span>
+        </div>
+
+        <div class="nav-section-title">İşlemler</div>
+        <div class="nav-item" data-page="import">
+          <span class="nav-icon">📥</span>
+          <span>Veri Girişi</span>
+        </div>
+        <div class="nav-item" data-page="reports">
+          <span class="nav-icon">📤</span>
+          <span>Raporlar & Paylaşım</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="pwa-install-btn" class="pwa-install-btn" style="display:none;" onclick="App.triggerPwaInstall()">
+          <span>📲</span> <span>Uygulamayı Yükle</span>
+        </button>
+        <div class="nav-item" data-page="settings">
+          <span class="nav-icon">⚙️</span>
+          <span>Ayarlar & Bulut</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ======== MAIN CONTENT ======== -->
+    <main class="main-content">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-left">
+          <button class="menu-toggle" id="menu-toggle">☰</button>
+          <h2 class="page-title" id="page-title">Dashboard <span>Genel Bakış</span></h2>
+        </div>
+
+        <!-- Header Actions: Search, Sync Status Badge, Mobile Install -->
+        <div class="header-right" style="display:flex;align-items:center;gap:12px">
+          <!-- Cloud Sync Status Badge -->
+          <div id="sync-status-badge" class="sync-status-pill sync-offline" title="Bulut Senkronizasyonu" onclick="App.navigateTo('settings')">
+            <span class="sync-dot"></span>
+            <span>Yerel Mod</span>
+          </div>
+
+          <!-- Global Search -->
+          <div class="header-search">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="global-search" placeholder="Öğrenci ara...">
+            <div class="search-results-dropdown" id="search-dropdown"></div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Page Content -->
+      <div class="page-content">
+        <!-- Dashboard -->
+        <section class="page-section active" id="page-dashboard">
+          <div style="text-align:center;padding:80px 20px">
+            <div class="loading-spinner" style="width:40px;height:40px;border-width:3px;margin:0 auto"></div>
+            <p class="text-muted mt-2">Yükleniyor...</p>
+          </div>
+        </section>
+
+        <!-- Students -->
+        <section class="page-section" id="page-students"></section>
+
+        <!-- Student Profile -->
+        <section class="page-section" id="page-student-profile"></section>
+
+        <!-- Exams -->
+        <section class="page-section" id="page-exams"></section>
+
+        <!-- Exam Detail -->
+        <section class="page-section" id="page-exam-detail"></section>
+
+        <!-- Import / Data Entry -->
+        <section class="page-section" id="page-import"></section>
+
+        <!-- Reports -->
+        <section class="page-section" id="page-reports"></section>
+
+        <!-- Settings -->
+        <section class="page-section" id="page-settings"></section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Mobile Bottom Navigation Bar (Visible only on smartphones) -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+    <button class="mobile-nav-item active" data-page="dashboard">
+      <span class="mobile-nav-icon">🏠</span>
+      <span class="mobile-nav-label">Özet</span>
+    </button>
+    <button class="mobile-nav-item" data-page="students">
+      <span class="mobile-nav-icon">👥</span>
+      <span class="mobile-nav-label">Öğrenciler</span>
+    </button>
+    <button class="mobile-nav-item" data-page="exams">
+      <span class="mobile-nav-icon">📝</span>
+      <span class="mobile-nav-label">Denemeler</span>
+    </button>
+    <button class="mobile-nav-item" data-page="import">
+      <span class="mobile-nav-icon">📥</span>
+      <span class="mobile-nav-label">Giriş</span>
+    </button>
+    <button class="mobile-nav-item" data-page="settings">
+      <span class="mobile-nav-icon">⚙️</span>
+      <span class="mobile-nav-label">Ayarlar</span>
+    </button>
+  </nav>
+
+  <!-- JS Modules (order matters) -->
+  <script src="js/subjectSets.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/analysis.js"></script>
+  <script src="js/optikProfiles.js"></script>
+  <script src="js/import.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('PWA Service Worker registered:', reg.scope))
+          .catch((err) => console.warn('PWA Service Worker registration failed:', err));
+      });
+    }
+  </script>
+
+</body>
+</html>

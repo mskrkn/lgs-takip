@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="50%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#31104b"/>
+    </linearGradient>
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background with rounded corners -->
+  <rect width="512" height="512" rx="115" fill="url(#bgGrad)"/>
+  
+  <!-- Subtle border -->
+  <rect width="504" height="504" x="4" y="4" rx="111" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="6"/>
+
+  <!-- Glowing background chart bar accent -->
+  <g filter="url(#glow)">
+    <!-- Bar 1 -->
+    <rect x="90" y="270" width="60" height="150" rx="14" fill="url(#cyanGrad)"/>
+    <!-- Bar 2 -->
+    <rect x="180" y="200" width="60" height="220" rx="14" fill="url(#primaryGrad)"/>
+    <!-- Bar 3 -->
+    <rect x="270" y="140" width="60" height="280" rx="14" fill="url(#emeraldGrad)"/>
+    <!-- Bar 4 -->
+    <rect x="360" y="90" width="60" height="330" rx="14" fill="url(#primaryGrad)"/>
+  </g>
+
+  <!-- Trend Curve Line -->
+  <path d="M 120 250 Q 210 170 300 120 T 390 70" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+  
+  <!-- Star / Accent at the peak -->
+  <circle cx="390" cy="70" r="14" fill="#ffffff" filter="url(#glow)"/>
+  <circle cx="390" cy="70" r="8" fill="#ec4899"/>
+</svg>
