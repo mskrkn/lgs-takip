@@ -15,6 +15,10 @@ const SUBJECT_SETS = {
     { key: 'matematik', name: 'Matematik', questions: 20, session: 'sayisal', color: '#60a5fa', keywords: ['matematik', 'mat'] },
     { key: 'fen', name: 'Fen Bilimleri', questions: 20, session: 'sayisal', color: '#34d399', keywords: ['fen bilimleri', 'fen bilgisi', 'fen', 'f b', 'fb'] },
   ],
+  // Soru sayıları "form Okutma Ayarları ve örnek formatlar/AXIOMETUMU/
+  // DATASIS_TYT_OMR_83.srt" resmi DATASİS TYT optik form tanımıyla
+  // doğrulandı: Türkçe 40 (satır 0-39), Sosyal 20 (satır 42-61),
+  // Matematik 40 (satır 0-39), Fen 20 (satır 42-61) - toplam 120.
   TYT: [
     { key: 'tyt_turkce', name: 'Türkçe', questions: 40, color: '#f472b6', keywords: ['türkçe', 'turkce', 'türk', 'turk', 'tr'] },
     { key: 'tyt_sosyal', name: 'Sosyal Bilimler', questions: 20, color: '#fbbf24', keywords: ['sosyal bilimler', 'sosyal', 'sos'] },
