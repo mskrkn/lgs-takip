@@ -223,10 +223,20 @@ a:hover {
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
+  transform: translateX(-100%);
   transition: transform var(--transition-normal);
   overflow-y: auto;
   overflow-x: hidden;
   box-shadow: 4px 0 25px rgba(0, 0, 0, 0.4);
+}
+
+/* Sidebar İstenildiğinde açılır (menü butonuyla), varsayılan gizli - tüm ekran boyutlarında */
+.sidebar.open {
+  transform: translateX(0);
+}
+
+.sidebar-overlay.active {
+  display: block;
 }
 
 .sidebar-header {
@@ -401,7 +411,7 @@ a:hover {
 /* ---- Main Content ---- */
 .main-content {
   flex: 1;
-  margin-left: var(--sidebar-width);
+  margin-left: 0;
   min-height: 100vh;
   min-height: 100dvh;
   transition: margin-left var(--transition-normal);
@@ -432,7 +442,7 @@ a:hover {
 }
 
 .menu-toggle {
-  display: none;
+  display: flex;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--bg-glass-border);
   color: var(--text-secondary);
@@ -579,6 +589,130 @@ a:hover {
 .search-result-item .result-info p {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ---- Anasayfa: Büyük Öğrenci Arama ---- */
+.dashboard-search-card {
+  padding: 28px;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.05));
+  border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.dashboard-search-card h3 {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.dashboard-search-card p {
+  margin-bottom: 16px;
+}
+
+.dashboard-search-wrap {
+  position: relative;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.dashboard-search-input {
+  width: 100%;
+  padding: 18px 24px 18px 52px;
+  background: rgba(10, 14, 30, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-family: inherit;
+  outline: none;
+  transition: all var(--transition-fast);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.dashboard-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.dashboard-search-input:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.22), 0 0 24px rgba(99, 102, 241, 0.2);
+}
+
+.dashboard-search-icon {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px;
+  pointer-events: none;
+  color: var(--text-muted);
+}
+
+.dashboard-search-results {
+  max-width: 640px;
+  margin: 14px auto 0;
+  text-align: left;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  background: rgba(13, 18, 38, 0.6);
+}
+
+.dashboard-search-results:empty {
+  margin: 0;
+}
+
+/* ---- Anasayfa: Sınıf Karşılaştırma ---- */
+.class-compare-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.class-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--bg-glass-border);
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.class-compare-row:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.class-compare-row .rank-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 13px;
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-primary-light);
+  flex-shrink: 0;
+}
+
+.class-compare-row .class-compare-bar-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.class-compare-row .class-compare-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent-gradient);
 }
 
 /* ---- Page Content ---- */
@@ -769,6 +903,44 @@ a:hover {
   font-size: 13.5px;
   color: var(--text-muted);
   font-weight: 600;
+}
+
+/* Anasayfa'daki okul istatistikleri artık büyük öğrenci arama ve sınıf
+   karşılaştırma bölümlerine yer açmak için daha küçük/sıkışık görünür. */
+.stats-grid-compact {
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.stats-grid-compact .stat-card {
+  padding: 14px 16px;
+}
+
+.stats-grid-compact .stat-card .stat-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.stats-grid-compact .stat-card .stat-value {
+  font-size: 22px;
+  margin-bottom: 2px;
+}
+
+.stats-grid-compact .stat-card .stat-label {
+  font-size: 12px;
+}
+
+.stats-grid-compact .stat-card .stat-change {
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.stat-card.stat-card-link {
+  cursor: pointer;
 }
 
 .stat-card .stat-change {
@@ -1925,25 +2097,7 @@ tbody tr:last-child td {
    never designed to fit into a short viewport (the "döndürünce görüntü
    kayboluyor" symptom). */
 @media (max-width: 768px), (max-width: 900px) and (orientation: landscape) {
-  .sidebar {
-    transform: translateX(-100%);
-  }
-
-  .sidebar.open {
-    transform: translateX(0);
-  }
-
-  .sidebar-overlay.active {
-    display: block;
-  }
-
-  .main-content {
-    margin-left: 0;
-  }
-
-  .menu-toggle {
-    display: flex;
-  }
+  /* Sidebar gizli/aç-kapa davranışı artık taban stilde tanımlı (tüm ekranlarda ortak) */
 
   .header {
     padding: 0 18px;
@@ -2081,6 +2235,18 @@ tbody tr:last-child td {
   .header-search input {
     font-size: 13px;
     padding: 8px 12px 8px 36px;
+  }
+
+  /* Dar ekranlarda başlık + senkron rozeti + arama kutusu sığmıyordu
+     (yatay taşma). Senkron rozetinin metnini gizleyip sadece durum
+     noktasını bırakmak yeterli alanı açıyor. */
+  .sync-status-pill span:last-child {
+    display: none;
+  }
+
+  .sync-status-pill {
+    padding: 6px;
+    border-radius: 50%;
   }
 
   .page-title {

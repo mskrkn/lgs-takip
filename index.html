@@ -44,11 +44,14 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <!-- Mobile Sidebar Overlay -->
-  <div class="sidebar-overlay"></div>
-
   <!-- App Layout -->
   <div class="app-layout" id="app-layout">
+
+    <!-- Sidebar Overlay: app-layout içinde olmalı, aksi halde .app-layout'un
+         kendi stacking context'i (position:relative + z-index) yüzünden
+         sidebar'ın z-index'i devre dışı kalır ve overlay sidebar tıklamalarını
+         yer (nav öğelerine tıklanamaz hale gelir). -->
+    <div class="sidebar-overlay"></div>
 
     <!-- ======== SIDEBAR ======== -->
     <aside class="sidebar">
@@ -66,7 +69,7 @@
         <div class="nav-section-title">Ana Menü</div>
         <div class="nav-item active" data-page="dashboard">
           <span class="nav-icon">🏠</span>
-          <span>Dashboard</span>
+          <span>Anasayfa</span>
         </div>
         <div class="nav-item" data-page="students">
           <span class="nav-icon">👥</span>
@@ -105,7 +108,7 @@
       <header class="header">
         <div class="header-left">
           <button class="menu-toggle" id="menu-toggle">☰</button>
-          <h2 class="page-title" id="page-title">Dashboard <span>Genel Bakış</span></h2>
+          <h2 class="page-title" id="page-title">Anasayfa <span>Genel Bakış</span></h2>
         </div>
 
         <!-- Header Actions: Search, Sync Status Badge, Mobile Install -->
@@ -163,7 +166,7 @@
   <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
     <button class="mobile-nav-item active" data-page="dashboard">
       <span class="mobile-nav-icon">🏠</span>
-      <span class="mobile-nav-label">Özet</span>
+      <span class="mobile-nav-label">Anasayfa</span>
     </button>
     <button class="mobile-nav-item" data-page="students">
       <span class="mobile-nav-icon">👥</span>
