@@ -428,7 +428,7 @@ const ImportModule = {
 
     container.innerHTML = students.map(s => `
       <div class="search-result-item" onclick="ImportModule.selectManualStudent(${s.id}, '${s.firstName} ${s.lastName}', '${s.schoolNumber}')" style="border-radius:8px;margin-bottom:4px;border:1px solid var(--bg-glass-border);cursor:pointer">
-        <div class="result-avatar">${UI.getInitials(s.firstName, s.lastName)}</div>
+        <div class="result-avatar">${UI.avatar()}</div>
         <div class="result-info">
           <h4>${s.firstName} ${s.lastName}</h4>
           <p>${s.schoolNumber} • ${s.className || 'Sınıf belirtilmemiş'}</p>

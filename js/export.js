@@ -348,7 +348,7 @@ const ExportModule = {
       <div style="max-width:900px;margin:0 auto;padding:32px 20px;">
         <div class="card">
           <div class="profile-header">
-            <div class="profile-avatar">${UI.getInitials(student.firstName, student.lastName)}</div>
+            <div class="profile-avatar">${UI.avatar()}</div>
             <div class="profile-info">
               <h2>${student.firstName} ${student.lastName}</h2>
               <p>Okul No: ${student.schoolNumber} ${student.className ? `• Sınıf: ${student.className}` : ''}</p>

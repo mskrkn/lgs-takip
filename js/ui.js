@@ -119,8 +119,9 @@ const UI = {
     return `<span class="rank-badge">${rank} / ${total}</span>`;
   },
 
-  getInitials(firstName, lastName) {
-    return ((firstName?.[0] || '') + (lastName?.[0] || '')).toUpperCase();
+  // Öğrenci baş harfleri yerine kullanılan, avatar rozetlerine gömülen sade öğrenci ikonu.
+  avatar() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor" style="width:58%;height:58%" aria-hidden="true"><path d="M12 12.75c2.9 0 5.25-2.35 5.25-5.25S14.9 2.25 12 2.25 6.75 4.6 6.75 7.5s2.35 5.25 5.25 5.25Zm0 2.25c-3.5 0-10.5 1.76-10.5 5.25v1.5c0 .41.34.75.75.75h19.5c.41 0 .75-.34.75-.75v-1.5c0-3.49-7-5.25-10.5-5.25Z"/></svg>`;
   },
 
   getSubjectClass(key) {

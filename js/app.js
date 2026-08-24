@@ -350,7 +350,7 @@ const App = {
         }
         results.innerHTML = students.map(s => `
           <div class="search-result-item" onclick="App.navigateTo('student-profile', { studentId: ${s.id} })">
-            <div class="result-avatar">${UI.getInitials(s.firstName, s.lastName)}</div>
+            <div class="result-avatar">${UI.avatar()}</div>
             <div class="result-info">
               <h4>${s.firstName} ${s.lastName}</h4>
               <p>${s.schoolNumber} • ${s.className || '-'}</p>
@@ -713,7 +713,7 @@ const App = {
       { label: 'Okul No', key: 'schoolNumber' },
       { label: 'Ad Soyad', render: (row) => `
         <div style="display:flex;align-items:center;gap:10px">
-          <div class="result-avatar" style="width:32px;height:32px;font-size:11px;border-radius:8px">${UI.getInitials(row.firstName, row.lastName)}</div>
+          <div class="result-avatar" style="width:32px;height:32px;font-size:11px;border-radius:8px">${UI.avatar()}</div>
           <span style="font-weight:600">${row.firstName} ${row.lastName}</span>
         </div>
       `},
@@ -884,7 +884,7 @@ const App = {
       <!-- Profile Header -->
       <div class="card">
         <div class="profile-header">
-          <div class="profile-avatar">${UI.getInitials(student.firstName, student.lastName)}</div>
+          <div class="profile-avatar">${UI.avatar()}</div>
           <div class="profile-info">
             <h2>${student.firstName} ${student.lastName}</h2>
             <p>Okul No: ${student.schoolNumber}</p>
@@ -1624,7 +1624,7 @@ const App = {
       { label: 'Okul No', render: (row) => row.student?.schoolNumber || '-' },
       { label: 'Ad Soyad', render: (row) => `
         <div style="display:flex;align-items:center;gap:8px">
-          <div class="result-avatar" style="width:28px;height:28px;font-size:10px;border-radius:6px">${UI.getInitials(row.student?.firstName, row.student?.lastName)}</div>
+          <div class="result-avatar" style="width:28px;height:28px;font-size:10px;border-radius:6px">${UI.avatar()}</div>
           <strong>${row.student?.firstName || ''} ${row.student?.lastName || ''}</strong>
         </div>
       `},
@@ -1720,7 +1720,7 @@ const App = {
           const found = await db.searchStudents(query);
           resultsDiv.innerHTML = found.map(s => `
             <div class="search-result-item" onclick="ExportModule.generateStudentReport(${s.id})" style="border-radius:8px;margin-bottom:4px;border:1px solid var(--bg-glass-border);cursor:pointer">
-              <div class="result-avatar">${UI.getInitials(s.firstName, s.lastName)}</div>
+              <div class="result-avatar">${UI.avatar()}</div>
               <div class="result-info">
                 <h4>${s.firstName} ${s.lastName}</h4>
                 <p>${s.schoolNumber}</p>
