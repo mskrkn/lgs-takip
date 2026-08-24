@@ -8,6 +8,18 @@
 // Yeni bir okul/firma formatı geldiğinde ya BUILT_IN_PROFILES'a yeni bir
 // profil eklenir, ya da kullanıcı içe aktarma ekranındaki kalibratörle
 // (bkz. import.js) profili kendisi tanımlayıp kalıcı olarak kaydeder.
+//
+// Referans kaynak: proje kök dizinindeki "form Okutma Ayarları ve örnek
+// formatlar/" klasörü, DATASİS marka optik okuyucu formlarının 7 farklı
+// tarayıcı markası (Axiome/Sürat, Bikom, Markwiev, Opscan, Optijet,
+// Scanbook, Sekonic) için dışa aktarılmış resmi alan tanımlarını içerir.
+// Şu an sadece LGS 1./2. Oturum (OMR_92/93) formları kullanıldı (yukarıdaki
+// iki profil). Klasörde ayrıca TYT, AYT, YGS, LYS-1..5, KTT, TEOG, SBS, YDS
+// ve KPSS için de hazır DATASİS form tanımları var - ileride bu sınavlardan
+// birine ait gerçek bir optik dökümü gelirse, önce buradaki ilgili .fmt/.srt
+// dosyasından ders sırası/isimleri doğrulanıp, SONRA gerçek örnek satırlara
+// karşı bayt ofsetleri ölçülerek (asla sadece tarayıcı dosyasından
+// tahmin edilerek değil) yeni bir profil eklenebilir.
 
 const OptikProfiles = {
   // ---- Hazır (built-in) profiller ----
@@ -101,6 +113,19 @@ const OptikProfiles = {
       // bloklarını, oturum=2 satırları (sayısal bölüm) MAT/FEN bloklarını
       // taşıyor - konumlar LGS legacy profiliyle bire bir aynı (aynı optik
       // altyapısının farklı bir okul başlığıyla dökümü olduğu anlaşılıyor).
+      //
+      // Ek doğrulama (2026): "form Okutma Ayarları ve örnek formatlar/"
+      // klasöründeki resmi DATASİS form tanımları (aynı OMR_92/OMR_93
+      // formu için 3 bağımsız tarayıcı markası - Bikom/.fmt, Optijet/.FMT,
+      // Sürat-Axiome/.srt - kodlaması) ders SIRASI ve isimlerini bire bir
+      // doğruladı: 1.oturum = Türkçe(20, iki 10'luk blok halinde ardışık)
+      // → İnkılap(10) → Din(10) → İngilizce(10); 2.oturum = Matematik(20)
+      // → Fen(20). Bayt ofsetleri yine de gerçek örnek satırlardan ölçülen
+      // değerlerdir (tarayıcı yazılımlarının kendi iç satır/sütun
+      // koordinat sistemi doğrudan dışa aktarım pozisyonuna güvenle
+      // çevrilemiyor - alanlar arası tutarsız/göreli numaralandırma
+      // gözlemlendi), ama artık hangi bloğun hangi derse ait olduğundan
+      // ve blok sırasından resmi kaynakla teyitli olarak eminiz.
       id: 'lgs-iki-oturum-sozel-dosya',
       label: 'LGS Sözel/Sayısal Bölüm (sözel.txt tipi başlık)',
       examType: 'LGS',

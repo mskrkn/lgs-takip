@@ -11,3 +11,8 @@ __pycache__/
 agentler
 .DS_Store
 Thumbs.db
+
+# Üçüncü taraf optik okuyucu tarayıcı yazılımı ayar dosyaları (referans
+# amaçlı tutuluyor, uygulamanın çalışması için gerekli değil, dağıtılmaması
+# daha uygun - bkz. js/optikProfiles.js üstündeki not)
+form Okutma Ayarları ve örnet formatlar/
