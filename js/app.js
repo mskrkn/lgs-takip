@@ -47,7 +47,6 @@ const App = {
     }
 
     this.setupNavigation();
-    this.setupSearch();
     this.setupSidebar();
     await this.navigateTo('dashboard');
   },
@@ -109,6 +108,7 @@ const App = {
       'student-profile': ['Öğrenci Profili', ''],
       exams: ['Denemeler', 'Tüm Denemeler'],
       'exam-detail': ['Deneme Detayı', ''],
+      'class-detail': [data.className ? `${data.className} Sınıfı` : 'Sınıf Detayı', ''],
       import: ['Veri Girişi', 'Manuel & Dosya İle'],
       reports: ['Raporlar', 'Dışa Aktarma & Paylaşım'],
       settings: ['Ayarlar', 'Veri Yönetimi'],
@@ -137,6 +137,9 @@ const App = {
       case 'exam-detail':
         await this.renderExamDetail(data.examId);
         break;
+      case 'class-detail':
+        await this.renderClassDetail(data.className, data.examId);
+        break;
       case 'import':
         await this.renderImport();
         break;
@@ -155,61 +158,6 @@ const App = {
 
   refreshCurrentPage() {
     this.navigateTo(this.currentPage, { studentId: this.currentStudentId });
-  },
-
-  // ---- Search ----
-  setupSearch() {
-    const input = document.getElementById('global-search');
-    const dropdown = document.getElementById('search-dropdown');
-    if (!input || !dropdown) return;
-
-    let timeout;
-    input.addEventListener('input', () => {
-      clearTimeout(timeout);
-      timeout = setTimeout(async () => {
-        const query = input.value.trim();
-        if (query.length < 1) {
-          dropdown.classList.remove('active');
-          return;
-        }
-
-        const students = await db.searchStudents(query);
-        if (students.length === 0) {
-          dropdown.innerHTML = '<div class="search-result-item"><p class="text-muted">Sonuç bulunamadı</p></div>';
-        } else {
-          dropdown.innerHTML = students.map(s => `
-            <div class="search-result-item" data-student-id="${s.id}">
-              <div class="result-avatar">${UI.getInitials(s.firstName, s.lastName)}</div>
-              <div class="result-info">
-                <h4>${s.firstName} ${s.lastName}</h4>
-                <p>${s.schoolNumber} • ${s.className || ''}</p>
-              </div>
-            </div>
-          `).join('');
-        }
-
-        dropdown.classList.add('active');
-      }, 300);
-    });
-
-    dropdown.addEventListener('click', (e) => {
-      const item = e.target.closest('.search-result-item');
-      if (item) {
-        const studentId = parseInt(item.dataset.studentId);
-        if (studentId) {
-          this.navigateTo('student-profile', { studentId });
-          input.value = '';
-          dropdown.classList.remove('active');
-        }
-      }
-    });
-
-    // Close dropdown on outside click
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('.header-search')) {
-        dropdown.classList.remove('active');
-      }
-    });
   },
 
   // ---- Mobile Sidebar ----
@@ -310,7 +258,7 @@ const App = {
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Şube</label>
-            <select class="form-select" id="dash-class-section-select" onchange="App.renderDashboardClassComparison()"></select>
+            <select class="form-select" id="dash-class-section-select" onchange="App.onDashboardClassSectionSelected()"></select>
           </div>
         </div>
         <div id="dash-class-comparison-body"></div>
@@ -467,53 +415,32 @@ const App = {
       sections.add(`${parsed.grade}/${parsed.section}`);
     });
     const sortedSections = [...sections].sort();
-    const prevValue = sectionSelect.value;
     sectionSelect.innerHTML =
-      `<option value="">Tümü (Kademe Karşılaştırması)</option>` +
+      `<option value="">Bir şube seçin (sınıf sayfasına gider)</option>` +
       sortedSections.map(s => `<option value="${s}">${s} Şubesi</option>`).join('');
-    if (sortedSections.includes(prevValue)) sectionSelect.value = prevValue;
 
     await this.renderDashboardClassComparison();
+  },
+
+  // Şube açılır menüsünden bir şube seçilince doğrudan o sınıfın kendi
+  // sayfasına gidilir (öğrenci bazlı karşılaştırma artık orada).
+  onDashboardClassSectionSelected() {
+    const section = document.getElementById('dash-class-section-select')?.value;
+    const examId = parseInt(document.getElementById('dash-class-exam-select')?.value);
+    if (section) {
+      this.navigateTo('class-detail', { className: section, examId });
+    }
   },
 
   async renderDashboardClassComparison() {
     const body = document.getElementById('dash-class-comparison-body');
     const examId = parseInt(document.getElementById('dash-class-exam-select')?.value);
     const grade = document.getElementById('dash-class-grade-select')?.value || '';
-    const section = document.getElementById('dash-class-section-select')?.value || '';
     if (!body || !examId) return;
 
     const rankings = await db.getExamRankings(examId);
 
-    if (section) {
-      // Belirli bir şube seçildi: SADECE o şubenin öğrencileri kendi
-      // aralarında karşılaştırılır (öğretmen sadece kendi sınıfını görür).
-      const classRows = rankings
-        .filter(r => `${this.parseClassName(r.student?.className).grade}/${this.parseClassName(r.student?.className).section}` === section)
-        .sort((a, b) => b.totalNet - a.totalNet);
-
-      if (classRows.length === 0) {
-        body.innerHTML = '<div class="empty-state" style="padding:20px"><p class="text-muted">Bu şubede seçilen denemeye ait sonuç yok</p></div>';
-        return;
-      }
-      const maxNet = classRows[0].totalNet || 1;
-      body.innerHTML = `
-        <h4 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--text-muted)">${section} Şubesi İçi Karşılaştırma (${classRows.length} öğrenci)</h4>
-        ${classRows.map((r, i) => `
-          <div class="class-compare-row" onclick="App.navigateTo('student-profile', { studentId: ${r.studentId} })">
-            <div class="rank-badge">${i + 1}</div>
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.student?.firstName || ''} ${r.student?.lastName || ''}</div>
-              <div class="class-compare-bar-track" style="margin-top:4px"><div class="class-compare-bar-fill" style="width:${Math.max(4, (r.totalNet / maxNet) * 100)}%"></div></div>
-            </div>
-            <div class="font-mono font-bold" style="min-width:52px;text-align:right">${UI.formatNet(r.totalNet)}</div>
-          </div>
-        `).join('')}
-      `;
-      return;
-    }
-
-    // Şube seçilmedi: aynı kademedeki (veya kademe de seçilmediyse tüm)
+    // Şubeler her zaman sadece ORTALAMA net ile karşılaştırılır — başka
     // şubeler sadece ORTALAMA net ile karşılaştırılır — başka sınıfların
     // öğrenci bazlı verisi gösterilmez.
     const byClass = {};
@@ -539,7 +466,7 @@ const App = {
     body.innerHTML = `
       <h4 style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--text-muted)">${grade ? grade + '. Sınıflar Arası' : 'Tüm Kademeler'} Ortalama Net Karşılaştırması</h4>
       ${classAverages.map((c, i) => `
-        <div class="class-compare-row" onclick="document.getElementById('dash-class-section-select').value='${c.cls}'; App.renderDashboardClassComparison();">
+        <div class="class-compare-row" onclick="App.navigateTo('class-detail', { className: '${c.cls}', examId: ${examId} })">
           <div class="rank-badge">${i + 1}</div>
           <div style="flex:1;min-width:0">
             <div style="font-weight:700;font-size:13.5px">${c.cls} <span class="text-muted" style="font-weight:400;font-size:12px">(${c.count} öğrenci)</span></div>
@@ -548,8 +475,183 @@ const App = {
           <div class="font-mono font-bold" style="min-width:52px;text-align:right">${UI.formatNet(c.avg)}</div>
         </div>
       `).join('')}
-      <p class="text-muted" style="font-size:12px;margin-top:8px">💡 Bir satıra tıklayarak o şubenin öğrenci bazlı karşılaştırmasını açabilirsiniz.</p>
+      <p class="text-muted" style="font-size:12px;margin-top:8px">💡 Bir satıra tıklayarak o şubenin kendi sayfasına gidebilirsiniz.</p>
     `;
+  },
+
+  // ---- Sınıf Detay Sayfası ----
+  // Anasayfa'daki sınıf karşılaştırmasından bir şube seçilince buraya gelinir.
+  // Sol: sınıfın sıralaması. Sağ: sadece bu sınıfa ait dikkat edilmesi
+  // gereken öğrenciler. Alt: seçili denemeye göre ders bazlı ortalamalar ve
+  // tüm denemelerdeki sınıf net trendi. Anasayfa'ya dönüş sol menüdeki
+  // "Anasayfa" öğesiyle yapılır.
+  async renderClassDetail(className, examId) {
+    const container = document.getElementById('page-class-detail');
+    if (!className) {
+      container.innerHTML = '<div class="card"><div class="empty-state"><h3>Sınıf seçilmedi</h3><p class="text-muted">Anasayfa\'daki Sınıf Karşılaştırma bölümünden bir şube seçin.</p></div></div>';
+      return;
+    }
+
+    const allExams = await db.getAllExams();
+    const selectedExamId = (examId && allExams.some(e => e.id === examId)) ? examId : (allExams[0]?.id || null);
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <h3 class="card-title"><span class="card-icon">🏫</span> ${className} Sınıfı</h3>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="form-label" style="margin:0;white-space:nowrap">Deneme:</label>
+            <select class="form-select" id="class-detail-exam-select" style="width:auto" onchange="App.onClassDetailExamChange('${className}')">
+              ${allExams.map(e => `<option value="${e.id}" ${selectedExamId === e.id ? 'selected' : ''}>[${EXAM_TYPE_LABELS[e.examType] || 'LGS'}] ${e.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2 mt-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">📋</span> Sınıf Sıralaması</h3></div>
+          <div id="class-detail-ranking"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">🔔</span> Dikkat Edilmesi Gerekenler</h3></div>
+          <div id="class-detail-alerts"></div>
+        </div>
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Ders Bazlı Ortalamalar <span class="text-muted" style="font-weight:400;font-size:12px">(seçili deneme)</span></h3></div>
+        <div class="chart-container" style="height:280px"><canvas id="class-detail-subject-chart"></canvas></div>
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">📈</span> Sınıf Net Trendi <span class="text-muted" style="font-weight:400;font-size:12px">(tüm denemeler)</span></h3></div>
+        <div class="chart-container" style="height:280px"><canvas id="class-detail-trend-chart"></canvas></div>
+      </div>
+    `;
+
+    if (!selectedExamId) {
+      document.getElementById('class-detail-ranking').innerHTML = '<div class="empty-state" style="padding:24px"><p class="text-muted">Henüz deneme sonucu yok</p></div>';
+      return;
+    }
+    await this.renderClassDetailBody(className, selectedExamId);
+  },
+
+  async onClassDetailExamChange(className) {
+    const examId = parseInt(document.getElementById('class-detail-exam-select')?.value);
+    await this.renderClassDetailBody(className, examId);
+  },
+
+  async renderClassDetailBody(className, examId) {
+    const rankingEl = document.getElementById('class-detail-ranking');
+    const alertsEl = document.getElementById('class-detail-alerts');
+    if (!rankingEl || !alertsEl || !examId) return;
+
+    const [rankings, exam, allAlerts] = await Promise.all([
+      db.getExamRankings(examId),
+      db.getExam(examId),
+      db.getAllAlerts(),
+    ]);
+
+    const classRows = rankings
+      .filter(r => r.student?.className === className)
+      .sort((a, b) => b.totalNet - a.totalNet);
+
+    // ---- Sol: sınıf sıralaması ----
+    if (classRows.length === 0) {
+      rankingEl.innerHTML = '<div class="empty-state" style="padding:24px"><p class="text-muted">Bu sınıfın seçilen denemede sonucu yok</p></div>';
+    } else {
+      const maxNet = classRows[0].totalNet || 1;
+      rankingEl.innerHTML = classRows.map((r, i) => `
+        <div class="class-compare-row" onclick="App.navigateTo('student-profile', { studentId: ${r.studentId} })">
+          <div class="rank-badge">${i + 1}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.student?.firstName || ''} ${r.student?.lastName || ''}</div>
+            <div class="class-compare-bar-track" style="margin-top:4px"><div class="class-compare-bar-fill" style="width:${Math.max(4, (r.totalNet / maxNet) * 100)}%"></div></div>
+          </div>
+          <div class="font-mono font-bold" style="min-width:52px;text-align:right">${UI.formatNet(r.totalNet)}</div>
+        </div>
+      `).join('');
+    }
+
+    // ---- Sağ: sadece bu sınıfa ait uyarılar ----
+    const classAlerts = allAlerts.filter(a => a.student?.className === className);
+    if (classAlerts.length === 0) {
+      alertsEl.innerHTML = '<div class="empty-state" style="padding:24px"><p class="text-muted">Bu sınıfta dikkat edilmesi gereken bir durum yok</p></div>';
+    } else {
+      alertsEl.innerHTML = classAlerts.slice(0, 15).map(alert => `
+        <div class="alert-card alert-${alert.type === 'critical' ? 'critical' : alert.type === 'warning' ? 'warning' : 'success'}"
+             onclick="App.navigateTo('student-profile', { studentId: ${alert.student.id} })" style="cursor:pointer">
+          <div class="alert-icon">${alert.type === 'critical' ? '🔴' : alert.type === 'warning' ? '🟠' : '🟢'}</div>
+          <div class="alert-content">
+            <h4>${alert.student.firstName} ${alert.student.lastName}</h4>
+            <p>${alert.subject.name}: ${alert.diff > 0 ? '+' : ''}${alert.diff.toFixed(2)} net (${alert.examName})</p>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // ---- Alt: seçili denemeye göre ders bazlı sınıf ortalamaları ----
+    Analysis.destroyChart('class-detail-subject-chart');
+    const subjectCanvas = document.getElementById('class-detail-subject-chart');
+    if (subjectCanvas && classRows.length > 0) {
+      const subjects = getSubjectsForExam(exam);
+      const averages = {};
+      subjects.forEach(sub => {
+        const vals = classRows.map(r => r.subjects?.[sub.key]?.net).filter(v => v != null);
+        averages[sub.key] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+      });
+      Analysis.renderExamSubjectBarsChart('class-detail-subject-chart', averages, exam.examType);
+    }
+
+    // ---- Alt: tüm denemelerde (aynı türden) sınıf net trendi ----
+    await this.renderClassTrendChart(className, exam?.examType || 'LGS');
+  },
+
+  async renderClassTrendChart(className, examType) {
+    Analysis.destroyChart('class-detail-trend-chart');
+    const canvas = document.getElementById('class-detail-trend-chart');
+    if (!canvas) return;
+
+    const allExams = await db.getAllExams();
+    const matchingExams = [...allExams]
+      .filter(e => (e.examType || 'LGS') === examType)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    const points = [];
+    for (const e of matchingExams) {
+      const rankings = await db.getExamRankings(e.id);
+      const classRows = rankings.filter(r => r.student?.className === className);
+      if (classRows.length > 0) {
+        const avg = classRows.reduce((s, r) => s + r.totalNet, 0) / classRows.length;
+        points.push({ name: e.name, avg: parseFloat(avg.toFixed(2)) });
+      }
+    }
+
+    if (points.length === 0) {
+      canvas.closest('.chart-container').innerHTML = '<div class="empty-state" style="padding:24px"><p class="text-muted">Bu sınıf için yeterli veri yok</p></div>';
+      return;
+    }
+
+    Analysis.chartInstances['class-detail-trend-chart'] = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: points.map(p => p.name),
+        datasets: [{
+          label: `${className} Ortalama Net`,
+          data: points.map(p => p.avg),
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99, 102, 241, 0.12)',
+          borderWidth: 3,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          pointBackgroundColor: '#6366f1',
+        }],
+      },
+      options: Analysis.getChartDefaults(),
+    });
   },
 
   // ---- Students List ----

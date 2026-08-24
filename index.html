@@ -111,19 +111,12 @@
           <h2 class="page-title" id="page-title">Anasayfa <span>Genel Bakış</span></h2>
         </div>
 
-        <!-- Header Actions: Search, Sync Status Badge, Mobile Install -->
+        <!-- Header Actions: Sync Status Badge, Mobile Install -->
         <div class="header-right" style="display:flex;align-items:center;gap:12px">
           <!-- Cloud Sync Status Badge -->
           <div id="sync-status-badge" class="sync-status-pill sync-offline" title="Bulut Senkronizasyonu" onclick="App.navigateTo('settings')">
             <span class="sync-dot"></span>
             <span>Yerel Mod</span>
-          </div>
-
-          <!-- Global Search -->
-          <div class="header-search">
-            <span class="search-icon">🔍</span>
-            <input type="text" id="global-search" placeholder="Öğrenci ara...">
-            <div class="search-results-dropdown" id="search-dropdown"></div>
           </div>
         </div>
       </header>
@@ -149,6 +142,9 @@
 
         <!-- Exam Detail -->
         <section class="page-section" id="page-exam-detail"></section>
+
+        <!-- Class Detail (Sınıf Detayı) -->
+        <section class="page-section" id="page-class-detail"></section>
 
         <!-- Import / Data Entry -->
         <section class="page-section" id="page-import"></section>
