@@ -61,10 +61,11 @@ except ImportError:
 
 try:
     import pdf_question_extractor
-except ImportError:
-    print("\n❌ 'PyMuPDF' kütüphanesi kurulu değil (Soru Havuzu PDF girişi için gerekli).")
+except ImportError as exc:
+    print(f"\n❌ Soru Havuzu PDF girişi için gerekli bir kütüphane kurulu değil ({exc}).")
     print("   Lütfen şu komutu çalıştırıp tekrar deneyin:")
-    print("   pip install PyMuPDF\n")
+    print("   pip install -r requirements.txt")
+    print("   (Taranmış PDF'lerde OCR için ayrıca Tesseract-OCR programının da kurulu olması gerekir.)\n")
     sys.exit(1)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

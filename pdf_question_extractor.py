@@ -10,15 +10,43 @@ server.py bunu question_bank tablosuna 'pending_review' durumuyla yazar;
 öğretmen kırpma sınırlarını ve konu/kazanım/zorluk bilgisini onaylamadan
 hiçbir soru havuza (approved) düşmez.
 
-NOT: PDF'in gerçek metin katmanı olmadığı (taranmış/fotokopi) durumlar
-için bu modül şu an bir şey yapamaz - bkz. proje notları. O senaryo
-ayrı bir OCR adımı gerektirir ve kasıtlı olarak bu ilk sürümün dışında
-bırakılmıştır.
+Taranmış/fotokopi PDF'ler (gerçek metin katmanı olmayan, sayfası tek bir
+resimden ibaret dosyalar) için sayfa bazında Tesseract OCR'a düşer - bkz.
+_ocr_page_lines. Bu sadece metin katmanı BOŞ çıkan sayfalarda çalışır,
+normal dijital PDF'lerde hiçbir OCR maliyeti oluşmaz.
 """
 
+import io
+import os
 import re
 
 import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+
+# Windows'ta Tesseract kurulumu PATH'e girmeyebilir (özellikle sunucu bir
+# arka plan servisi olarak PATH güncellenmeden önce başladıysa) - bilinen
+# kurulum yollarını doğrudan dener, bulamazsa pytesseract'ın kendi PATH
+# aramasına güvenir.
+for _candidate in (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+):
+    if os.path.isfile(_candidate):
+        pytesseract.pytesseract.tesseract_cmd = _candidate
+        break
+
+# Türkçe dil verisi (tur.traineddata) proje içinde tessdata/ altında
+# taşınır - Program Files'a admin hakkı olmadan yazılamadığı ve diğer
+# bilgisayarda da git ile aynı yerde bulunması gerektiği için. Ortam
+# değişkeni ile veriliyor (pytesseract'ın config string'i shlex ile
+# ayrıştırıyor - Windows'taki ters eğik çizgili yollarda tırnak/escape
+# sorunlarına yol açıyor, TESSDATA_PREFIX bunu tamamen atlıyor).
+_TESSDATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tessdata")
+if os.path.isdir(_TESSDATA_DIR):
+    os.environ["TESSDATA_PREFIX"] = _TESSDATA_DIR
+_OCR_LANG = "tur+eng"
+_OCR_DPI = 300
 
 # Soru başlangıcı: "12." veya "1." - noktadan sonra boşluk ya da satır sonu.
 # Not: cevap anahtarındaki "12.D" gibi kalıplarla KARIŞMAMASI için nokta
@@ -29,8 +57,12 @@ _QUESTION_START_RE = re.compile(r"^\s*(\d{1,3})\.(\s|$)")
 _ANSWER_LINE_RE = re.compile(r"^\s*(\d{1,3})\.\s*([A-EÇĞİÖŞÜ])\s*$")
 
 # Sayfa başlığı/altbilgisi gibi neredeyse tam sayfa genişliğindeki bloklar
-# sütun sınırını bozmasın diye sütunlama hesabından hariç tutulur.
-_FULL_WIDTH_BLOCK_RATIO = 0.6
+# sütun sınırını bozmasın diye sütunlama hesabından hariç tutulur. 0.6 gibi
+# düşük bir eşik, tek sütunlu (LGS/TYT değil, düz metin) soru sayfalarında
+# gövde metnini de (gerçek genişliği genelde sayfanın %80-90'ı) yanlışlıkla
+# eler - bu yüzden yalnızca kenardan kenara uzanan gerçekten tam genişlikteki
+# öğeleri (dekoratif başlık/altbilgi şeridi) hedefleyecek kadar yüksek.
+_FULL_WIDTH_BLOCK_RATIO = 0.92
 
 # Kırpma çözünürlüğü (dpi) - ekran önizlemesi için yeterli, dosya boyutu makul.
 _CROP_DPI = 200
@@ -49,13 +81,59 @@ def _page_lines(page):
     return lines
 
 
+def _ocr_page_lines(page, dpi=_OCR_DPI):
+    """Metin katmanı olmayan (taranmış) bir sayfada OCR ile satırları
+    tespit eder - _page_lines ile birebir aynı format (text, line_bbox,
+    block) döner ki _detect_questions/_detect_answer_key_pages hiçbir
+    değişiklik yapmadan kullanabilsin. Koordinatlar OCR piksel uzayından
+    PDF nokta uzayına (dpi/72 ölçeğiyle) çevrilir."""
+    pix = page.get_pixmap(dpi=dpi)
+    img = Image.open(io.BytesIO(pix.tobytes("png")))
+    data = pytesseract.image_to_data(img, lang=_OCR_LANG, output_type=pytesseract.Output.DICT)
+    scale = dpi / 72.0
+
+    line_entries = {}   # (block, par, line) -> {"words": [...], "bbox": [x0,y0,x1,y1]}
+    block_bbox = {}      # block_num -> [x0,y0,x1,y1]
+    for i, word in enumerate(data["text"]):
+        word = word.strip()
+        if not word:
+            continue
+        x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+        x0, y0, x1, y1 = x / scale, y / scale, (x + w) / scale, (y + h) / scale
+
+        bkey = data["block_num"][i]
+        bb = block_bbox.setdefault(bkey, [x0, y0, x1, y1])
+        bb[0] = min(bb[0], x0); bb[1] = min(bb[1], y0)
+        bb[2] = max(bb[2], x1); bb[3] = max(bb[3], y1)
+
+        lkey = (bkey, data["par_num"][i], data["line_num"][i])
+        entry = line_entries.setdefault(lkey, {"words": [], "bbox": [x0, y0, x1, y1], "block": bkey})
+        entry["words"].append(word)
+        lb = entry["bbox"]
+        lb[0] = min(lb[0], x0); lb[1] = min(lb[1], y0)
+        lb[2] = max(lb[2], x1); lb[3] = max(lb[3], y1)
+
+    lines = []
+    for entry in line_entries.values():
+        text = " ".join(entry["words"])
+        lines.append((text, tuple(entry["bbox"]), {"bbox": tuple(block_bbox[entry["block"]])}))
+    return lines
+
+
+def _get_page_lines(page):
+    """Önce gerçek metin katmanını dener; sayfa boş çıkarsa (taranmış/
+    fotokopi PDF) OCR'a düşer. Normal dijital PDF'lerde OCR hiç çalışmaz."""
+    lines = _page_lines(page)
+    return lines if lines else _ocr_page_lines(page)
+
+
 def _detect_answer_key_pages(doc):
     """Bir sayfadaki satırların yarısından fazlası 'N.X' kalıbına uyuyorsa
     (ve en az 5 tane varsa) o sayfa cevap anahtarı sayfası kabul edilir."""
     answer_key = {}
     answer_key_pages = set()
     for pno in range(doc.page_count):
-        lines = _page_lines(doc[pno])
+        lines = _get_page_lines(doc[pno])
         stripped = [t.strip() for t, _, _ in lines if t.strip()]
         if not stripped:
             continue
@@ -84,7 +162,7 @@ def _detect_questions(doc, skip_pages):
         mid = pw / 2
 
         cols = {"L": [], "R": []}
-        for text, bbox, block in _page_lines(page):
+        for text, bbox, block in _get_page_lines(page):
             bx0, by0, bx1, by1 = block["bbox"]
             if (bx1 - bx0) > _FULL_WIDTH_BLOCK_RATIO * pw:
                 continue
