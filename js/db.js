@@ -3,7 +3,7 @@
 // ============================================
 
 const DB_NAME = 'LGSDenemetakipDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 // Ders/sınav türü tanımları artık js/subjectSets.js içinde (SUBJECT_SETS,
 // getSubjectsForExam, LGS_SUBJECTS/TOTAL_QUESTIONS takma adları dahil).
@@ -32,18 +32,33 @@ function normalizeSchoolNo(num) {
   return s;
 }
 
+// Tek harfli şube kodunu Türkçe büyük harfe çevirir (i->İ, ı->I gibi özel durumlar dahil)
+function _formatBranchLetter(branch) {
+  if (branch === 'i' || branch === 'İ') return 'İ';
+  if (branch === 'ı' || branch === 'I') return 'I';
+  return branch.toLocaleUpperCase('tr-TR');
+}
+
 // Helper to normalize class names (e.g. '5/A', '5-A', '5A', '5 A', '5.A', '5_A', '6G', '6/G', '6-G' -> '5/A', '6/G')
 function normalizeClassName(className) {
   if (!className) return '';
   const str = String(className).trim();
-  const match = str.match(/^([0-9]{1,2})\s*[\/\-\.\_\s]?\s*([a-zA-ZğüşıöçĞÜŞİÖÇ])$/i);
-  if (match) {
-    let branch = match[2];
-    if (branch === 'i' || branch === 'İ') branch = 'İ';
-    else if (branch === 'ı' || branch === 'I') branch = 'I';
-    else branch = branch.toLocaleUpperCase('tr-TR');
-    return `${match[1]}/${branch}`;
+
+  // Kompakt biçim: '5/A', '5-A', '5A', '5 A', '5.A', '5_A' vb.
+  const compact = str.match(/^([0-9]{1,2})\s*[\/\-\.\_\s]?\s*([a-zA-ZğüşıöçĞÜŞİÖÇ])$/i);
+  if (compact) {
+    return `${compact[1]}/${_formatBranchLetter(compact[2])}`;
   }
+
+  // Betimleyici biçim (ör. OptikOkuma'nın "Sınıf/Şube" dışa aktarım sütunu):
+  // '12. Sınıf / A Şubesi', '8. Sınıf - B', '9 Sınıf/C Şubesi'
+  const verbose = str.match(/^([0-9]{1,2})\s*\.?\s*s[ıi]n[ıi]f\s*[\/\-]\s*([a-zA-ZğüşıöçĞÜŞİÖÇ0-9]+)\s*(?:şubesi)?\s*$/i);
+  if (verbose) {
+    const branchRaw = verbose[2];
+    const branch = branchRaw.length === 1 ? _formatBranchLetter(branchRaw) : branchRaw.toLocaleUpperCase('tr-TR');
+    return `${verbose[1]}/${branch}`;
+  }
+
   return str.replace(/\s+/g, ' ');
 }
 
@@ -73,6 +88,17 @@ class Database {
       return tx.table('exams').toCollection().modify(exam => {
         if (!exam.examType) exam.examType = 'LGS';
       });
+    });
+
+    // v3: Excel/CSV/PDF içe aktarımı için sütun eşleştirme şablonları. Bir
+    // eşleştirme bir kez kaydedilince, aynı başlıklara sahip sonraki dosyalarda
+    // otomatik uygulanır (optikProfiles'ın Excel/PDF tarafındaki karşılığı).
+    this.db.version(3).stores({
+      students: '++id, schoolNumber, firstName, lastName, className',
+      exams: '++id, name, date, examType',
+      results: '++id, studentId, examId, [studentId+examId]',
+      optikProfiles: '++id, examType, kind, builtIn',
+      columnMappingProfiles: '++id, examType, signature',
     });
   }
 
@@ -153,6 +179,9 @@ class Database {
   _notifyChange() {
     if (typeof SyncModule !== 'undefined' && SyncModule.notifyLocalChange) {
       SyncModule.notifyLocalChange();
+    }
+    if (typeof AdminUsers !== 'undefined' && AdminUsers.scheduleAutoSync) {
+      AdminUsers.scheduleAutoSync();
     }
   }
 
@@ -282,6 +311,7 @@ class Database {
       const blank = sub.questions - correct - wrong;
       const net = parseFloat((correct - wrong / 3).toFixed(2));
       data.subjects[sub.key] = { correct, wrong, blank: Math.max(0, blank), net };
+      if (s.answers) data.subjects[sub.key].answers = s.answers;
     });
 
     let resId;
@@ -421,6 +451,9 @@ class Database {
             const blank = sub.questions - correct - wrong;
             const net = parseFloat((correct - wrong / 3).toFixed(2));
             resultPayload.subjects[sub.key] = { correct, wrong, blank: Math.max(0, blank), net };
+            // Soru bazlı D/Y/B dizisi (yalnızca Optik/TXT içe aktarımından gelir) -
+            // varsa saklanır, konu (kazanım) analizinde kullanılır (bkz. getExamTopicAnalysis)
+            if (s.answers) resultPayload.subjects[sub.key].answers = s.answers;
           });
 
           // Update or add result
@@ -443,6 +476,7 @@ class Database {
       }
     });
 
+    this._notifyChange();
     return { imported, errors };
   }
 
@@ -739,6 +773,99 @@ class Database {
     return averagesMap;
   }
 
+  // ---- Konu (Kazanım) Analizi ----
+  // exam.topicMap (bkz. ImportOptical.loadAnswerKeyExcel) her ders için dizilim
+  // sırasına göre [{dizilim, soruId, kazanim}, ...] tutar; sonuçlardaki
+  // subjects[key].answers (yalnızca Optik/TXT içe aktarımından gelir - bkz.
+  // batchImportResults) ise AYNI SIRADA ['D','Y','B',...] tutar. İkisi index'e
+  // göre eşleştirilerek soru/konu bazlı başarı oranı hesaplanır. topicMap ya
+  // da answers yoksa (Excel/PDF/manuel sonuç girişi, ya da cevap anahtarı hiç
+  // Excel'den yüklenmemiş) analiz yapılamaz - null/hasData:false döner.
+  _buildQuestionStats(exam, results) {
+    const topicMap = exam?.topicMap;
+    if (!topicMap || Object.keys(topicMap).length === 0) return null;
+
+    const questionStats = [];
+    Object.entries(topicMap).forEach(([subjectKey, entries]) => {
+      const sub = SUBJECT_LOOKUP[subjectKey];
+      (entries || []).forEach((entry, idx) => {
+        let correct = 0, wrong = 0, blank = 0, total = 0;
+        results.forEach(r => {
+          const answers = r.subjects?.[subjectKey]?.answers;
+          if (!answers || answers[idx] == null) return;
+          total++;
+          if (answers[idx] === 'D') correct++;
+          else if (answers[idx] === 'Y') wrong++;
+          else if (answers[idx] === 'B') blank++;
+        });
+        if (total === 0) return;
+        questionStats.push({
+          subjectKey,
+          subjectName: sub?.name || subjectKey,
+          subjectColor: sub?.color || '#0D9488',
+          dizilim: entry.dizilim,
+          soruId: entry.soruId,
+          kazanim: entry.kazanim || '(Kazanım belirtilmemiş)',
+          correct, wrong, blank, total,
+          successRate: parseFloat((correct / total * 100).toFixed(1)),
+        });
+      });
+    });
+    return questionStats;
+  }
+
+  _buildTopicStats(questionStats) {
+    const byTopic = new Map();
+    questionStats.forEach(q => {
+      const key = `${q.subjectKey}::${q.kazanim}`;
+      if (!byTopic.has(key)) {
+        byTopic.set(key, { subjectKey: q.subjectKey, subjectName: q.subjectName, subjectColor: q.subjectColor, kazanim: q.kazanim, correct: 0, wrong: 0, blank: 0, total: 0, questionCount: 0 });
+      }
+      const t = byTopic.get(key);
+      t.correct += q.correct; t.wrong += q.wrong; t.blank += q.blank; t.total += q.total; t.questionCount++;
+    });
+
+    return [...byTopic.values()]
+      .map(t => ({ ...t, successRate: parseFloat((t.correct / t.total * 100).toFixed(1)) }))
+      .sort((a, b) => a.successRate - b.successRate);
+  }
+
+  // Sınıf/deneme geneli: bu denemede hangi soru en çok yanlış/boş yapılmış,
+  // hangi konu en az anlaşılmış (bkz. app.js renderExamDetail)
+  async getExamTopicAnalysis(examId) {
+    const [exam, results] = await Promise.all([
+      this.getExam(examId),
+      this.getExamResults(examId),
+    ]);
+    const questionStats = this._buildQuestionStats(exam, results);
+    if (!questionStats) return null;
+    if (questionStats.length === 0) return { hasData: false, questionStats: [], topicStats: [] };
+
+    return {
+      hasData: true,
+      questionStats: [...questionStats].sort((a, b) => a.successRate - b.successRate),
+      topicStats: this._buildTopicStats(questionStats),
+    };
+  }
+
+  // Tek öğrenci + tek deneme: bu öğrencinin bu denemede zayıf olduğu konular
+  // (bkz. app.js renderStudentProfile / onProfileExamChange)
+  async getStudentTopicAnalysis(studentId, examId) {
+    if (!examId) return null;
+    const [exam, result] = await Promise.all([
+      this.getExam(examId),
+      this.getResult(studentId, examId),
+    ]);
+    if (!result) return null;
+    const questionStats = this._buildQuestionStats(exam, [result]);
+    if (!questionStats) return null;
+    if (questionStats.length === 0) return { hasData: false, topicStats: [] };
+
+    // Öğrenci bazında yalnızca tek kişilik veri olduğu için soru listesi yerine
+    // doğrudan konu bazlı özet (en zayıftan güçlüye) daha anlamlı
+    return { hasData: true, topicStats: this._buildTopicStats(questionStats) };
+  }
+
   // Export all data as JSON
   async exportData() {
     const [students, exams, results] = await Promise.all([
@@ -785,6 +912,8 @@ class Database {
         }
       }
     }
+
+    this._notifyChange();
   }
 
   // Clear only all students and their results (keeps exams intact)
@@ -817,6 +946,26 @@ class Database {
 
   async deleteOptikProfile(id) {
     await this.db.optikProfiles.delete(Number(id));
+    this._notifyChange();
+  }
+
+  // ---- Sütun Eşleştirme Şablonları (Excel/CSV/PDF içe aktarımı için) ----
+  async addColumnMappingProfile(profile) {
+    const id = await this.db.columnMappingProfiles.add({
+      ...profile,
+      createdAt: new Date().toISOString(),
+    });
+    this._notifyChange();
+    return id;
+  }
+
+  async getColumnMappingProfiles(examType) {
+    const all = await this.db.columnMappingProfiles.toArray();
+    return examType ? all.filter(p => p.examType === examType) : all;
+  }
+
+  async deleteColumnMappingProfile(id) {
+    await this.db.columnMappingProfiles.delete(Number(id));
     this._notifyChange();
   }
 

@@ -15,7 +15,7 @@
   --bg-card-hover: rgba(26, 36, 69, 0.8);
   --bg-glass: rgba(255, 255, 255, 0.04);
   --bg-glass-border: rgba(255, 255, 255, 0.09);
-  --bg-glass-border-hover: rgba(139, 92, 246, 0.4);
+  --bg-glass-border-hover: rgba(15,118,110, 0.4);
   --bg-input: rgba(13, 18, 38, 0.85);
 
   /* Typography */
@@ -24,17 +24,17 @@
   --text-muted: #94a3b8;
   --text-accent: #38bdf8;
 
-  /* Luminous Accent Gradients */
-  --accent-primary: #6366f1;
-  --accent-primary-light: #818cf8;
-  --accent-secondary: #a855f7;
-  --accent-pink: #ec4899;
+  /* Luminous Accent Gradients — EduPusula marka paleti (teal/ink/sky/amber/rose) */
+  --accent-primary: #14B8A6;
+  --accent-primary-light: #2DD4BF;
+  --accent-secondary: #3B82F6;
+  --accent-pink: #14B8A6;
   --accent-cyan: #06b6d4;
 
-  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
-  --accent-gradient-hover: linear-gradient(135deg, #ec4899 0%, #8b5cf6 50%, #6366f1 100%);
-  --accent-gradient-vivid: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #db2777 100%);
-  --accent-gradient-cyber: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+  --accent-gradient: linear-gradient(135deg, #0F766E 0%, #14B8A6 55%, #3B82F6 100%);
+  --accent-gradient-hover: linear-gradient(135deg, #3B82F6 0%, #14B8A6 55%, #0F766E 100%);
+  --accent-gradient-vivid: linear-gradient(135deg, #0F766E 0%, #14B8A6 50%, #3B82F6 100%);
+  --accent-gradient-cyber: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #14B8A6 100%);
 
   /* Vivid Status Colors */
   --success: #10b981;
@@ -61,6 +61,11 @@
   --info-gradient: linear-gradient(135deg, #0284c7 0%, #0ea5e9 50%, #38bdf8 100%);
   --info-gradient-hover: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 50%, #0284c7 100%);
 
+  /* AI / Akıllı Sistem */
+  --ai-purple: #14B8A6;
+  --ai-purple-light: #2DD4BF;
+  --ai-purple-bg: rgba(20, 184, 166, 0.15);
+
   /* Vivid LGS Subject Colors */
   --color-turkce: #f43f5e;
   --color-turkce-gradient: linear-gradient(135deg, #f43f5e, #fda4af);
@@ -79,8 +84,8 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.65);
-  --shadow-glow: 0 0 35px -5px rgba(99, 102, 241, 0.35);
-  --shadow-glow-pink: 0 0 35px -5px rgba(236, 72, 153, 0.4);
+  --shadow-glow: 0 0 35px -5px rgba(20,184,166, 0.35);
+  --shadow-glow-pink: 0 0 35px -5px rgba(20,184,166, 0.4);
   --shadow-glow-cyan: 0 0 35px -5px rgba(6, 182, 212, 0.35);
   --shadow-glow-success: 0 0 30px -5px rgba(16, 185, 129, 0.4);
   --shadow-glow-danger: 0 0 30px -5px rgba(244, 63, 94, 0.4);
@@ -135,10 +140,10 @@ body::before {
   width: 140%;
   height: 140%;
   background:
-    radial-gradient(circle at 20% 30%, rgba(99, 102, 241, 0.18) 0%, transparent 45%),
-    radial-gradient(circle at 80% 20%, rgba(236, 72, 153, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 20% 30%, rgba(20,184,166, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 80% 20%, rgba(20,184,166, 0.15) 0%, transparent 40%),
     radial-gradient(circle at 50% 85%, rgba(6, 182, 212, 0.14) 0%, transparent 50%),
-    radial-gradient(circle at 75% 70%, rgba(139, 92, 246, 0.16) 0%, transparent 45%);
+    radial-gradient(circle at 75% 70%, rgba(15,118,110, 0.16) 0%, transparent 45%);
   animation: ambientMesh 18s ease-in-out infinite alternate;
   pointer-events: none;
   z-index: 0;
@@ -175,7 +180,7 @@ a {
 
 a:hover {
   color: var(--accent-primary-light);
-  text-shadow: 0 0 12px rgba(99, 102, 241, 0.5);
+  text-shadow: 0 0 12px rgba(20,184,166, 0.5);
 }
 
 /* Modern Glow Scrollbar */
@@ -189,14 +194,14 @@ a:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4));
+  background: linear-gradient(180deg, rgba(20,184,166, 0.4), rgba(59,130,246, 0.4));
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #6366f1, #a855f7);
-  box-shadow: 0 0 10px rgba(168, 85, 247, 0.6);
+  background: linear-gradient(180deg, #0D9488, #3B82F6);
+  box-shadow: 0 0 10px rgba(59,130,246, 0.6);
 }
 
 /* ---- Layout ---- */
@@ -216,7 +221,7 @@ a:hover {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 100;
+  z-index: 1060;
   background: rgba(11, 16, 34, 0.88);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -252,7 +257,7 @@ a:hover {
   left: 20px;
   right: 20px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.4), transparent);
+  background: linear-gradient(90deg, transparent, rgba(20,184,166, 0.4), transparent);
 }
 
 .sidebar-logo {
@@ -272,7 +277,7 @@ a:hover {
   align-items: center;
   justify-content: center;
   font-size: 22px;
-  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.45);
+  box-shadow: 0 4px 20px rgba(20,184,166, 0.45);
   position: relative;
   transition: transform var(--transition-spring);
 }
@@ -294,9 +299,10 @@ a:hover {
 }
 
 .sidebar-logo-text h1 {
+  font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
   font-size: 16px;
   font-weight: 800;
-  background: linear-gradient(135deg, #ffffff 0%, #c4b5fd 60%, #f472b6 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #5eead4 60%, #7dd3fc 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -356,7 +362,7 @@ a:hover {
 }
 
 .nav-item:hover {
-  background: rgba(99, 102, 241, 0.12);
+  background: rgba(20,184,166, 0.12);
   color: #ffffff;
   transform: translateX(4px);
 }
@@ -366,10 +372,10 @@ a:hover {
 }
 
 .nav-item.active {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.12));
+  background: linear-gradient(90deg, rgba(20,184,166, 0.22), rgba(59,130,246, 0.12));
   color: #ffffff;
   font-weight: 700;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.18), inset 0 0 0 1px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 4px 16px rgba(20,184,166, 0.18), inset 0 0 0 1px rgba(20,184,166, 0.3);
 }
 
 .nav-item.active::before {
@@ -400,7 +406,7 @@ a:hover {
 
 /* Sidebar footer */
 .sidebar-footer {
-  padding: 16px 14px;
+  padding: 16px 14px calc(16px + env(safe-area-inset-bottom, 0));
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -454,17 +460,18 @@ a:hover {
 }
 
 .menu-toggle:hover {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(20,184,166, 0.2);
   color: #ffffff;
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: rgba(20,184,166, 0.4);
   transform: scale(1.05);
 }
 
 .page-title {
+  font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.5px;
-  background: linear-gradient(135deg, #ffffff 0%, #e2e8f0 70%, #a5b4fc 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #e2e8f0 70%, #5eead4 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -505,8 +512,8 @@ a:hover {
 
 .header-search input:focus {
   background: rgba(22, 32, 64, 0.9);
-  border-color: #818cf8;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25), 0 0 20px rgba(99, 102, 241, 0.2);
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgba(20,184,166, 0.25), 0 0 20px rgba(20,184,166, 0.2);
 }
 
 .header-search .search-icon {
@@ -532,13 +539,13 @@ a:hover {
   right: 0;
   background: rgba(13, 18, 38, 0.96);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  border: 1px solid rgba(15,118,110, 0.3);
   border-radius: var(--border-radius);
   max-height: 380px;
   overflow-y: auto;
   z-index: 200;
   display: none;
-  box-shadow: var(--shadow-lg), 0 0 30px rgba(99, 102, 241, 0.2);
+  box-shadow: var(--shadow-lg), 0 0 30px rgba(20,184,166, 0.2);
 }
 
 .search-results-dropdown.active {
@@ -561,7 +568,7 @@ a:hover {
 }
 
 .search-result-item:hover {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.08));
+  background: linear-gradient(90deg, rgba(20,184,166, 0.18), rgba(59,130,246, 0.08));
   padding-left: 20px;
 }
 
@@ -577,7 +584,7 @@ a:hover {
   font-weight: 800;
   color: white;
   flex-shrink: 0;
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 2px 10px rgba(20,184,166, 0.35);
 }
 
 .search-result-item .result-info h4 {
@@ -595,8 +602,8 @@ a:hover {
 .dashboard-search-card {
   padding: 28px;
   text-align: center;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.05));
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.1), rgba(15,118,110, 0.05));
+  border: 1px solid rgba(20,184,166, 0.25);
 }
 
 .dashboard-search-card h3 {
@@ -634,8 +641,8 @@ a:hover {
 }
 
 .dashboard-search-input:focus {
-  border-color: #818cf8;
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.22), 0 0 24px rgba(99, 102, 241, 0.2);
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 4px rgba(20,184,166, 0.22), 0 0 24px rgba(20,184,166, 0.2);
 }
 
 .dashboard-search-icon {
@@ -683,8 +690,8 @@ a:hover {
 }
 
 .class-compare-row:hover {
-  background: rgba(99, 102, 241, 0.1);
-  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(20,184,166, 0.1);
+  border-color: rgba(20,184,166, 0.3);
 }
 
 .class-compare-row .rank-badge {
@@ -696,7 +703,7 @@ a:hover {
   justify-content: center;
   font-weight: 800;
   font-size: 13px;
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(20,184,166, 0.15);
   color: var(--accent-primary-light);
   flex-shrink: 0;
 }
@@ -768,7 +775,7 @@ a:hover {
 }
 
 .card:hover {
-  border-color: rgba(139, 92, 246, 0.35);
+  border-color: rgba(15,118,110, 0.35);
   box-shadow: var(--shadow-glow), var(--shadow-lg);
   transform: translateY(-3px);
 }
@@ -781,6 +788,7 @@ a:hover {
 }
 
 .card-title {
+  font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
   font-size: 16.5px;
   font-weight: 800;
   display: flex;
@@ -795,7 +803,7 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  filter: drop-shadow(0 2px 8px rgba(99, 102, 241, 0.4));
+  filter: drop-shadow(0 2px 8px rgba(20,184,166, 0.4));
 }
 
 /* ---- Animated Stat Cards ---- */
@@ -833,8 +841,8 @@ a:hover {
 
 .stat-card:hover {
   transform: translateY(-5px) scale(1.01);
-  border-color: rgba(168, 85, 247, 0.4);
-  box-shadow: 0 12px 35px -8px rgba(99, 102, 241, 0.35), var(--shadow-lg);
+  border-color: rgba(59,130,246, 0.4);
+  box-shadow: 0 12px 35px -8px rgba(20,184,166, 0.35), var(--shadow-lg);
 }
 
 .stat-card:hover::before {
@@ -860,10 +868,10 @@ a:hover {
 }
 
 .stat-card .stat-icon.purple {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
-  color: #c4b5fd;
-  border: 1px solid rgba(168, 85, 247, 0.3);
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.25), rgba(59,130,246, 0.25));
+  color: #5eead4;
+  border: 1px solid rgba(59,130,246, 0.3);
+  box-shadow: 0 4px 15px rgba(20,184,166, 0.25);
 }
 
 .stat-card .stat-icon.green {
@@ -1025,7 +1033,7 @@ tbody tr {
 }
 
 tbody tr:hover {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.12), rgba(168, 85, 247, 0.06));
+  background: linear-gradient(90deg, rgba(20,184,166, 0.12), rgba(59,130,246, 0.06));
 }
 
 tbody tr:last-child td {
@@ -1089,34 +1097,34 @@ tbody tr:last-child td {
 
 /* ---- Primary Button: Vivid Moving Rainbow / Violet Gradient ---- */
 .btn-primary {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 35%, #ec4899 70%, #6366f1 100%);
+  background: linear-gradient(135deg, #0F766E 0%, #14B8A6 35%, #3B82F6 70%, #0F766E 100%);
   background-size: 300% 100%;
   color: #ffffff;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.45), 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 15px rgba(20,184,166, 0.45), 0 1px 3px rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.15);
 }
 
 .btn-primary:hover {
   background-position: 100% 0;
-  box-shadow: 0 8px 25px rgba(236, 72, 153, 0.55), 0 0 35px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 8px 25px rgba(20,184,166, 0.55), 0 0 35px rgba(20,184,166, 0.4);
   transform: translateY(-2px) scale(1.02);
   color: #ffffff;
 }
 
 /* ---- Secondary Button: Glass with Neon Shift ---- */
 .btn-secondary {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);
-  color: #c4b5fd;
-  border: 1px solid rgba(139, 92, 246, 0.35);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.15) 0%, rgba(59,130,246, 0.15) 100%);
+  color: #5eead4;
+  border: 1px solid rgba(15,118,110, 0.35);
   backdrop-filter: blur(8px);
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 2px 10px rgba(20,184,166, 0.15);
 }
 
 .btn-secondary:hover {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.35) 0%, rgba(236, 72, 153, 0.35) 100%);
-  border-color: rgba(236, 72, 153, 0.6);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.35) 0%, rgba(20,184,166, 0.35) 100%);
+  border-color: rgba(20,184,166, 0.6);
   color: #ffffff;
-  box-shadow: 0 6px 20px rgba(168, 85, 247, 0.4), 0 0 25px rgba(236, 72, 153, 0.25);
+  box-shadow: 0 6px 20px rgba(59,130,246, 0.4), 0 0 25px rgba(20,184,166, 0.25);
   transform: translateY(-2px) scale(1.02);
 }
 
@@ -1129,10 +1137,10 @@ tbody tr:last-child td {
 }
 
 .btn-ghost:hover {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%);
   color: #ffffff;
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 4px 18px rgba(99, 102, 241, 0.25);
+  border-color: rgba(20,184,166, 0.4);
+  box-shadow: 0 4px 18px rgba(20,184,166, 0.25);
   transform: translateY(-2px);
 }
 
@@ -1239,8 +1247,8 @@ tbody tr:last-child td {
 .form-input:focus,
 .form-select:focus {
   background: rgba(18, 26, 56, 0.95);
-  border-color: #818cf8;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25), 0 0 20px rgba(99, 102, 241, 0.2);
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgba(20,184,166, 0.25), 0 0 20px rgba(20,184,166, 0.2);
 }
 
 .form-input::placeholder {
@@ -1260,6 +1268,59 @@ tbody tr:last-child td {
   background: #0d1224;
   color: var(--text-primary);
   padding: 10px;
+}
+
+/* .form-control: eski/eklenti sayfalarda (adminUsers.js, ogretmen.html,
+   veli.html, Firebase ayarları) kullanılan genel giriş/seçim class'ı -
+   .form-input / .form-select ile aynı görünümü paylaşır. */
+.form-control {
+  width: 100%;
+  padding: 11px 16px;
+  background: rgba(14, 20, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  transition: all var(--transition-fast);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+}
+
+.form-control:focus {
+  background: rgba(18, 26, 56, 0.95);
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgba(20,184,166, 0.25), 0 0 20px rgba(20,184,166, 0.2);
+}
+
+.form-control::placeholder {
+  color: var(--text-muted);
+}
+
+select.form-control {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 40px;
+}
+
+select.form-control option {
+  background: #0d1224;
+  color: var(--text-primary);
+  padding: 10px;
+}
+
+/* Kullanıcılar sayfası (öğretmen/veli/öğrenci hesap oluşturma) - okunurluk
+   için etiket ve alan fontları biraz daha büyük. */
+#page-users .form-label {
+  font-size: 15px;
+}
+
+#page-users .form-control {
+  font-size: 16px;
+  padding: 13px 16px;
 }
 
 .form-row {
@@ -1307,14 +1368,14 @@ tbody tr:last-child td {
 
 .tab-btn:hover {
   color: #ffffff;
-  background: rgba(99, 102, 241, 0.12);
+  background: rgba(20,184,166, 0.12);
 }
 
 .tab-btn.active {
   background: var(--accent-gradient);
   background-size: 200% auto;
   color: #ffffff;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4), 0 0 25px rgba(168, 85, 247, 0.3);
+  box-shadow: 0 4px 15px rgba(20,184,166, 0.4), 0 0 25px rgba(59,130,246, 0.3);
 }
 
 .tab-content {
@@ -1367,10 +1428,10 @@ tbody tr:last-child td {
 }
 
 .badge-purple {
-  background: rgba(168, 85, 247, 0.2);
-  color: #c4b5fd;
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.2);
+  background: rgba(59,130,246, 0.2);
+  color: #5eead4;
+  border: 1px solid rgba(59,130,246, 0.35);
+  box-shadow: 0 2px 8px rgba(59,130,246, 0.2);
 }
 
 /* Rank Badges */
@@ -1477,28 +1538,28 @@ tbody tr:last-child td {
 
 /* ---- Upload / Drop Zone with Pulsing Neon Wave ---- */
 .drop-zone {
-  border: 2px dashed rgba(139, 92, 246, 0.4);
+  border: 2px dashed rgba(15,118,110, 0.4);
   border-radius: var(--border-radius-lg);
   padding: 52px 36px;
   text-align: center;
   cursor: pointer;
   transition: all var(--transition-normal);
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.04) 0%, rgba(168, 85, 247, 0.04) 100%);
+  background: linear-gradient(135deg, rgba(20,184,166, 0.04) 0%, rgba(59,130,246, 0.04) 100%);
   position: relative;
 }
 
 .drop-zone:hover,
 .drop-zone.dragover {
-  border-color: #a855f7;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(236, 72, 153, 0.12) 100%);
-  box-shadow: 0 0 35px rgba(168, 85, 247, 0.3);
+  border-color: #3B82F6;
+  background: linear-gradient(135deg, rgba(20,184,166, 0.12) 0%, rgba(20,184,166, 0.12) 100%);
+  box-shadow: 0 0 35px rgba(59,130,246, 0.3);
   transform: scale(1.01);
 }
 
 .drop-zone .drop-icon {
   font-size: 52px;
   margin-bottom: 18px;
-  filter: drop-shadow(0 4px 15px rgba(99, 102, 241, 0.4));
+  filter: drop-shadow(0 4px 15px rgba(20,184,166, 0.4));
   animation: floatIcon 3s ease-in-out infinite;
 }
 
@@ -1517,6 +1578,48 @@ tbody tr:last-child td {
 .drop-zone p {
   font-size: 13.5px;
   color: var(--text-muted);
+}
+
+/* ---- Akıllı Veri Tanıma: Bulunan Bilgiler özeti (bkz. importCore.js renderFoundFieldsSummary) ---- */
+.found-fields-summary {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: var(--border-radius);
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+}
+
+.found-fields-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 10px;
+}
+
+.found-fields-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.found-field-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.found-field-chip.found {
+  background: var(--success-bg);
+  color: var(--success-light);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.found-field-chip.missing {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-muted);
+  border: 1px solid var(--bg-glass-border);
 }
 
 /* ---- Modern Glass Modal ---- */
@@ -1542,7 +1645,7 @@ tbody tr:last-child td {
 
 .modal {
   background: linear-gradient(135deg, rgba(19, 27, 54, 0.95) 0%, rgba(13, 18, 38, 0.95) 100%);
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  border: 1px solid rgba(15,118,110, 0.3);
   border-radius: var(--border-radius-xl);
   width: 90%;
   max-width: 660px;
@@ -1551,7 +1654,7 @@ tbody tr:last-child td {
   overflow-y: auto;
   transform: scale(0.92) translateY(20px);
   transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: var(--shadow-lg), 0 0 50px rgba(99, 102, 241, 0.25);
+  box-shadow: var(--shadow-lg), 0 0 50px rgba(20,184,166, 0.25);
 }
 
 .modal-overlay.active .modal {
@@ -1706,7 +1809,7 @@ tbody tr:last-child td {
   font-size: 64px;
   margin-bottom: 18px;
   opacity: 0.7;
-  filter: drop-shadow(0 4px 20px rgba(99, 102, 241, 0.3));
+  filter: drop-shadow(0 4px 20px rgba(20,184,166, 0.3));
   animation: floatIcon 3.5s ease-in-out infinite;
 }
 
@@ -1724,6 +1827,88 @@ tbody tr:last-child td {
   max-width: 480px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* ---- Ogrenci Arama Hero (Admin > Ogrenciler) ---- */
+.student-search-hero {
+  text-align: center;
+  padding: 52px 24px 40px;
+}
+
+.student-search-hero-icon {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  border-radius: 26px;
+  background: var(--accent-gradient);
+  background-size: 200% 200%;
+  animation: gradientShift 6s ease infinite alternate, floatIcon 3.5s ease-in-out infinite;
+  box-shadow: 0 10px 36px -8px rgba(20,184,166, 0.5);
+}
+
+.student-search-hero-icon::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 32px;
+  background: var(--accent-gradient);
+  z-index: -1;
+  opacity: 0.5;
+  filter: blur(14px);
+  animation: pulseGlow 3s ease-in-out infinite;
+}
+
+.student-search-hero h2 {
+  font-size: 21px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.student-search-hero p {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 460px;
+  margin: 0 auto 26px;
+}
+
+.student-search-box {
+  max-width: 460px;
+  margin: 0 auto 16px;
+  position: relative;
+}
+
+.student-search-box input {
+  width: 100%;
+  padding: 14px 20px 14px 44px;
+  font-size: 15px;
+  border-radius: 14px;
+}
+
+.student-search-box .search-icon-inline {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.student-search-manual {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.student-search-manual select {
+  min-width: 150px;
 }
 
 /* ---- Student Profile ---- */
@@ -1750,7 +1935,7 @@ tbody tr:last-child td {
   font-size: 32px;
   font-weight: 900;
   color: white;
-  box-shadow: 0 8px 30px rgba(99, 102, 241, 0.45);
+  box-shadow: 0 8px 30px rgba(20,184,166, 0.45);
   position: relative;
   flex-shrink: 0;
 }
@@ -1821,8 +2006,8 @@ tbody tr:last-child td {
 }
 
 .filter-select:focus {
-  border-color: #818cf8;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgba(20,184,166, 0.25);
 }
 
 /* ---- Alert Cards ---- */
@@ -1885,6 +2070,305 @@ tbody tr:last-child td {
 .alert-card .alert-content p {
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* ---- "Bugün Ne Yapmalıyım?" - Karşılama Başlığı ---- */
+.greeting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.greeting-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.greeting-sub {
+  font-size: 14px;
+  color: var(--text-muted);
+  max-width: 560px;
+}
+
+.greeting-date {
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+
+/* ---- Öncelik Kartları (EduPusula Öneriyor) ---- */
+.priority-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.priority-card {
+  padding: 20px 22px;
+  border-radius: var(--border-radius);
+  border-left: 4px solid;
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.priority-card.priority-critical {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.15) 0%, rgba(13, 18, 38, 0.85) 100%);
+  border-color: var(--danger);
+}
+
+.priority-card.priority-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(13, 18, 38, 0.85) 100%);
+  border-color: var(--warning);
+}
+
+.priority-card.priority-success {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(13, 18, 38, 0.85) 100%);
+  border-color: var(--success);
+}
+
+.priority-card .priority-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.priority-card.priority-critical .priority-label { color: var(--danger-light); }
+.priority-card.priority-warning .priority-label { color: var(--warning-light); }
+.priority-card.priority-success .priority-label { color: var(--success-light); }
+
+.priority-card p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.priority-card .priority-action {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: 0;
+  margin-top: auto;
+  font-family: inherit;
+}
+
+.priority-card .priority-action:hover { text-decoration: underline; }
+
+/* ---- Konu Başarı Haritası (heat map) + Edu AI yorumu ---- */
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.heatmap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--bg-glass);
+}
+
+.heatmap-topic {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.heatmap-score {
+  font-weight: 800;
+  font-size: 13.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  margin-left: 10px;
+}
+
+.heatmap-score.hm-red { background: var(--danger-bg); color: var(--danger-light); }
+.heatmap-score.hm-yellow { background: var(--warning-bg); color: var(--warning-light); }
+.heatmap-score.hm-green { background: var(--success-bg); color: var(--success-light); }
+
+.ai-comment-box {
+  background: linear-gradient(135deg, rgba(15,118,110, 0.15) 0%, rgba(13, 18, 38, 0.85) 100%);
+  border: 1px solid rgba(15,118,110, 0.35);
+  border-radius: var(--border-radius);
+  padding: 20px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.ai-comment-box .ai-comment-label {
+  color: var(--ai-purple-light);
+  font-weight: 800;
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ---- Öğrenci Radarı ---- */
+.radar-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.radar-column {
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--border-radius);
+  padding: 16px;
+}
+
+.radar-column h4 {
+  font-size: 13px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.radar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.radar-item:hover { background: rgba(255, 255, 255, 0.06); }
+
+/* ---- Genel Başarı Skoru (Bölüm 9) + Başarı Rozetleri (Bölüm 14) ---- */
+.score-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 4px;
+  flex-wrap: wrap;
+}
+
+.score-number {
+  font-size: 42px;
+  font-weight: 800;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.score-sub {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.score-growth {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.score-growth.up { color: #4ade80; }
+.score-growth.down { color: #fb7185; }
+
+.badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.badge-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(20,184,166, 0.12);
+  border: 1px solid rgba(20,184,166, 0.3);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* ---- Edu AI - Hazır Sorular ---- */
+.ai-quick-questions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.ai-quick-btn {
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  transition: all var(--transition-fast);
+}
+
+.ai-quick-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(15,118,110, 0.4);
+  background: rgba(15,118,110, 0.1);
+}
+
+/* ---- Placeholder Sayfa ("Yakında") ---- */
+.placeholder-page {
+  text-align: center;
+  padding: 80px 20px;
+}
+
+.placeholder-page .placeholder-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.placeholder-page h3 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+.placeholder-page p {
+  color: var(--text-muted);
+  font-size: 14px;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .heatmap-grid { grid-template-columns: 1fr; }
+  .greeting-header { flex-direction: column; }
 }
 
 /* ---- Chart Container ---- */
@@ -1951,11 +2435,11 @@ tbody tr:last-child td {
   display: inline-block;
   width: 24px;
   height: 24px;
-  border: 3px solid rgba(99, 102, 241, 0.2);
-  border-top-color: #a855f7;
+  border: 3px solid rgba(20,184,166, 0.2);
+  border-top-color: #3B82F6;
   border-radius: 50%;
   animation: spin 0.75s linear infinite;
-  box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);
+  box-shadow: 0 0 15px rgba(59,130,246, 0.4);
 }
 
 .loading-overlay {
@@ -2033,7 +2517,7 @@ tbody tr:last-child td {
   inset: 0;
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(4px);
-  z-index: 99;
+  z-index: 1050;
 }
 
 /* ---- Keyframe Animations ---- */
@@ -2308,6 +2792,7 @@ tbody tr:last-child td {
 .mt-1 { margin-top: 8px; }
 .mt-2 { margin-top: 16px; }
 .mt-3 { margin-top: 24px; }
+.mt-4 { margin-top: 32px; }
 .mb-1 { margin-bottom: 8px; }
 .mb-2 { margin-bottom: 16px; }
 .mb-3 { margin-bottom: 24px; }
@@ -2381,6 +2866,17 @@ tbody tr:last-child td {
   background: #f43f5e;
 }
 
+.sync-ok {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+.sync-ok .sync-dot {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulse 2s ease-in-out infinite;
+}
+
 /* ---- PWA Install Button ---- */
 .pwa-install-btn {
   display: flex;
@@ -2397,12 +2893,12 @@ tbody tr:last-child td {
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 4px 15px rgba(20,184,166, 0.4);
   transition: all var(--transition-normal);
 }
 .pwa-install-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+  box-shadow: 0 6px 20px rgba(20,184,166, 0.6);
 }
 
 /* ---- Mobile Bottom Navigation Bar ---- */
@@ -2449,7 +2945,7 @@ tbody tr:last-child td {
 }
 
 .mobile-nav-item.active {
-  color: #818cf8;
+  color: #2dd4bf;
 }
 
 .mobile-nav-item.active .mobile-nav-icon {

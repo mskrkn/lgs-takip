@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="description" content="🧭 EduPusula - Başarının Yönünü Keşfet. Öğrenci deneme sonuçlarını analiz edin, gelişimi takip edin ve doğru hedeflere ilerleyin.">
+  <title>🧭 EduPusula - Başarının Yönünü Keşfet</title>
+
+  <!-- PWA & Mobile Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0F172A">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EduPusula">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Landing CSS -->
+  <link rel="stylesheet" href="css/landing.css">
+</head>
+<body>
+  <!-- ========== NAVBAR ========== -->
+  <nav class="navbar">
+    <div class="navbar-container">
+      <!-- Logo -->
+      <div class="navbar-logo">
+        <div class="navbar-logo-icon">🧭</div>
+        <div class="navbar-logo-text">
+          <span class="navbar-logo-main">EduPusula</span>
+        </div>
+      </div>
+
+      <!-- Menu Buton (Mobile) -->
+      <button class="navbar-toggle" id="navbar-toggle">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      <!-- Menü -->
+      <ul class="navbar-menu" id="navbar-menu">
+        <li><a href="#home" class="navbar-link">Ana Sayfa</a></li>
+        <li><a href="#how-works" class="navbar-link">Nasıl Çalışır?</a></li>
+        <li><a href="#features" class="navbar-link">Özellikler</a></li>
+        <li><a href="#audience" class="navbar-link">Kimler İçin?</a></li>
+      </ul>
+
+      <!-- Butonlar -->
+      <div class="navbar-actions">
+        <a href="#login" class="btn-secondary" data-login-trigger>Giriş Yap</a>
+        <a href="#hero" class="btn-primary">🚀 EduPusula'yı Keşfet</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ========== HERO SECTION ========== -->
+  <section class="hero" id="hero">
+    <div class="hero-container">
+      <!-- Sol Taraf -->
+      <div class="hero-content">
+        <div class="hero-badge">
+          🧭 Eğitimde Akıllı Analiz
+        </div>
+
+        <h1 class="hero-title">
+          Başarının <span class="hero-accent">Yönünü Keşfet</span>
+        </h1>
+
+        <p class="hero-description">
+          EduPusula, deneme sonuçlarını anlamlı analizlere dönüştürerek öğrencilerin gelişimini takip etmenize ve doğru hedeflere yönelmenize yardımcı olur.
+        </p>
+
+        <div class="hero-buttons">
+          <a href="#" class="btn-primary btn-lg">🚀 EduPusula'yı Keşfet</a>
+          <a href="#how-works" class="btn-secondary btn-lg">▶ Nasıl Çalışır?</a>
+        </div>
+
+        <div class="hero-stats">
+          <div>
+            <div class="hero-stat-value">LGS · TYT · AYT</div>
+            <div class="hero-stat-label">Tüm sınav türleri</div>
+          </div>
+          <div>
+            <div class="hero-stat-value">4 Rol</div>
+            <div class="hero-stat-label">Admin, Öğretmen, Veli, Öğrenci</div>
+          </div>
+          <div>
+            <div class="hero-stat-value">Anlık</div>
+            <div class="hero-stat-label">Gerçek zamanlı senkronizasyon</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sağ Taraf - Dashboard Preview -->
+      <div class="hero-preview">
+        <div class="dashboard-card">
+          <div class="dashboard-header">
+            <div class="dashboard-title">📊 Genel Gelişim</div>
+            <div class="dashboard-value">+4.2 Net</div>
+          </div>
+
+          <div class="dashboard-chart">
+            <div class="chart-bar" style="height: 40%;"></div>
+            <div class="chart-bar" style="height: 55%;"></div>
+            <div class="chart-bar" style="height: 72%;"></div>
+            <div class="chart-bar" style="height: 85%;"></div>
+          </div>
+
+          <div class="dashboard-subjects">
+            <div class="subject-item">
+              <span class="subject-name">Matematik</span>
+              <div class="subject-bar">
+                <div class="subject-progress" style="width: 85%;"></div>
+              </div>
+            </div>
+            <div class="subject-item">
+              <span class="subject-name">Türkçe</span>
+              <div class="subject-bar">
+                <div class="subject-progress" style="width: 72%;"></div>
+              </div>
+            </div>
+            <div class="subject-item">
+              <span class="subject-name">Fen Bilimleri</span>
+              <div class="subject-bar">
+                <div class="subject-progress" style="width: 68%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dashboard-compass">
+            <div class="compass-label">🧭 Bugünün Pusulası</div>
+            <div class="compass-content">
+              <div class="compass-item">
+                <span class="compass-icon">📈</span>
+                <span>En çok gelişen: Matematik</span>
+              </div>
+              <div class="compass-item">
+                <span class="compass-icon">🎯</span>
+                <span>Odak noktası: Problemler</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ÖĞRENCİ YOLCULUĞU ========== -->
+  <section class="student-journey" id="student-journey">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">🚀 Öğrenci Yolculuğu</h2>
+        <p class="section-subtitle">Öğrencinin gelişimini anlatan güçlü bir görünüm</p>
+      </div>
+
+      <div class="journey-container">
+        <!-- Greeting Card -->
+        <div class="journey-greeting">
+          <div class="greeting-wave">👋</div>
+          <h3 class="greeting-text">Merhaba <span class="greeting-name">Ahmet</span>!</h3>
+          <p class="greeting-subtext">Senin bu haftaki gelişimin görmek için heyecanlıyız</p>
+        </div>
+
+        <!-- Weekly Performance Section -->
+        <div class="journey-week-performance">
+          <div class="performance-header">
+            <h4 class="performance-title">🎯 Bu Haftaki Durumun</h4>
+          </div>
+
+          <!-- Overall Progress -->
+          <div class="performance-card overall-card">
+            <div class="card-icon">🟢</div>
+            <div class="card-content">
+              <div class="card-label">Genel Gelişim</div>
+              <div class="card-value">+12%</div>
+              <div class="card-status">Harika İlerleme!</div>
+            </div>
+          </div>
+
+          <!-- Subjects Grid -->
+          <div class="subjects-grid">
+            <!-- Matematik -->
+            <div class="subject-status-card rising">
+              <div class="status-icon">📈</div>
+              <div class="status-subject">Matematik</div>
+              <div class="status-trend">Yükseliyor</div>
+              <div class="status-indicator">
+                <div class="indicator-dot"></div>
+              </div>
+            </div>
+
+            <!-- Türkçe -->
+            <div class="subject-status-card stable">
+              <div class="status-icon">➡️</div>
+              <div class="status-subject">Türkçe</div>
+              <div class="status-trend">Stabil</div>
+              <div class="status-indicator">
+                <div class="indicator-dot"></div>
+              </div>
+            </div>
+
+            <!-- Fen Bilimleri -->
+            <div class="subject-status-card warning">
+              <div class="status-icon">🔴</div>
+              <div class="status-subject">Fen Bilimleri</div>
+              <div class="status-trend">Dikkat Gerekiyor</div>
+              <div class="status-indicator">
+                <div class="indicator-dot"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Button -->
+        <div class="journey-action">
+          <a href="#" class="btn-primary btn-lg">📊 Detaylı Analizi Gör</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== KİMLER İÇİN? ========== -->
+  <section class="audience" id="audience">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Kimler İçin?</h2>
+        <p class="section-subtitle">Öğretmen, öğrenci ve veliler için özel deneyim</p>
+      </div>
+
+      <div class="audience-grid">
+        <!-- Öğretmenler -->
+        <div class="audience-card">
+          <div class="audience-icon">🎓</div>
+          <h3 class="audience-title">Öğretmenler İçin</h3>
+          <p class="audience-description">
+            Öğrencilerinizin gelişimini tek ekrandan takip edin, güçlü yönlerini ve gelişim alanlarını keşfedin.
+          </p>
+          <ul class="audience-features">
+            <li>✓ Sınıf Analizi</li>
+            <li>✓ Öğrenci Takibi</li>
+            <li>✓ Gelişim Raporları</li>
+          </ul>
+        </div>
+
+        <!-- Veliler -->
+        <div class="audience-card">
+          <div class="audience-icon">👨‍👩‍👧</div>
+          <h3 class="audience-title">Veliler İçin</h3>
+          <p class="audience-description">
+            Çocuğunuzun akademik gelişimini sade ve anlaşılır şekilde takip edin.
+          </p>
+          <ul class="audience-features">
+            <li>✓ Gelişim Takibi</li>
+            <li>✓ Deneme Sonuçları</li>
+            <li>✓ Anlaşılır Raporlar</li>
+          </ul>
+        </div>
+
+        <!-- Öğrenciler -->
+        <div class="audience-card">
+          <div class="audience-icon">🎓</div>
+          <h3 class="audience-title">Öğrenciler İçin</h3>
+          <p class="audience-description">
+            Gelişimini keşfet, güçlü yönlerini gör ve hedeflerine doğru ilerle.
+          </p>
+          <ul class="audience-features">
+            <li>✓ Kişisel Analiz</li>
+            <li>✓ Gelişim Grafikleri</li>
+            <li>✓ Hedef Takibi</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== NASIL ÇALIŞIR? ========== -->
+  <section class="how-works" id="how-works">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Nasıl Çalışır?</h2>
+        <p class="section-subtitle">4 basit adımda başarı pusulanızı oluşturun</p>
+      </div>
+
+      <div class="stepper-container">
+        <!-- Adım 1 -->
+        <div class="stepper-item">
+          <div class="stepper-number">①</div>
+          <h3 class="stepper-title">Deneme Verilerini Ekle</h3>
+          <p class="stepper-description">📄</p>
+          <p class="stepper-text">Optik form veya deneme verilerini sisteme aktar.</p>
+        </div>
+
+        <div class="stepper-arrow">↓</div>
+
+        <!-- Adım 2 -->
+        <div class="stepper-item">
+          <div class="stepper-number">②</div>
+          <h3 class="stepper-title">EduPusula Analiz Etsin</h3>
+          <p class="stepper-description">📊</p>
+          <p class="stepper-text">Sonuçları ders, öğrenci ve gelişim açısından analiz et.</p>
+        </div>
+
+        <div class="stepper-arrow">↓</div>
+
+        <!-- Adım 3 -->
+        <div class="stepper-item">
+          <div class="stepper-number">③</div>
+          <h3 class="stepper-title">Başarı Pusulanı Gör</h3>
+          <p class="stepper-description">🧭</p>
+          <p class="stepper-text">Güçlü ve gelişmesi gereken alanlarını keşfet.</p>
+        </div>
+
+        <div class="stepper-arrow">↓</div>
+
+        <!-- Adım 4 -->
+        <div class="stepper-item">
+          <div class="stepper-number">④</div>
+          <h3 class="stepper-title">Doğru Yöne İlerle</h3>
+          <p class="stepper-description">🚀</p>
+          <p class="stepper-text">Verilere göre hedeflerine daha bilinçli ilerle.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== BAŞARI PUSULASI ========== -->
+  <section class="compass-section">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">🧭 Başarı Pusulası</h2>
+        <p class="section-subtitle">Her öğrencinin başarı yolculuğu farklıdır</p>
+      </div>
+
+      <!-- Başarı Pusulası -->
+      <div class="success-compass-container">
+        <div class="compass-visualization-large">
+          <svg class="compass-svg-large" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+            <!-- Dış daire -->
+            <circle cx="200" cy="200" r="190" fill="none" stroke="rgba(37, 99, 235, 0.1)" stroke-width="2"/>
+            <circle cx="200" cy="200" r="170" fill="none" stroke="rgba(37, 99, 235, 0.15)" stroke-width="1"/>
+            <circle cx="200" cy="200" r="150" fill="none" stroke="rgba(37, 99, 235, 0.2)" stroke-width="1"/>
+            
+            <!-- Sektör 1: Akademik Başarı (Kuzey) - Mavi -->
+            <path d="M 200 200 L 200 40 A 160 160 0 0 1 313.1 86.9 Z" fill="rgba(59, 130, 246, 0.2)" stroke="rgb(59, 130, 246)" stroke-width="2"/>
+            <circle cx="200" cy="90" r="6" fill="rgb(59, 130, 246)"/>
+            <text x="200" y="60" text-anchor="middle" class="compass-section-emoji" font-size="28">📚</text>
+            <text x="200" y="140" text-anchor="middle" class="compass-label">Akademik</text>
+            <text x="200" y="160" text-anchor="middle" class="compass-value">85%</text>
+            
+            <!-- Sektör 2: Çalışma Disiplini (Doğu) - Kırmızı -->
+            <path d="M 200 200 L 313.1 86.9 A 160 160 0 0 1 360 200 Z" fill="rgba(239, 68, 68, 0.2)" stroke="rgb(239, 68, 68)" stroke-width="2"/>
+            <circle cx="310" cy="120" r="6" fill="rgb(239, 68, 68)"/>
+            <text x="330" y="140" class="compass-section-emoji" font-size="28">🔥</text>
+            <text x="320" y="210" text-anchor="middle" class="compass-label">Disiplin</text>
+            <text x="320" y="230" text-anchor="middle" class="compass-value">72%</text>
+            
+            <!-- Sektör 3: Gelişim Hızı (Güney) - Yeşil -->
+            <path d="M 200 200 L 360 200 A 160 160 0 0 1 86.9 313.1 Z" fill="rgba(34, 197, 94, 0.2)" stroke="rgb(34, 197, 94)" stroke-width="2"/>
+            <circle cx="310" cy="280" r="6" fill="rgb(34, 197, 94)"/>
+            <text x="200" y="340" text-anchor="middle" class="compass-section-emoji" font-size="28">📈</text>
+            <text x="200" y="280" text-anchor="middle" class="compass-label">Gelişim</text>
+            <text x="200" y="300" text-anchor="middle" class="compass-value">92%</text>
+            
+            <!-- Sektör 4: Hedef Yakınlığı (Batı) - Amber -->
+            <path d="M 200 200 L 86.9 313.1 A 160 160 0 0 1 40 200 Z" fill="rgba(245, 158, 11, 0.2)" stroke="rgb(245, 158, 11)" stroke-width="2"/>
+            <circle cx="90" cy="280" r="6" fill="rgb(245, 158, 11)"/>
+            <text x="70" y="140" class="compass-section-emoji" font-size="28">🎯</text>
+            <text x="80" y="210" text-anchor="middle" class="compass-label">Hedef</text>
+            <text x="80" y="230" text-anchor="middle" class="compass-value">78%</text>
+            
+            <!-- İç daireler -->
+            <circle cx="200" cy="200" r="80" fill="none" stroke="rgba(37, 99, 235, 0.3)" stroke-width="1" stroke-dasharray="5,5"/>
+            <circle cx="200" cy="200" r="40" fill="none" stroke="rgba(37, 99, 235, 0.2)" stroke-width="1" stroke-dasharray="5,5"/>
+            
+            <!-- Merkez -->
+            <circle cx="200" cy="200" r="35" fill="rgba(37, 99, 235, 0.1)" stroke="rgb(37, 99, 235)" stroke-width="2"/>
+            <text x="200" y="195" text-anchor="middle" class="compass-center-emoji" font-size="32">🧭</text>
+            <text x="200" y="215" text-anchor="middle" class="compass-center-text">EduPusula</text>
+          </svg>
+        </div>
+
+        <!-- Açıklamalar -->
+        <div class="compass-info-grid">
+          <div class="compass-info-card academic">
+            <div class="info-icon">📚</div>
+            <h4 class="info-title">Akademik Başarı</h4>
+            <p class="info-description">Ders başarısı ve bilgi birikimi</p>
+            <div class="info-value">85%</div>
+          </div>
+
+          <div class="compass-info-card discipline">
+            <div class="info-icon">🔥</div>
+            <h4 class="info-title">Çalışma Disiplini</h4>
+            <p class="info-description">Düzenli çalışma ve sorumluluğu</p>
+            <div class="info-value">72%</div>
+          </div>
+
+          <div class="compass-info-card progress">
+            <div class="info-icon">📈</div>
+            <h4 class="info-title">Gelişim Hızı</h4>
+            <p class="info-description">Son dönemdeki ilerleme hızı</p>
+            <div class="info-value">92%</div>
+          </div>
+
+          <div class="compass-info-card target">
+            <div class="info-icon">🎯</div>
+            <h4 class="info-title">Hedef Yakınlığı</h4>
+            <p class="info-description">Belirlenen hedefe ne kadar yakın</p>
+            <div class="info-value">78%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ÖĞRENCİ SAĞLIK RAPORU ========== -->
+  <section class="health-report-section" id="health-report">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">🧠 Öğrenci Sağlık Raporu</h2>
+        <p class="section-subtitle">Klasik notlar yerine kapsamlı bir eğitim sağlık analizi</p>
+      </div>
+
+      <div class="health-report-container">
+        <!-- Rapor Başlığı -->
+        <div class="report-header">
+          <div class="report-student-info">
+            <div class="student-avatar">A</div>
+            <div class="student-details">
+              <h3 class="student-name">Ahmet Yılmaz</h3>
+              <p class="student-meta">LGS 2024 | Hazırlık Dönemi</p>
+            </div>
+          </div>
+          <div class="report-date">
+            <span class="date-label">Rapor Tarihi</span>
+            <span class="date-value">31 Ağustos 2024</span>
+          </div>
+        </div>
+
+        <!-- Status Grid -->
+        <div class="status-grid">
+          <!-- Alan 1: Akademik Performans -->
+          <div class="status-item">
+            <div class="status-icon">📚</div>
+            <div class="status-content">
+              <div class="status-label">Akademik Performans</div>
+              <div class="status-badge good">🟢 İyi</div>
+            </div>
+          </div>
+
+          <!-- Alan 2: Gelişim -->
+          <div class="status-item">
+            <div class="status-icon">📈</div>
+            <div class="status-content">
+              <div class="status-label">Gelişim</div>
+              <div class="status-badge good">🟢 Yükseliyor</div>
+            </div>
+          </div>
+
+          <!-- Alan 3: Düzenlilik -->
+          <div class="status-item">
+            <div class="status-icon">🔁</div>
+            <div class="status-content">
+              <div class="status-label">Düzenlilik</div>
+              <div class="status-badge medium">🟡 Orta</div>
+            </div>
+          </div>
+
+          <!-- Alan 4: Riskli Dersler -->
+          <div class="status-item">
+            <div class="status-icon">⚠️</div>
+            <div class="status-content">
+              <div class="status-label">Riskli Dersler</div>
+              <div class="status-badge danger">🔴 Matematik</div>
+            </div>
+          </div>
+
+          <!-- Alan 5: Hedef Yakınlığı -->
+          <div class="status-item">
+            <div class="status-icon">🎯</div>
+            <div class="status-content">
+              <div class="status-label">Hedef Yakınlığı</div>
+              <div class="status-badge good">🟢 %78</div>
+            </div>
+          </div>
+
+          <!-- Alan 6: Dikkati Gereken Konu -->
+          <div class="status-item">
+            <div class="status-icon">💡</div>
+            <div class="status-content">
+              <div class="status-label">Odaklanması Gereken</div>
+              <div class="status-badge warning">⚡ Problem Çözüm</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div class="ai-insight">
+          <div class="insight-header">
+            <span class="insight-icon">✨</span>
+            <span class="insight-title">Yapay Zekâ Analizi</span>
+          </div>
+          <div class="insight-content">
+            <p>
+              <strong>Ahmet</strong> son 4 denemede istikrarlı bir yükseliş gösteriyor. Matematikte işlem hataları azalırken problem sorularında zaman kaybı devam ediyor. Son denemenin essay sorularında daha başarılı olması, okuma ve anlama becerilerinin kuvvetli olduğunu gösteriyor.
+            </p>
+            <p>
+              <strong>Öneriler:</strong>
+            </p>
+            <ul class="insight-recommendations">
+              <li>Bu hafta <strong>problem çözme çalışmalarına öncelik</strong> verilmesi tavsiye edilir</li>
+              <li>Matematik konuları için <strong>hız antrenmanlarına</strong> yoğunlaşılması gerekir</li>
+              <li>Türkçe başarısı devam etse de, <strong>paragraf sorularında üretim metni</strong> pratiği yapılmalı</li>
+              <li>Genel olarak disiplin artarsa <strong>hedef %85'e çıkacak</strong> gibi görünüyor</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="report-actions">
+          <a href="#" class="btn-primary">📥 Raporu İndir (PDF)</a>
+          <a href="#" class="btn-secondary">💬 Rehberle Konuş</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== PUSULA ASISTANI ========== -->
+  <section class="assistant-section">
+    <div class="container">
+      <div class="assistant-container">
+        <!-- Sol Taraf - Chat -->
+        <div class="assistant-chat">
+          <div class="chat-header">
+            🧭 Pusula Asistanı
+          </div>
+          <div class="chat-messages">
+            <div class="chat-message ai">
+              <div class="chat-bubble">
+                Son denemelerinde Matematik performansında düzenli bir gelişim görülüyor.
+              </div>
+            </div>
+            <div class="chat-message ai">
+              <div class="chat-bubble">
+                Problemler konusunda biraz daha odaklanmak faydalı olabilir.
+              </div>
+            </div>
+            <div class="chat-message user">
+              <div class="chat-bubble">
+                Peki Türkçe'de ne yapmalıyım?
+              </div>
+            </div>
+            <div class="chat-message ai">
+              <div class="chat-bubble">
+                Türkçe'de anlama sorularında iyiysiniz, ancak yazı hayatı metinlerde çalışmak önemli olacak.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sağ Taraf - Mesaj -->
+        <div class="assistant-message">
+          <h3 class="assistant-title">Veriyi Anla.</h3>
+          <h3 class="assistant-title">Gelişimini Gör.</h3>
+          <h3 class="assistant-title">Doğru Yöne İlerle.</h3>
+          <p class="assistant-description">
+            Pusula Asistanı, yapay zekâ destekli analiz ve geri bildirim sağlayarak öğrencilerin gerçek potansiyellerini ortaya çıkarır.
+          </p>
+          <a href="#" class="btn-primary">Asistanı Keşfet</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ÖZELLİKLER ========== -->
+  <section class="features" id="features">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Platform Özellikleri</h2>
+        <p class="section-subtitle">Güçlü araçlar, anlaşılır sonuçlar</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3 class="feature-title">Akıllı Deneme Analizi</h3>
+          <p class="feature-description">Deneme sonuçlarını detaylı olarak incele ve anlama dönüştür.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">📈</div>
+          <h3 class="feature-title">Gelişim Takibi</h3>
+          <p class="feature-description">Öğrencinin zaman içerisindeki gelişimini grafik ve raporlarla gör.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🧭</div>
+          <h3 class="feature-title">Başarı Pusulası</h3>
+          <p class="feature-description">Güçlü ve gelişmesi gereken alanları keşfet ve odaklan.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">👥</div>
+          <h3 class="feature-title">Çoklu Kullanıcı Sistemi</h3>
+          <p class="feature-description">Öğretmen, öğrenci ve veli için özel ve güvenli deneyim.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🤖</div>
+          <h3 class="feature-title">Pusula Asistanı</h3>
+          <p class="feature-description">Yapay zekâ destekli analiz ve kişiselleştirilmiş geri bildirim.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔐</div>
+          <h3 class="feature-title">Güvenli Veri Sistemi</h3>
+          <p class="feature-description">Şifrelenmiş veri, role-based erişim, gizlilik garantili.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== BÜYÜK CTA ========== -->
+  <section class="cta-section">
+    <div class="cta-container">
+      <h2 class="cta-title">🧭 Başarının Yönünü Keşfetmeye Hazır mısın?</h2>
+      <p class="cta-subtitle">
+        Öğrencilerin gelişimini sadece takip etmeyin. Anlayın.
+      </p>
+      <a href="#" class="btn-primary btn-lg">🚀 EduPusula'yı Keşfet</a>
+    </div>
+  </section>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-section">
+        <div class="footer-logo">
+          <div class="footer-logo-icon">🧭</div>
+          <div class="footer-logo-text">
+            <h4>EduPusula</h4>
+            <p>Veriyi Anla. Gelişimi Gör. Doğru Yönü Keşfet.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-section">
+        <h4 class="footer-title">PLATFORM</h4>
+        <ul class="footer-links">
+          <li><a href="#">Özellikler</a></li>
+          <li><a href="#">Nasıl Çalışır?</a></li>
+          <li><a href="#">Kimler İçin?</a></li>
+          <li><a href="#login" data-login-trigger>Giriş Yap</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-section">
+        <h4 class="footer-title">KULLANICILAR</h4>
+        <ul class="footer-links">
+          <li><a href="#">Öğretmenler</a></li>
+          <li><a href="#">Öğrenciler</a></li>
+          <li><a href="#">Veliler</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-section">
+        <h4 class="footer-title">DESTEK</h4>
+        <ul class="footer-links">
+          <li><a href="#">Yardım Merkezi</a></li>
+          <li><a href="#">İletişim</a></li>
+          <li><a href="#">Gizlilik</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p>&copy; 2024 EduPusula. Tüm hakları saklıdır.</p>
+    </div>
+  </footer>
+
+  <!-- ========== GİRİŞ MODALI ========== -->
+  <div class="login-modal-overlay" id="login-modal-overlay">
+    <div class="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-modal-title">
+      <button type="button" class="login-modal-close" id="login-modal-close" aria-label="Kapat">✕</button>
+      <div class="login-modal-header">
+        <div class="login-modal-icon">🧭</div>
+        <h2 id="login-modal-title">EduPusula'ya Giriş</h2>
+        <p>Yönetici, öğretmen, veli veya öğrenci hesabınızla giriş yapın.</p>
+      </div>
+      <form id="login-form">
+        <label for="login-username">Kullanıcı Adı</label>
+        <input type="text" id="login-username" autocomplete="username" required>
+
+        <label for="login-password">Şifre</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+
+        <button type="submit" class="btn-primary" id="login-submit-btn" style="width:100%;margin-top:20px">Giriş Yap</button>
+        <div class="login-error" id="login-error"></div>
+        <p class="login-hint">Hesap bilgilerinizi okul yöneticinizden alabilirsiniz.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Landing JS -->
+  <script src="js/landing.js"></script>
+</body>
+</html>

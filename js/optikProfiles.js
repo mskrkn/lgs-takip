@@ -187,6 +187,51 @@ const OptikProfiles = {
       },
     },
     {
+      // "SAYISAL11.txt" örneğinden (185 satırın TAMAMI, %100 eşleşme ile)
+      // bire bir ölçüldü. Yukarıdaki lgs-iki-oturum-sayisal-dosya ile AYNI
+      // okul/firma değil - farklı bir vendor'un dökümü: sabit 280 karakter,
+      // öğrenci no 9-14 (kurum kodu 0-9'da, hep sabit), ad soyad 14-45,
+      // ardından tek bir "0" hanesi ve boşluk, sonra sınıf+cinsiyet+kitapçık
+      // bloğu (56: sınıf 2 kr. "8B" gibi, 58: cinsiyet K/E, 59: kitapçık A/B).
+      //
+      // Aynı vendor'un SÖZEL11.txt dosyası da elde edildi (186 satırın
+      // TAMAMI, %100 eşleşme ile ölçüldü - not: örnek metinde Türkçe İ harfi
+      // "Ä°" olarak iki karakterli bozuk kopyalanmıştı, kolon ölçümü buna göre
+      // düzeltilerek yapıldı; gerçek dosya uygulamanın kendi Türkçe kodlama
+      // algılamasından geçeceği için bu sorun yaşanmaz). SÖZEL11.txt AYNI
+      // başlık düzenini kullanıyor, sadece cevap bloğu farklı yerde: 160-190
+      // Türkçe(20)+İnkılap(10), 200-210 Din(10), 220-230 İngilizce(10).
+      // Bu aralık SAYISAL11.txt'nin Matematik/Fen bloğuyla (240-280) hiç
+      // ÇAKIŞMIYOR - her iki dosya da diğerinin blok bölgesinde boşluk
+      // bırakıyor. Bu yüzden tek profilde HER İKİ blok grubu birden
+      // tanımlanabiliyor: sayısal dosyasının satırlarında sözel blokları
+      // (ve tersi) otomatik boş çıkar ve evaluateOpticalData bu boş bloğu
+      // atlar (bkz. importOptical.js) - böylece sayısal.txt + sözel.txt
+      // art arda yapıştırılıp TEK seferde değerlendirildiğinde aynı öğrenci
+      // (okul no ile) otomatik birleşir, boş taraf gerçek veriyi ezmez.
+      id: 'lgs-sayisal-dosya-v2',
+      label: 'LGS Sayısal/Sözel Dosyası (SAYISAL11/SÖZEL11 tipi, 280 kr.)',
+      examType: 'LGS',
+      kind: 'fixedWidth',
+      optionCount: 4,
+      builtIn: true,
+      fields: [
+        { role: 'ignore', start: 0, end: 9 }, // Kurum kodu - sabit, program tarafından kullanılmıyor
+        { role: 'schoolNumber', start: 9, end: 14 },
+        { role: 'fullName', start: 14, end: 45 },
+        { role: 'ignore', start: 45, end: 46 },
+        { role: 'className', start: 56, end: 58 },
+        { role: 'ignore', start: 58, end: 59 }, // Cinsiyet (K/E) - program tarafından kullanılmıyor
+        { role: 'booklet', start: 59, end: 60 },
+        { role: 'answerBlock', start: 160, end: 180, subjectKey: 'turkce', label: 'Türkçe' },
+        { role: 'answerBlock', start: 180, end: 190, subjectKey: 'inkilap', label: 'İnkılap' },
+        { role: 'answerBlock', start: 200, end: 210, subjectKey: 'din', label: 'Din K.' },
+        { role: 'answerBlock', start: 220, end: 230, subjectKey: 'ingilizce', label: 'İngilizce' },
+        { role: 'answerBlock', start: 240, end: 260, subjectKey: 'matematik', label: 'Matematik' },
+        { role: 'answerBlock', start: 260, end: 280, subjectKey: 'fen', label: 'Fen' },
+      ],
+    },
+    {
       // haruniye-3d-tyt-3dtytoptik.txt örneğinden bire bir ölçüldü (26/26
       // satır tam tutarlı, sabit 220 karakter). Cevap harfleri A-E (TYT/AYT
       // tipi). 3 cevap bloğunun uzunlukları (64/37/22) resmi TYT ders soru
@@ -208,6 +253,45 @@ const OptikProfiles = {
         { role: 'answerBlock', start: 59, end: 123, label: 'Blok 1 (64 karakter)' },
         { role: 'answerBlock', start: 139, end: 176, label: 'Blok 2 (37 karakter)' },
         { role: 'answerBlock', start: 177, end: 199, label: 'Blok 3 (22 karakter)' },
+      ],
+    },
+    {
+      // "format 1.txt" tarifinden eklendi (2. - kesinleşmiş sürüm): eskiden
+      // İKİ AYRI optik dökümü (sözel.txt + sayısal.txt, bkz. lgs-iki-oturum-*
+      // profilleri) olarak gelen LGS sonuçlarının artık TEK satırda birleşik
+      // çıktığı bir format. Kullanıcı bu sefer sözel/sayısal ders bloklarının
+      // her birinin pozisyonunu AYRI AYRI ve SÖZEL/SAYISAL KISIM başlıklarıyla
+      // net verdi (öncekinde tek "sözel"/"sayısal" toplam aralığı vardı):
+      //   kurum kodu 4-9, numara 10-14, ad soyad 15-45, sınıf 57-58,
+      //   kitapçık 60, Türkçe 161-181, Sosyal/İnkılap 181-191,
+      //   Din ve Ahlak 201-211, İngilizce 221-231,
+      //   Matematik 241-"61" (261'in yazım hatası - Fen'in 261'de başladığı
+      //   ve diğer 3 sözel blok arasındaki 10 kr.'lik boşluk deseniyle
+      //   tutarlı olduğu için 261 olarak düzeltildi), Fen 261-281.
+      // Tüm blok sınırları ve aradaki 10 kr.'lik boş yabancı dil payları
+      // (191-201, 211-221, 231-241) baştan sona tutarlı - bu nedenle önceki
+      // sürümdeki belirsizlik notu kaldırıldı. Yine de gerçek bir örnek
+      // satıra karşı ölçülmedi; ilk gerçek veride "Alan Eşleştirme
+      // Önizlemesi" tablosundan doğrulanması önerilir.
+      id: 'lgs-sozel-sayisal-birlesik-tek-satir',
+      label: 'LGS Sözel+Sayısal Birleşik (Tek Satırlı Format)',
+      examType: 'LGS',
+      kind: 'fixedWidth',
+      optionCount: 4,
+      builtIn: true,
+      fields: [
+        { role: 'ignore', start: 0, end: 4 },
+        { role: 'ignore', start: 4, end: 9 }, // Kurum Kodu - program tarafından kullanılmıyor
+        { role: 'schoolNumber', start: 10, end: 14 },
+        { role: 'fullName', start: 15, end: 45 },
+        { role: 'className', start: 57, end: 59 },
+        { role: 'booklet', start: 60, end: 61 },
+        { role: 'answerBlock', start: 161, end: 181, subjectKey: 'turkce', label: 'Türkçe' },
+        { role: 'answerBlock', start: 181, end: 191, subjectKey: 'inkilap', label: 'Sosyal/İnkılap' },
+        { role: 'answerBlock', start: 201, end: 211, subjectKey: 'din', label: 'Din ve Ahlak' },
+        { role: 'answerBlock', start: 221, end: 231, subjectKey: 'ingilizce', label: 'İngilizce' },
+        { role: 'answerBlock', start: 241, end: 261, subjectKey: 'matematik', label: 'Matematik' },
+        { role: 'answerBlock', start: 261, end: 281, subjectKey: 'fen', label: 'Fen Bilgisi' },
       ],
     },
   ],
@@ -374,19 +458,23 @@ const OptikProfiles = {
   },
 
   // ---- Cevap karşılaştırma (LGS A-D / TYT-AYT A-E fark etmeksizin çalışır) ----
+  // `perQuestion`: her soru için 'D'/'Y'/'B' - konu/soru analizi (bkz. db.getExamTopicAnalysis)
+  // bu diziyi topicMap ile aynı sırada (dizilim) eşleştirerek hangi konunun
+  // en çok yanlış/boş yapıldığını hesaplar.
   evaluateAnswers(studentRaw, keyAns) {
     let correct = 0, wrong = 0, blank = 0;
     const key = keyAns || '';
     const student = (studentRaw || '').padEnd(key.length, ' ');
+    const perQuestion = [];
     for (let i = 0; i < key.length; i++) {
       const k = (key[i] || '').toUpperCase();
       const s = (student[i] || '').toUpperCase();
-      if (!k || k === ' ') continue;
-      if (!s || s === ' ') blank++;
-      else if (s === k) correct++;
-      else wrong++;
+      if (!k || k === ' ') { perQuestion.push(null); continue; }
+      if (!s || s === ' ') { blank++; perQuestion.push('B'); }
+      else if (s === k) { correct++; perQuestion.push('D'); }
+      else { wrong++; perQuestion.push('Y'); }
     }
     const net = Math.max(0, correct - wrong / 3);
-    return { correct, wrong, blank, net: parseFloat(net.toFixed(2)) };
+    return { correct, wrong, blank, net: parseFloat(net.toFixed(2)), perQuestion };
   },
 };

@@ -2,7 +2,7 @@
 // LGS Deneme Takip - Service Worker (PWA Offline Support)
 // ============================================
 
-const CACHE_NAME = 'lgs-takip-v1.1';
+const CACHE_NAME = 'lgs-takip-v1.2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -13,6 +13,11 @@ const ASSETS_TO_CACHE = [
   './js/ui.js',
   './js/analysis.js',
   './js/optikProfiles.js',
+  './js/importCore.js',
+  './js/importManual.js',
+  './js/importExcel.js',
+  './js/importPdf.js',
+  './js/importOptical.js',
   './js/import.js',
   './js/export.js',
   './js/sync.js',
@@ -20,6 +25,7 @@ const ASSETS_TO_CACHE = [
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './js/vendor/chart.umd.min.js',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
   'https://cdn.jsdelivr.net/npm/dexie@3.2.7/dist/dexie.min.js',
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js',

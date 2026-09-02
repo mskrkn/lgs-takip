@@ -37,7 +37,7 @@ const Analysis = {
           backgroundColor: 'rgba(11, 16, 34, 0.95)',
           titleColor: '#ffffff',
           bodyColor: '#cbd5e1',
-          borderColor: 'rgba(139, 92, 246, 0.4)',
+          borderColor: 'rgba(15,118,110, 0.4)',
           borderWidth: 1,
           padding: 14,
           cornerRadius: 12,
@@ -79,10 +79,10 @@ const Analysis = {
           {
             label: 'Öğrenci Net',
             data: studentNets,
-            borderColor: '#6366f1',
-            backgroundColor: 'rgba(99, 102, 241, 0.15)',
+            borderColor: '#0D9488',
+            backgroundColor: 'rgba(20,184,166, 0.15)',
             borderWidth: 2,
-            pointBackgroundColor: '#6366f1',
+            pointBackgroundColor: '#0D9488',
             pointRadius: 4,
           },
           {
@@ -212,14 +212,14 @@ const Analysis = {
         datasets: [{
           label: 'Toplam Net',
           data: totalNets,
-          borderColor: '#6366f1',
-          backgroundColor: 'rgba(99, 102, 241, 0.1)',
+          borderColor: '#0D9488',
+          backgroundColor: 'rgba(20,184,166, 0.1)',
           borderWidth: 3,
           fill: true,
           tension: 0.4,
           pointRadius: 6,
           pointHoverRadius: 8,
-          pointBackgroundColor: '#6366f1',
+          pointBackgroundColor: '#0D9488',
           pointBorderColor: '#fff',
           pointBorderWidth: 2,
         }]
@@ -320,11 +320,11 @@ const Analysis = {
           label: 'Okul Ortalama Net',
           data: avgNets,
           backgroundColor: avgNets.map((_, i) => {
-            const colors = ['rgba(99,102,241,0.6)', 'rgba(139,92,246,0.6)', 'rgba(59,130,246,0.6)', 'rgba(16,185,129,0.6)'];
+            const colors = ['rgba(20,184,166,0.6)', 'rgba(59,130,246,0.6)', 'rgba(245,158,11,0.6)', 'rgba(16,185,129,0.6)'];
             return colors[i % colors.length];
           }),
           borderColor: avgNets.map((_, i) => {
-            const colors = ['#6366f1', '#8b5cf6', '#3b82f6', '#10b981'];
+            const colors = ['#14B8A6', '#3B82F6', '#F59E0B', '#10b981'];
             return colors[i % colors.length];
           }),
           borderWidth: 2,

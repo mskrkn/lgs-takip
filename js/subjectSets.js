@@ -57,13 +57,17 @@ const EXAM_TYPE_OPTION_COUNT = {
   AYT_SOZ: 5,
 };
 
-const SUBJECT_LOOKUP = Object.fromEntries(
-  Object.values(SUBJECT_SETS).flat().map(s => [s.key, s])
-);
+// Object.fromEntries/Array.prototype.flat yerine elle döngü kullanılır - bazı
+// eski tablet tarayıcılarında (Chrome 73 altı) bu metodlar bulunmuyor ve
+// tüm sayfayı çalışmaz hale getiriyordu.
+const SUBJECT_LOOKUP = {};
+Object.values(SUBJECT_SETS).forEach(function (list) {
+  list.forEach(function (s) { SUBJECT_LOOKUP[s.key] = s; });
+});
 
 // examOrType: bir exam nesnesi ({examType:...}) ya da doğrudan 'LGS'|'TYT'|... string'i olabilir
 function getSubjectsForExam(examOrType) {
-  const type = (typeof examOrType === 'string') ? examOrType : (examOrType?.examType || 'LGS');
+  const type = (typeof examOrType === 'string') ? examOrType : ((examOrType && examOrType.examType) || 'LGS');
   return SUBJECT_SETS[type] || SUBJECT_SETS.LGS;
 }
 

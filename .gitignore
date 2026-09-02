@@ -2,9 +2,12 @@
 deneme_sonuclari.csv
 *.csv
 
-# Yardımcı Python betikleri (örnek/gerçek öğrenci verisi gömülü olabilir,
-# uygulamanın çalışması için gerekli değil - tarayıcı IndexedDB kullanıyor)
+# Yardımcı/tek seferlik Python betikleri (örnek/gerçek öğrenci verisi gömülü
+# olabilir). server.py bunun DIŞINDA - artık uygulamanın tüm backend'i
+# (kimlik doğrulama, SQLite veritabanı, öğretmen/veli/öğrenci API'leri):
+# görmezden gelinmemeli, sürüm kontrolünde olmalı.
 *.py
+!server.py
 __pycache__/
 
 # Yerel/geçici
@@ -12,7 +15,26 @@ agentler
 .DS_Store
 Thumbs.db
 
+# Windows servis kurulumu logları (servis_kur.bat / servis_duzelt.bat tarafından oluşturulur)
+servis_log.txt
+servis_hata.txt
+tunnel_log.txt
+tunnel_hata.txt
+
+# Yetkilendirme veritabanı ve gizli anahtar - kullanıcı şifre hash'leri
+# içerir, asla paylaşılmamalı/yayınlanmamalı
+yetki_veritabani.db
+.flask_secret_key
+
 # Üçüncü taraf optik okuyucu tarayıcı yazılımı ayar dosyaları (referans
 # amaçlı tutuluyor, uygulamanın çalışması için gerekli değil, dağıtılmaması
 # daha uygun - bkz. js/optikProfiles.js üstündeki not)
 form Okutma Ayarları ve örnet formatlar/
+# Aynı klasörün OneDrive senkronizasyonundan kalma, dosya adında Türkçe
+# karakterlerin bozulduğu ikinci bir kopyası (ı/ö yerine literal "#U0131"/
+# "#U00f6" metni) - muhtemelen silinebilir, ama emin olana kadar sadece
+# görmezden geliniyor.
+form Okutma Ayarlar#U0131 ve #U00f6rnet formatlar/
+
+# Eski sunucu koduna ait yedek dosyalar
+*.bak

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Giriş Yap - LGS Deneme Takip Sistemi</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 20% 20%, #1a1f3d 0%, #070913 55%);
+      font-family: 'Plus Jakarta Sans', sans-serif; color: #f8fafc; padding: 20px;
+    }
+    .login-card {
+      width: 100%; max-width: 380px; background: rgba(17,24,48,0.75); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.09); border-radius: 20px; padding: 36px 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .logo { text-align: center; margin-bottom: 22px; }
+    .logo-icon { font-size: 40px; }
+    .logo h1 { font-size: 19px; margin: 8px 0 2px; }
+    .logo p { font-size: 13px; color: #94a3b8; margin: 0; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; color: #cbd5e1; }
+    input {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(13,18,38,0.85); color: #f8fafc; font-size: 15px; outline: none;
+    }
+    input:focus { border-color: #6366f1; }
+    button {
+      width: 100%; margin-top: 22px; padding: 13px; border: none; border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+      color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-box {
+      display: none; margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+      background: rgba(244,63,94,0.15); border: 1px solid rgba(244,63,94,0.4);
+      color: #fb7185; font-size: 13px;
+    }
+    .hint { text-align: center; margin-top: 18px; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <form class="login-card" id="login-form">
+    <div class="logo">
+      <div class="logo-icon">📊</div>
+      <h1>LGS Deneme Takip</h1>
+      <p>Öğretmen / Veli / Öğrenci Girişi</p>
+    </div>
+
+    <label for="username">Kullanıcı Adı</label>
+    <input type="text" id="username" autocomplete="username" required>
+
+    <label for="password">Şifre</label>
+    <input type="password" id="password" autocomplete="current-password" required>
+
+    <button type="submit" id="login-btn">Giriş Yap</button>
+    <div class="error-box" id="error-box"></div>
+    <p class="hint">Hesap bilgilerinizi okul yöneticinizden alabilirsiniz.</p>
+  </form>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const errorBox = document.getElementById('error-box');
+    const btn = document.getElementById('login-btn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Giriş yapılıyor...';
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Giriş başarısız.');
+
+        if (data.role === 'admin') window.location.href = '/';
+        else if (data.role === 'teacher') window.location.href = '/ogretmen.html';
+        else if (data.role === 'parent') window.location.href = '/veli.html';
+        else if (data.role === 'student') window.location.href = '/ogrenci.html';
+        else window.location.href = '/';
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Giriş Yap';
+      }
+    });
+  </script>
+</body>
+</html>

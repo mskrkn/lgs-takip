@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Öğrenci Paneli — EduPusula</title>
+  <meta name="description" content="EduPusula Öğrenci Paneli — başarı yolculuğunu takip et, hedefine ulaş.">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <script src="js/vendor/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="css/student/ogrenci.css">
+</head>
+<body>
+  <div class="app-layout" id="app-layout">
+    <div class="sidebar-overlay"></div>
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">🧭</div>
+          <div class="sidebar-logo-text">
+            <h1>EduPusula</h1>
+            <p>Öğrenci Paneli</p>
+          </div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Ana Menü</div>
+        <div class="nav-item active" data-page="dashboard"><span class="nav-icon">🏠</span><span>Ana Sayfa</span></div>
+        <div class="nav-item" data-page="analytics"><span class="nav-icon">📊</span><span>Analizler</span></div>
+        <div class="nav-item" data-page="exams"><span class="nav-icon">📝</span><span>Denemelerim</span></div>
+        <div class="nav-section-title">Yakında</div>
+        <div class="nav-item" onclick="comingSoon('Konular')"><span class="nav-icon">📚</span><span>Konular</span><span class="nav-badge">Yakında</span></div>
+        <div class="nav-item" onclick="comingSoon('Edu AI')"><span class="nav-icon">🤖</span><span>Edu AI</span><span class="nav-badge">Yakında</span></div>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span><span>Ayarlar</span></div>
+        <button class="pwa-install-btn" style="background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.3);color:#fb7185" onclick="logout()">
+          <span>🚪</span><span>Çıkış Yap</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===== MAIN ===== -->
+    <main class="main-content">
+      <header class="header">
+        <div class="header-left">
+          <button class="menu-toggle" id="menu-toggle">☰</button>
+          <h2 class="page-title" id="page-title">Ana Sayfa <span id="page-subtitle">Başarı Merkezi</span></h2>
+        </div>
+        <div class="header-right" style="display:flex;align-items:center;gap:10px">
+          <!-- Mail/Mesaj ikonu (badge ile) -->
+          <button class="menu-toggle" id="mail-btn" title="Öğretmen Mesajları" style="position:relative">
+            📬
+            <span id="mail-badge" style="
+              display:none; position:absolute; top:2px; right:2px;
+              min-width:16px; height:16px; border-radius:99px;
+              background:#EF4444; color:#fff; font-size:9px; font-weight:800;
+              align-items:center; justify-content:center; padding:0 3px;
+            "></span>
+          </button>
+          <button class="menu-toggle" onclick="comingSoon('Edu AI')" title="Edu AI" style="color:#a78bfa">🤖</button>
+          <div id="header-sub" class="sync-status-pill sync-offline" title="Hesap">
+            <span class="sync-dot"></span><span>Yükleniyor...</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="page-content">
+
+        <!-- ============ ANA SAYFA ============ -->
+        <section class="page-section active" id="page-dashboard">
+
+          <!-- ÖĞRETMEN MESAJLARI -->
+          <div class="ep-card anim-fade-up" id="teacher-messages-card" style="display:none;margin-top:0;margin-bottom:16px;border-color:rgba(245,158,11,0.3)">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📬</div> Öğretmen Mesajları</div>
+            </div>
+            <div id="teacher-messages"></div>
+          </div>
+
+          <!-- HERO -->
+          <div class="ep-hero anim-fade-up" style="margin-top:0">
+            <div class="ep-hero-left">
+              <div class="ep-hero-greeting">👋 Merhaba!</div>
+              <div class="ep-hero-name" id="greeting-title">Hoş Geldin 🧭</div>
+              <p class="ep-hero-sub">Bugün başarı yolculuğunda doğru yöndesin. Haydi birlikte bakalım!</p>
+              <div class="ep-hero-date" id="greeting-date">📅 —</div>
+              <div class="ep-direction-pill" id="direction-status">
+                <span class="dir-icon">🧭</span><span>Yükleniyor...</span>
+              </div>
+            </div>
+            <div class="ep-hero-compass" aria-hidden="true">
+              <div class="ep-compass-ring"></div>
+              <div class="ep-compass-score-wrap">
+                <span class="ep-compass-score" id="score-number">—</span>
+                <span class="ep-compass-score-label">Başarı</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- KPI STRIP -->
+          <div class="ep-kpi-strip mt-ep anim-fade-up anim-fade-up-d1" id="scorecards">
+            <!-- JS tarafından doldurulur -->
+          </div>
+
+          <!-- BUGÜNKÜ GÖREV + ÇALIŞMA SERİSİ -->
+          <div class="ep-twin mt-ep">
+            <!-- Bugünkü Görev -->
+            <div class="ep-task-card anim-fade-up anim-fade-up-d2" id="task-card-el">
+              <div class="ep-section-hd" style="margin-bottom:0">
+                <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Bugünkü Görevin</div>
+              </div>
+              <div id="today-task"><p style="color:var(--text-muted)">Yükleniyor...</p></div>
+              <button class="ep-task-cta" onclick="showPage('analytics')">🚀 Çalışmaya Başla</button>
+            </div>
+
+            <!-- Çalışma Serisi -->
+            <div class="ep-streak-card anim-fade-up anim-fade-up-d3" id="streak-card">
+              <div class="ep-section-hd" style="margin-bottom:0">
+                <div class="ep-section-title" style="font-size:14px"><div class="ep-section-icon" style="background:rgba(245,158,11,0.15)">🔥</div> Yükseliş Serisi</div>
+              </div>
+              <div style="display:flex;align-items:flex-end;gap:10px">
+                <span class="ep-streak-fire" id="streak-fire">🔥</span>
+                <div>
+                  <div class="ep-streak-count" id="streak-count">—</div>
+                  <div class="ep-streak-sub">Üst üste yükseliş</div>
+                </div>
+              </div>
+              <div class="ep-streak-days" id="streak-dots">
+                <!-- JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- HEDEFİM NEREDE — ROADMAP -->
+          <div class="ep-card anim-fade-up anim-fade-up-d2">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🗺️</div> Hedefe Yolculuğun</div>
+            </div>
+            <div id="target-roadmap"><p style="color:var(--text-muted)">Yükleniyor...</p></div>
+          </div>
+
+          <!-- GELİŞİM EĞRİSİ -->
+          <div class="ep-card anim-fade-up anim-fade-up-d3">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📈</div> Gelişim Yolculuğun</div>
+            </div>
+            <div id="net-trend-badge"></div>
+            <div id="net-trend-filters" class="ep-pusi-actions" style="margin:10px 0 4px"></div>
+            <div class="chart-box"><canvas id="net-area-chart"></canvas></div>
+            <div id="net-trend" class="mt-ep"></div>
+          </div>
+
+          <!-- GENEL BAŞARI SKORU -->
+          <div class="ep-card anim-fade-up anim-fade-up-d4">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Genel Başarı Skoru</div>
+            </div>
+            <div class="ep-score-hero">
+              <span class="ep-score-num" id="score-number-detail">—</span>
+              <span class="ep-score-denom">/ 100</span>
+              <span class="ep-score-delta" id="score-growth"></span>
+            </div>
+            <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
+            <div class="ep-radar-axes" id="radar-axes">
+              <!-- JS tarafından doldurulur -->
+            </div>
+          </div>
+
+          <!-- DERSLERİM (Enerji Kartları) -->
+          <div class="ep-card anim-fade-up anim-fade-up-d2">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">⚡</div> Derslerim</div>
+              <span class="ep-section-badge">Son deneme</span>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Son denemendeki netin, bir önceki denemene göre değişimi.</p>
+            <div class="ep-subject-grid" id="subject-energy"></div>
+          </div>
+
+          <!-- DERS YETKİNLİK RADARI -->
+          <div class="ep-card anim-fade-up anim-fade-up-d3">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📡</div> Ders Yetkinlik Radarı</div>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Son deneme netlerin, sınıf ortalamasıyla karşılaştırmalı.</p>
+            <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
+          </div>
+
+          <!-- BAŞARI PUSULASI (4 Quadrant) -->
+          <div class="ep-card anim-fade-up anim-fade-up-d3">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🧭</div> Başarı Pusulası</div>
+            </div>
+            <div id="compass" style="position:relative"></div>
+          </div>
+
+          <!-- GÜÇLÜ YÖNLERİN & GELİŞİM NOKTAN -->
+          <div class="ep-card anim-fade-up anim-fade-up-d4">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🧠</div> Güçlü Yönlerin & Gelişim Noktan</div>
+            </div>
+            <div class="ep-strengths-grid" id="strength-summary"></div>
+          </div>
+
+          <!-- SON BAŞARILAR -->
+          <div class="ep-card anim-fade-up anim-fade-up-d4">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
+            </div>
+            <div class="ep-achievements-grid" id="achievements"></div>
+          </div>
+
+          <!-- PUSİ — AI ASISTAN -->
+          <div class="ep-pusi anim-fade-up anim-fade-up-d5 mt-ep">
+            <div class="ep-pusi-avatar">🧭</div>
+            <div style="flex:1">
+              <span class="ep-pusi-label">🤖 Pusula AI — Pusi</span>
+              <p class="ep-pusi-text" id="pusi-message">Yükleniyor...</p>
+              <div class="ep-pusi-actions">
+                <button class="ep-pusi-btn" onclick="askPusi('performance')">📊 Performansımı Açıkla</button>
+                <button class="ep-pusi-btn" onclick="askPusi('plan')">📅 Bana Plan Hazırla</button>
+                <button class="ep-pusi-btn" onclick="askPusi('focus')">📚 Ne Çalışmalıyım?</button>
+                <button class="ep-pusi-btn" onclick="askPusi('motivate')">⚡ Motive Et</button>
+              </div>
+              <div class="ep-pusi-answer" id="pusi-answer" style="display:none"></div>
+            </div>
+          </div>
+
+          <!-- HAFTALİK EĞİTİM ROTASI -->
+          <div class="ep-card anim-fade-up" id="study-plan-card" style="display:none">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📅</div> Bu Haftaki Eğitim Rotası</div>
+            </div>
+            <div id="study-plan"></div>
+          </div>
+
+        </section>
+
+        <!-- ============ ANALİZLER ============ -->
+        <section class="page-section" id="page-analytics">
+
+          <div class="ep-card" id="topic-card" style="display:none;margin-top:0">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Konu Analizin (Son Deneme)</div>
+            </div>
+            <div id="topic-stats"></div>
+          </div>
+
+          <div class="ep-card mt-ep" id="error-memory-card" style="display:none">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🧠</div> Hata Hafızan</div>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">En son denemedeki yanlışların, o konudaki geçmiş performansına göre sınıflandırılması.</p>
+            <div id="error-memory-list"></div>
+            <div class="ep-pusi mt-ep" style="background:rgba(124,58,237,0.08)">
+              <div class="ep-pusi-avatar" style="width:44px;height:44px;font-size:20px">🤖</div>
+              <div>
+                <span class="ep-pusi-label">Pusula AI Yorumu</span>
+                <p class="ep-pusi-text" id="error-memory-comment"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="ep-card mt-ep">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📊</div> Genel Karşılaştırma</div>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Yalnızca sınıfların ortalama net bilgisi gösterilir; başka öğrencilerin bireysel bilgisine erişim yoktur.</p>
+            <div id="class-averages"></div>
+          </div>
+
+        </section>
+
+        <!-- ============ DENEMELERİM ============ -->
+        <section class="page-section" id="page-exams">
+          <div class="ep-card" style="margin-top:0">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">📝</div> Tüm Denemelerim</div>
+            </div>
+            <div id="exam-results"></div>
+          </div>
+        </section>
+
+        <!-- ============ AYARLAR ============ -->
+        <section class="page-section" id="page-settings">
+          <div class="ep-card" style="margin-top:0">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🔑</div> Şifremi Değiştir</div>
+            </div>
+            <div class="ep-settings-form">
+              <div>
+                <label class="form-label">Mevcut Şifre</label>
+                <input type="password" id="pw-current" class="form-control">
+              </div>
+              <div>
+                <label class="form-label">Yeni Şifre</label>
+                <input type="password" id="pw-new" class="form-control" placeholder="En az 4 karakter">
+              </div>
+            </div>
+            <button class="ep-task-cta mt-ep" style="margin-top:18px" onclick="changePassword()">🔒 Şifremi Değiştir</button>
+            <p style="margin-top:12px;font-size:13px;color:var(--text-muted)" id="pw-status"></p>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Mobil Alt Menü -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+    <button class="mobile-nav-item active" data-page="dashboard">
+      <span class="mobile-nav-icon">🏠</span><span class="mobile-nav-label">Ana Sayfa</span>
+    </button>
+    <button class="mobile-nav-item" data-page="analytics">
+      <span class="mobile-nav-icon">📊</span><span class="mobile-nav-label">Analiz</span>
+    </button>
+    <button class="mobile-nav-item" data-page="exams">
+      <span class="mobile-nav-icon">📝</span><span class="mobile-nav-label">Denemelerim</span>
+    </button>
+    <button class="mobile-nav-item" onclick="comingSoon('Edu AI')">
+      <span class="mobile-nav-icon">🤖</span><span class="mobile-nav-label">Edu AI</span>
+    </button>
+    <button class="mobile-nav-item" data-page="settings">
+      <span class="mobile-nav-icon">⚙️</span><span class="mobile-nav-label">Ayarlar</span>
+    </button>
+  </nav>
+
+  <script src="js/subjectSets.js"></script>
+  <script src="js/student/ogrenci.js"></script>
+</body>
+</html>

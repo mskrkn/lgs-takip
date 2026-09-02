@@ -1,0 +1,393 @@
+    /* ===================================================
+       EduPusula Öğretmen Paneli — Marka Retinti
+
+       marketing/ altındaki onaylı EduPusula kimliğiyle
+       (teal/ink/sky/amber/rose paleti, Bricolage Grotesque +
+       Plus Jakarta Sans + JetBrains Mono) hizalar — bkz.
+       css/student/ogrenci.css'teki aynı desen.
+       =================================================== */
+    :root {
+      --accent-primary: #14B8A6;
+      --accent-primary-light: #2DD4BF;
+      --accent-secondary: #3B82F6;
+      --accent-pink: #14B8A6;
+      --accent-gradient: linear-gradient(135deg, #0F766E 0%, #14B8A6 55%, #3B82F6 100%);
+      --accent-gradient-hover: linear-gradient(135deg, #3B82F6 0%, #14B8A6 55%, #0F766E 100%);
+      --ai-purple: #14B8A6;
+      --ai-purple-light: #2DD4BF;
+      --ai-purple-bg: rgba(20,184,166,0.15);
+      --shadow-glow: 0 0 35px -5px rgba(20,184,166,0.35);
+    }
+    .card-title, .page-title, .q-heading {
+      font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
+    }
+    .score-number, .student-kpi-val, .hero-metric-tile .value,
+    .summary-tile .value, .badge-net, .q-dir, .q-tags li b {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+    }
+    body::before {
+      background:
+        radial-gradient(circle at 20% 30%, rgba(20,184,166,0.18) 0%, transparent 45%),
+        radial-gradient(circle at 80% 20%, rgba(59,130,246,0.15) 0%, transparent 40%),
+        radial-gradient(circle at 50% 85%, rgba(6,182,212,0.14) 0%, transparent 50%),
+        radial-gradient(circle at 75% 70%, rgba(15,118,110,0.16) 0%, transparent 45%) !important;
+    }
+    .nav-item:hover { background: rgba(20,184,166,0.12) !important; }
+    .nav-item.active {
+      background: linear-gradient(90deg, rgba(20,184,166,0.22), rgba(59,130,246,0.12)) !important;
+      box-shadow: 0 4px 16px rgba(20,184,166,0.18), inset 0 0 0 1px rgba(20,184,166,0.3) !important;
+    }
+    .menu-toggle:hover {
+      background: rgba(20,184,166,0.2) !important;
+      border-color: rgba(20,184,166,0.4) !important;
+    }
+    .page-title {
+      background: linear-gradient(135deg, #ffffff 0%, #e2e8f0 70%, #5eead4 100%) !important;
+      -webkit-background-clip: text; background-clip: text;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: #2DD4BF !important;
+      box-shadow: 0 0 0 3px rgba(20,184,166,0.25), 0 0 20px rgba(20,184,166,0.2) !important;
+    }
+
+    table.simple-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    table.simple-table th, table.simple-table td {
+      text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--bg-glass-border); font-size: 13px;
+    }
+    table.simple-table th { color: var(--text-muted); font-weight: 600; }
+    .badge-net { font-weight: 800; color: var(--accent-primary-light); }
+    .net-up { color: #4ade80; font-weight: 700; }
+    .net-down { color: #fb7185; font-weight: 700; }
+    .net-neutral { color: var(--text-muted); }
+
+    .student-link {
+      background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+      color: var(--text-primary); font: inherit; text-decoration: underline;
+      text-decoration-color: rgba(255,255,255,0.25); text-align: left;
+    }
+    .student-link:hover { color: var(--accent-primary-light); }
+
+    /* ---- Öğrenciler Sayfası KPI & Araç Çubuğu ---- */
+    .student-kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px; margin-bottom: 18px;
+    }
+    .student-kpi-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--bg-glass-border);
+      border-radius: 14px; padding: 14px 16px;
+      display: flex; align-items: center; gap: 14px;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .student-kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(20,184,166, 0.35);
+    }
+    .student-kpi-icon {
+      width: 42px; height: 42px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; flex-shrink: 0;
+    }
+    .kpi-purple { background: rgba(15,118,110, 0.18); color: #5eead4; }
+    .kpi-blue { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+    .kpi-green { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; }
+    .kpi-orange { background: rgba(245, 158, 11, 0.18); color: #fde68a; }
+    .kpi-rose { background: rgba(244, 63, 94, 0.18); color: #fda4af; }
+
+    .student-kpi-val { font-size: 20px; font-weight: 800; color: #fff; line-height: 1.2; }
+    .student-kpi-lbl { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+
+    .student-toolbar {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: 12px; margin-bottom: 16px; padding: 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--bg-glass-border);
+      border-radius: 14px;
+    }
+    .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .student-search-box {
+      position: relative; min-width: 240px; flex: 1;
+    }
+    .student-search-box input {
+      width: 100%; padding: 9px 14px 9px 36px; border-radius: 10px;
+      background: rgba(13, 18, 38, 0.8); border: 1px solid var(--bg-glass-border);
+      color: #fff; font-size: 13.5px; font-family: inherit;
+    }
+    .student-search-box input:focus {
+      outline: none; border-color: var(--accent-primary);
+      box-shadow: 0 0 0 2px rgba(20,184,166, 0.2);
+    }
+    .student-search-box .search-icon {
+      position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+      color: var(--text-muted); font-size: 14px; pointer-events: none;
+    }
+    .filter-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-pill {
+      padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--bg-glass-border); background: rgba(255,255,255,0.03);
+      color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
+    }
+    .filter-pill:hover { background: rgba(255,255,255,0.08); color: #fff; }
+    .filter-pill.active {
+      background: var(--accent-primary); border-color: var(--accent-primary); color: #fff;
+    }
+
+    .sort-select {
+      padding: 8px 12px; border-radius: 10px; font-size: 13px;
+      background: rgba(13, 18, 38, 0.8); border: 1px solid var(--bg-glass-border);
+      color: var(--text-primary); cursor: pointer;
+    }
+    .sort-select:focus { outline: none; border-color: var(--accent-primary); }
+
+    .view-toggle-btns { display: flex; border: 1px solid var(--bg-glass-border); border-radius: 10px; overflow: hidden; }
+    .view-toggle-btn {
+      padding: 7px 12px; background: rgba(255,255,255,0.03); border: none;
+      color: var(--text-muted); cursor: pointer; font-size: 14px; transition: all 0.2s;
+    }
+    .view-toggle-btn:hover { color: #fff; }
+    .view-toggle-btn.active { background: rgba(20,184,166,0.25); color: var(--accent-primary-light); }
+
+    /* ---- Sıralı Tablo Görünümü ---- */
+    .ranked-table-wrapper {
+      width: 100%; overflow-x: auto; border-radius: 14px;
+      border: 1px solid var(--bg-glass-border); background: rgba(13, 18, 38, 0.4);
+    }
+    table.ranked-table {
+      width: 100%; border-collapse: collapse; text-align: left;
+    }
+    table.ranked-table th {
+      padding: 12px 14px; font-size: 12px; font-weight: 700;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;
+      background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--bg-glass-border);
+      white-space: nowrap;
+    }
+    table.ranked-table td {
+      padding: 12px 14px; font-size: 13.5px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      vertical-align: middle;
+    }
+    table.ranked-table tbody tr {
+      transition: background 0.15s ease; cursor: pointer;
+    }
+    table.ranked-table tbody tr:hover {
+      background: rgba(20,184,166, 0.08);
+    }
+
+    /* Sıralama Rozetleri */
+    .rank-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 28px; height: 28px; padding: 0 6px; border-radius: 8px;
+      font-size: 12.5px; font-weight: 800;
+    }
+    .rank-1 { background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; box-shadow: 0 0 10px rgba(245, 158, 11, 0.4); }
+    .rank-2 { background: linear-gradient(135deg, #94a3b8, #64748b); color: #fff; }
+    .rank-3 { background: linear-gradient(135deg, #d97706, #b45309); color: #fff; }
+    .rank-other { background: rgba(255, 255, 255, 0.06); color: var(--text-muted); border: 1px solid var(--bg-glass-border); }
+
+    .student-info-cell {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .student-avatar {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, rgba(20,184,166, 0.3), rgba(59,130,246, 0.3));
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800; color: #fff; flex-shrink: 0;
+    }
+    .student-name-main { font-weight: 700; color: #fff; font-size: 14px; }
+    .student-no-sub { font-size: 11.5px; color: var(--text-muted); }
+
+    .net-cell-badge {
+      font-size: 15px; font-weight: 800; color: #fff;
+    }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+    }
+    .status-badge.rising { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .status-badge.attention { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .status-badge.fluctuating { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .status-badge.stable { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .status-badge.new { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3); }
+
+    .btn-detail-sm {
+      padding: 6px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+      background: rgba(20,184,166, 0.15); border: 1px solid rgba(20,184,166, 0.35);
+      color: var(--accent-primary-light); cursor: pointer; transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .btn-detail-sm:hover {
+      background: var(--accent-primary); color: #fff; transform: translateX(2px);
+    }
+
+    /* ---- Kartlar Görünümü ---- */
+    .student-cards-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .student-grid-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--bg-glass-border);
+      border-radius: 16px; padding: 16px; position: relative;
+      cursor: pointer; transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    }
+    .student-grid-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(139, 92, 246, 0.5);
+      box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.5);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .card-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .card-stats-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      padding: 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.2);
+      margin: 12px 0;
+    }
+    .card-stat-item .label { font-size: 11px; color: var(--text-muted); }
+    .card-stat-item .val { font-size: 15px; font-weight: 800; color: #fff; margin-top: 2px; }
+
+    /* ---- Öğrenci Detay Modalı İçi Sekmeler & Tasarım ---- */
+    .modal-xl { width: 900px; max-width: 95vw; max-height: 90vh; }
+    .modal-student-hero {
+      background: linear-gradient(135deg, rgba(20,184,166,0.18), rgba(59,130,246,0.12) 60%, rgba(15,23,42,0.6));
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 18px;
+      padding: 20px 22px; margin-bottom: 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+    }
+    .hero-profile { display: flex; align-items: center; gap: 16px; }
+    .hero-avatar {
+      width: 56px; height: 56px; border-radius: 16px;
+      background: linear-gradient(135deg, #0D9488, #3B82F6);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; font-weight: 800; color: #fff;
+      box-shadow: 0 4px 14px rgba(20,184,166,0.4);
+    }
+    .hero-info h2 { font-size: 20px; font-weight: 800; color: #fff; margin: 0 0 4px 0; }
+    .hero-meta { display: flex; gap: 10px; font-size: 13px; color: var(--text-secondary); align-items: center; }
+    .hero-badge-pill {
+      background: rgba(255, 255, 255, 0.08); padding: 3px 10px;
+      border-radius: 6px; font-size: 12px; font-weight: 700; color: #fff;
+    }
+
+    .hero-metrics { display: flex; gap: 14px; flex-wrap: wrap; }
+    .hero-metric-tile {
+      background: rgba(13, 18, 38, 0.6); border: 1px solid var(--bg-glass-border);
+      border-radius: 12px; padding: 8px 14px; text-align: right;
+    }
+    .hero-metric-tile .label { font-size: 11px; color: var(--text-muted); }
+    .hero-metric-tile .value { font-size: 16px; font-weight: 800; color: #fff; margin-top: 2px; }
+
+    .detail-tabs-bar {
+      display: flex; gap: 8px; border-bottom: 1px solid var(--bg-glass-border);
+      padding-bottom: 10px; margin-bottom: 18px; overflow-x: auto;
+    }
+    .detail-tab-btn {
+      padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 700;
+      border: 1px solid transparent; background: transparent;
+      color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: all 0.2s;
+    }
+    .detail-tab-btn:hover { color: #fff; background: rgba(255,255,255,0.04); }
+    .detail-tab-btn.active {
+      background: rgba(20,184,166, 0.18); border-color: rgba(20,184,166, 0.4);
+      color: #fff;
+    }
+
+    .detail-tab-pane { display: none; }
+    .detail-tab-pane.active { display: block; animation: fadeIn 0.25s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    .score-hero {
+      display: flex; align-items: baseline; gap: 8px; margin: 10px 0 16px;
+    }
+    .score-number { font-size: 40px; font-weight: 900; color: #2dd4bf; line-height: 1; }
+    .score-sub { font-size: 18px; color: var(--text-muted); font-weight: 600; }
+    .score-growth { font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px; margin-left: 8px; }
+    .score-growth.up { background: rgba(16,185,129,0.15); color: #34d399; }
+    .score-growth.down { background: rgba(244,63,94,0.15); color: #fb7185; }
+
+    .badges-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .badge-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 10px;
+      background: rgba(15,118,110, 0.15); border: 1px solid rgba(15,118,110, 0.3);
+      color: #e2e8f0; font-size: 12.5px; font-weight: 600;
+    }
+
+    .subject-stat-card-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px; margin-top: 12px;
+    }
+    .subject-stat-card {
+      padding: 12px 14px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03); border: 1px solid var(--bg-glass-border);
+    }
+    .subject-stat-name { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+    .subject-stat-net { font-size: 16px; font-weight: 800; }
+    .subject-stat-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); margin: 6px 0; overflow: hidden; }
+    .subject-stat-fill { height: 100%; border-radius: 3px; }
+
+    .btn-print {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--bg-glass-border);
+      color: var(--text-primary); cursor: pointer; transition: all 0.2s;
+    }
+    .btn-print:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    /* ---- Risk & Başarı Pusulası ---- */
+    .risk-chart-box { position: relative; height: 320px; margin-top: 10px; }
+    .summary-tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 4px; }
+    .summary-tile {
+      padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.04);
+      border: 1px solid var(--bg-glass-border);
+    }
+    .summary-tile .label { font-size: 12px; color: var(--text-muted); }
+    .summary-tile .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
+
+    /* ---- Başarı Pusulası ---- */
+    :root {
+      --ep-teal: #14B8A6; --ep-success: #22C55E; --ep-sky: #3B82F6;
+      --ep-amber: #F59E0B; --ep-rose: #EF4444;
+    }
+    .compass-grid {
+      position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+      border-radius: 20px; overflow: hidden; border: 1px solid var(--bg-glass-border);
+    }
+    .quadrant {
+      position: relative; padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 6px;
+      min-height: 140px; background: color-mix(in srgb, var(--q) 10%, rgba(255,255,255,0.03));
+    }
+    .quadrant::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--q); }
+    .q-nw { border-top-left-radius: 18px; }
+    .q-ne { border-top-right-radius: 18px; }
+    .q-sw { border-bottom-left-radius: 18px; }
+    .q-se { border-bottom-right-radius: 18px; background: color-mix(in srgb, var(--q) 20%, rgba(255,255,255,0.03)); }
+    .q-dir { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--q); }
+    .q-heading { font-size: 14px; font-weight: 700; line-height: 1.2; margin: 2px 0 4px; }
+    .q-tags { list-style: none; display: flex; flex-direction: column; gap: 5px; margin-top: auto; padding: 0; }
+    .q-tags li { display: block; overflow: hidden; font-size: 12px; background: color-mix(in srgb, var(--q) 16%, transparent); border-radius: 8px; padding: 5px 9px; }
+    .q-tags li b { float: right; margin-left: 8px; color: var(--q); font-weight: 700; white-space: nowrap; }
+
+    .chart-box { position: relative; height: 280px; margin-top: 10px; }
+    .action-row { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+
+    @media (max-width: 768px) {
+      table.simple-table th, table.simple-table td { font-size: 14.5px; padding: 12px 10px; }
+      .compass-grid { grid-template-columns: 1fr; }
+      .modal-xl, .modal-lg { width: 96%; margin: 10px; max-height: 94vh; }
+      .modal-student-hero { flex-direction: column; align-items: flex-start; }
+      .hero-metrics { width: 100%; justify-content: space-between; }
+      .student-search-box { width: 100%; min-width: unset; }
+    }
+
+    @media print {
+      body * { visibility: hidden; }
+      #student-modal-overlay, #student-modal-overlay * { visibility: visible; }
+      #student-modal-overlay { position: absolute; left: 0; top: 0; width: 100%; background: #fff !important; color: #000 !important; }
+      .modal-xl, .modal-lg { width: 100% !important; max-width: 100% !important; box-shadow: none !important; border: none !important; background: #fff !important; color: #000 !important; }
+      .modal-close, .btn-print, .detail-tabs-bar { display: none !important; }
+      .detail-tab-pane { display: block !important; }
+      .modal-student-hero { background: #f1f5f9 !important; color: #000 !important; border: 1px solid #cbd5e1 !important; }
+      .hero-info h2, .student-name-main { color: #000 !important; }
+      table.simple-table th, table.simple-table td, table.ranked-table th, table.ranked-table td { color: #000 !important; border-color: #cbd5e1 !important; }
+    }

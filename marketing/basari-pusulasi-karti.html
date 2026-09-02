@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Başarı Pusulası Kartı</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ["'Bricolage Grotesque'", "system-ui", "sans-serif"],
+          sans: ["'Plus Jakarta Sans'", "system-ui", "sans-serif"],
+          mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    --bg: #EEF2F6;
+    --surface: #FFFFFF;
+    --text: #0F172A;
+    --text-muted: #55647D;
+    --border: #E2E8F0;
+    --teal: #0D9488;
+    --success: #16A34A;
+    --sky: #2563EB;
+    --amber: #B45309;
+    --rose: #DC2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0B1220;
+      --surface: #1E293B;
+      --text: #F1F5F9;
+      --text-muted: #94A3B8;
+      --border: #2D3B54;
+      --teal: #2DD4BF;
+      --success: #22C55E;
+      --sky: #60A5FA;
+      --amber: #F59E0B;
+      --rose: #F87171;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B1220;
+    --surface: #1E293B;
+    --text: #F1F5F9;
+    --text-muted: #94A3B8;
+    --border: #2D3B54;
+    --teal: #2DD4BF;
+    --success: #22C55E;
+    --sky: #60A5FA;
+    --amber: #F59E0B;
+    --rose: #F87171;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+
+  .demo-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 16px; }
+
+  .pusula-card {
+    width: 100%;
+    max-width: 560px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 28px;
+    box-shadow: 0 24px 60px -30px rgba(15, 23, 42, 0.35);
+  }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: var(--teal);
+    text-transform: uppercase;
+  }
+
+  .card-title { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; text-wrap: balance; }
+
+  .compass-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    margin-top: 22px;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .quadrant {
+    position: relative;
+    padding: 20px 18px 18px;
+    background: color-mix(in srgb, var(--q) 9%, var(--surface));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 168px;
+  }
+
+  .quadrant::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    background: var(--q);
+  }
+
+  .q-nw { border-top-left-radius: 20px; }
+  .q-ne { border-top-right-radius: 20px; }
+  .q-sw { border-bottom-left-radius: 20px; }
+  .q-se { border-bottom-right-radius: 20px; }
+
+  .q-dir {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--q);
+  }
+
+  .q-heading { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 15px; line-height: 1.2; }
+
+  .q-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+
+  .q-tags { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
+
+  .q-tags li {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12.5px;
+    background: color-mix(in srgb, var(--q) 14%, transparent);
+    border-radius: 8px;
+    padding: 5px 9px;
+  }
+
+  .q-tags b { font-family: 'JetBrains Mono', monospace; color: var(--q); font-weight: 600; }
+
+  .compass-pivot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 52px;
+    height: 52px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+  }
+
+  .footer-row {
+    margin-top: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .net-readout {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .net-readout b { color: var(--success); font-weight: 600; }
+
+  .cta {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: #ffffff;
+    background: var(--teal);
+    padding: 9px 16px;
+    border-radius: 10px;
+    border: none;
+    cursor: pointer;
+  }
+  .cta:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <div class="demo-wrap">
+    <div class="pusula-card">
+      <div class="eyebrow">Başarı Pusulası</div>
+      <h3 class="card-title" style="font-size: 20px; margin-top: 4px;">Ali Yılmaz'ın bu ayki yönü</h3>
+      <p class="q-desc" style="margin-top: 2px;">Son 5 LGS denemesi baz alınarak oluşturuldu</p>
+
+      <div class="compass-grid">
+        <div class="quadrant q-nw" style="--q: var(--sky)">
+          <span class="q-dir">KUZEY-BATI</span>
+          <h4 class="q-heading">Gelişim Alanları</h4>
+          <p class="q-desc">Son denemelerde neti yükselen dersler</p>
+          <ul class="q-tags">
+            <li>Türkçe <b>+4.5 net</b></li>
+            <li>Fen Bilimleri <b>+2.0 net</b></li>
+          </ul>
+        </div>
+        <div class="quadrant q-ne" style="--q: var(--success)">
+          <span class="q-dir">KUZEY-DOĞU</span>
+          <h4 class="q-heading">Güçlü Yönler</h4>
+          <p class="q-desc">%80 üzeri başarı sağlanan konular</p>
+          <ul class="q-tags">
+            <li>Matematik – Sayılar <b>%92</b></li>
+            <li>Fen – Kuvvet/Enerji <b>%86</b></li>
+          </ul>
+        </div>
+        <div class="quadrant q-sw" style="--q: var(--rose)">
+          <span class="q-dir">GÜNEY-BATI</span>
+          <h4 class="q-heading">Öncelikli Çalışma</h4>
+          <p class="q-desc">Acil müdahale gereken kazanımlar</p>
+          <ul class="q-tags">
+            <li>İnkılap – Atatürk İlkeleri</li>
+          </ul>
+        </div>
+        <div class="quadrant q-se" style="--q: var(--amber)">
+          <span class="q-dir">GÜNEY-DOĞU</span>
+          <h4 class="q-heading">Dikkat Edilmesi Gerekenler</h4>
+          <p class="q-desc">Yanlış oranı yüksek konular</p>
+          <ul class="q-tags">
+            <li>İngilizce – Zamanlar <b>%52</b></li>
+          </ul>
+        </div>
+
+        <div class="compass-pivot" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9.5" stroke="var(--text-muted)" stroke-width="1.2" opacity="0.5"/>
+            <path d="M12 4 L14 12 L12 20 L10 12 Z" fill="var(--teal)"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="footer-row">
+        <div class="net-readout">Genel yön: <b>Yükseliş ↗</b></div>
+        <button class="cta" type="button">Pusula Asistanı'na Sor</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

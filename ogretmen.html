@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Öğretmen Paneli - EduPusula</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <script src="js/vendor/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="css/teacher/ogretmen.css">
+</head>
+<body>
+  <div class="toast-container" id="toast-container"></div>
+
+  <div class="app-layout" id="app-layout">
+    <div class="sidebar-overlay"></div>
+
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">🧭</div>
+          <div class="sidebar-logo-text">
+            <h1>EduPusula</h1>
+            <p>Öğretmen Paneli</p>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Ana Menü</div>
+        <div class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">🏠</span><span>Ana Sayfa</span>
+        </div>
+        <div class="nav-item" data-page="analytics">
+          <span class="nav-icon">📊</span><span>Analizler</span>
+        </div>
+        <div class="nav-item" data-page="students">
+          <span class="nav-icon">👨‍🎓</span><span>Öğrenciler</span>
+        </div>
+        <div class="nav-item" data-page="exams">
+          <span class="nav-icon">📝</span><span>Denemeler</span>
+        </div>
+        <div class="nav-item" data-page="message">
+          <span class="nav-icon">✉️</span><span>Mesaj Gönder</span>
+        </div>
+
+        <div class="nav-item" data-page="ai">
+          <span class="nav-icon">🤖</span><span>Edu AI</span>
+        </div>
+
+        <div class="nav-section-title">Yakında</div>
+        <div class="nav-item" data-page="topics">
+          <span class="nav-icon">📚</span><span>Konular</span>
+          <span class="nav-badge">Yakında</span>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="nav-item" data-page="settings">
+          <span class="nav-icon">⚙️</span><span>Ayarlar</span>
+        </div>
+        <button class="pwa-install-btn" style="background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.3);color:#fb7185" onclick="logout()">
+          <span>🚪</span> <span>Çıkış Yap</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="header">
+        <div class="header-left">
+          <button class="menu-toggle" id="menu-toggle">☰</button>
+          <h2 class="page-title" id="page-title">Ana Sayfa <span id="page-subtitle">Kontrol Merkezi</span></h2>
+        </div>
+        <div class="header-right" style="display:flex;align-items:center;gap:12px">
+          <div class="header-search">
+            <input type="text" placeholder="Ara... (yakında)" disabled>
+            <span class="search-icon">🔍</span>
+          </div>
+          <button class="menu-toggle" onclick="comingSoon('Bildirimler')" title="Bildirimler">🔔</button>
+          <button class="menu-toggle" onclick="showPage('ai')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
+          <div id="header-sub" class="sync-status-pill sync-offline" title="Hesap">
+            <span class="sync-dot"></span><span>Yükleniyor...</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <!-- ============ ANA SAYFA (Kontrol Merkezi) ============ -->
+        <section class="page-section active" id="page-dashboard">
+          <div class="greeting-header">
+            <div>
+              <div class="greeting-title" id="greeting-title">👋 Hoş Geldiniz! 🧭</div>
+              <p class="greeting-sub">Öğrencilerinizin gelişimini takip edin, sorunları erken fark edin ve doğru yönlendirmeler yapın.</p>
+            </div>
+            <div class="greeting-date" id="greeting-date">📅 -</div>
+          </div>
+
+          <div class="stats-grid stats-grid-compact">
+            <div class="stat-card">
+              <div class="stat-icon purple">👨‍🎓</div>
+              <div class="stat-value" id="stat-student-count">-</div>
+              <div class="stat-label">Öğrenci</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon green">📈</div>
+              <div class="stat-value" id="stat-growth">-</div>
+              <div class="stat-label">Gelişim</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon orange">⚠️</div>
+              <div class="stat-value" id="stat-attention">-</div>
+              <div class="stat-label">Dikkat</div>
+            </div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🧭</span> EduPusula Öneriyor</h3></div>
+            <div id="priority-cards" class="priority-cards"><p class="text-muted">Yükleniyor...</p></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📈</span> Sınıf Gelişim Grafiği</h3></div>
+            <div class="chart-box"><canvas id="class-trend-chart"></canvas></div>
+            <p class="text-muted" id="growth-caption" style="margin-top:10px;font-size:13px"></p>
+          </div>
+
+          <div class="card mt-2" id="heatmap-section">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🔥</span> Konu Başarı Haritası</h3></div>
+            <div class="heatmap-grid">
+              <div id="heatmap-list"><p class="text-muted">Yükleniyor...</p></div>
+              <div class="ai-comment-box">
+                <span class="ai-comment-label">🤖 Edu AI</span>
+                <span id="ai-comment-text">Henüz yeterli veri yok.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🧭</span> Risk Haritası - Başarı Yönü</h3></div>
+            <p class="text-muted" style="font-size:13px">Yatay eksen: son denemelerdeki net değişimi. Dikey eksen: güncel net seviyesi. Sağ-üst (yeşil) = yükselişte, sol-alt (kırmızı) = risk altında.</p>
+            <div class="risk-chart-box"><canvas id="risk-scatter-chart"></canvas></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Öğrenci Durumları</h3></div>
+            <div id="radar-columns" class="radar-columns"><p class="text-muted">Yükleniyor...</p></div>
+          </div>
+        </section>
+
+        <!-- ============ ANALİZLER ============ -->
+        <section class="page-section" id="page-analytics">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Tüm Sınıfların Ortalaması (Genel Bilgi)</h3></div>
+            <p class="text-muted" style="font-size:13px">Diğer sınıfların yalnızca ortalama net bilgisi gösterilir; öğrenci adları görüntülenmez.</p>
+            <div id="other-class-averages"></div>
+          </div>
+
+          <div class="card mt-2" id="topic-card" style="display:none">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Konu Bazlı Başarı (Seçili Deneme - Sınıfım)</h3></div>
+            <p class="text-muted" style="font-size:13px">Denemeler sayfasından bir deneme seçtiğinizde burada güncellenir.</p>
+            <div id="topic-stats"></div>
+          </div>
+        </section>
+
+        <!-- ============ ÖĞRENCİLER ============ -->
+        <section class="page-section" id="page-students">
+          <!-- KPI Özet Kartları -->
+          <div class="student-kpi-grid" id="students-kpi-grid">
+            <div class="student-kpi-card">
+              <div class="student-kpi-icon kpi-purple">👨‍🎓</div>
+              <div>
+                <div class="student-kpi-val" id="kpi-total-students">-</div>
+                <div class="student-kpi-lbl">Toplam Öğrenci</div>
+              </div>
+            </div>
+            <div class="student-kpi-card">
+              <div class="student-kpi-icon kpi-blue">📊</div>
+              <div>
+                <div class="student-kpi-val" id="kpi-class-avg-net">-</div>
+                <div class="student-kpi-lbl">Sınıf Ortalaması</div>
+              </div>
+            </div>
+            <div class="student-kpi-card">
+              <div class="student-kpi-icon kpi-orange">🏆</div>
+              <div>
+                <div class="student-kpi-val" id="kpi-top-student-net">-</div>
+                <div class="student-kpi-lbl" id="kpi-top-student-name">Sınıf Birincisi</div>
+              </div>
+            </div>
+            <div class="student-kpi-card">
+              <div class="student-kpi-icon kpi-green">🚀</div>
+              <div>
+                <div class="student-kpi-val" id="kpi-rising-count">-</div>
+                <div class="student-kpi-lbl">Yükselişte Olanlar</div>
+              </div>
+            </div>
+            <div class="student-kpi-card">
+              <div class="student-kpi-icon kpi-rose">⚠️</div>
+              <div>
+                <div class="student-kpi-val" id="kpi-attention-count">-</div>
+                <div class="student-kpi-lbl">Takip Gerekenler</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Öğrenci Listesi Ana Kartı -->
+          <div class="card">
+            <div class="card-header" style="margin-bottom: 12px;">
+              <div>
+                <h3 class="card-title"><span class="card-icon">👨‍🎓</span> Sınıfımdaki Öğrenciler (<span id="my-class-name-2">-</span>)</h3>
+                <p class="text-muted" style="font-size:13px;margin-top:2px">Öğrencilerinizi sıralı listeden takip edebilir, herhangi bir öğrenciye tıklayarak tüm deneme, grafik, konu ve karne detaylarını inceleyebilirsiniz.</p>
+              </div>
+            </div>
+
+            <!-- Araç Çubuğu (Arama, Filtre, Sıralama, Görünüm) -->
+            <div class="student-toolbar">
+              <div class="toolbar-left">
+                <div class="student-search-box">
+                  <span class="search-icon">🔍</span>
+                  <input type="text" id="student-search-input" placeholder="Öğrenci adı veya okul no ile ara..." oninput="handleStudentSearch(this.value)">
+                </div>
+                <div class="filter-pills" id="student-filter-pills">
+                  <button type="button" class="filter-pill active" onclick="setStudentFilter('all', this)">Tümü (<span id="count-filter-all">0</span>)</button>
+                  <button type="button" class="filter-pill" onclick="setStudentFilter('rising', this)">🚀 Yükselişte (<span id="count-filter-rising">0</span>)</button>
+                  <button type="button" class="filter-pill" onclick="setStudentFilter('attention', this)">⚠️ Takip (<span id="count-filter-attention">0</span>)</button>
+                  <button type="button" class="filter-pill" onclick="setStudentFilter('fluctuating', this)">〰️ Dalgalı (<span id="count-filter-fluctuating">0</span>)</button>
+                </div>
+              </div>
+
+              <div class="toolbar-right">
+                <select id="student-sort-select" class="sort-select" onchange="handleStudentSort(this.value)">
+                  <option value="rank-asc">🏆 Sıralama: Son Net (Yüksek → Düşük)</option>
+                  <option value="avg-desc">📊 Ortalama Net (Yüksek → Düşük)</option>
+                  <option value="name-asc">🔤 İsim: A'dan Z'ye</option>
+                  <option value="name-desc">🔤 İsim: Z'den A'ya</option>
+                  <option value="number-asc">🔢 Okul No (Küçük → Büyük)</option>
+                  <option value="growth-desc">🚀 En Çok Gelişenler (Net Artışı)</option>
+                </select>
+
+                <div class="view-toggle-btns">
+                  <button type="button" class="view-toggle-btn active" id="btn-view-table" onclick="setStudentView('table')" title="Tablo Görünümü">📋 Tablo</button>
+                  <button type="button" class="view-toggle-btn" id="btn-view-cards" onclick="setStudentView('cards')" title="Kart Görünümü">📇 Kartlar</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Öğrenci Sıralı Tablo / Kart Listesi Kapsayıcısı -->
+            <div id="student-roster-container">
+              <p class="text-muted" style="padding: 20px; text-align: center;">Öğrenciler yükleniyor...</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ DENEMELER ============ -->
+        <section class="page-section" id="page-exams">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📝</span> Deneme Seç</h3></div>
+            <select id="exam-select" class="form-control" onchange="loadExamDetail(this.value)">
+              <option value="">Bir deneme seçin...</option>
+            </select>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Sınıf Genel Performansı</h3></div>
+            <div class="chart-box" id="class-bar-chart-box"><p class="text-muted">Sonuçları görmek için yukarıdan bir deneme seçin.</p></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">👥</span> Sınıfım (<span id="my-class-name">-</span>)</h3></div>
+            <div id="my-class-results">
+              <p class="text-muted">Sonuçları görmek için yukarıdan bir deneme seçin.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ MESAJ GÖNDER ============ -->
+        <section class="page-section" id="page-message">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">✉️</span> Öğrenciye Mesaj Gönder</h3></div>
+            <p class="text-muted" style="font-size:13px">Kendi yazdığınız bir mesajı doğrudan öğrencinin panelinde göstermek için gönderin.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px;margin-top:6px">
+              <div>
+                <label class="form-label">Sınıf</label>
+                <select id="message-class-select" class="form-control" disabled></select>
+              </div>
+              <div>
+                <label class="form-label">Öğrenci</label>
+                <select id="message-student-select" class="form-control">
+                  <option value="">Bir öğrenci seçin...</option>
+                </select>
+              </div>
+            </div>
+            <div class="mt-2">
+              <label class="form-label">Mesaj</label>
+              <textarea id="message-text" class="form-control" rows="4" maxlength="500" placeholder="Öğrenciye iletmek istediğiniz mesajı yazın..."></textarea>
+            </div>
+            <button type="button" class="btn btn-primary mt-2" onclick="sendCustomMessage()">📨 Gönder</button>
+            <p class="text-muted" id="message-send-status" style="margin-top:10px;font-size:13px"></p>
+          </div>
+        </section>
+
+        <!-- ============ KONULAR (yakında) ============ -->
+        <section class="page-section" id="page-topics">
+          <div class="card placeholder-page">
+            <div class="placeholder-icon">📚</div>
+            <h3>Konular çok yakında</h3>
+            <p>Müfredat bazlı konu takibi ve ders planı önerileri üzerinde çalışıyoruz.</p>
+          </div>
+        </section>
+
+        <!-- ============ EDU AI ============ -->
+        <section class="page-section" id="page-ai">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🧠</span> Edu AI - Eğitim Asistanın</h3></div>
+            <p class="text-muted">Bugün öğrencilerin hakkında ne öğrenmek istiyorsun?</p>
+            <p class="text-muted" style="font-size:12px">Not: Bu bir sohbet robotu değil - aşağıdaki her soru, sınıfınızın gerçek verilerinden anında hesaplanan bir cevap döndürür.</p>
+            <div class="ai-quick-questions">
+              <button type="button" class="ai-quick-btn ai-blue" onclick="askEduAI('rising')">🔵 En çok gelişen öğrencileri göster</button>
+              <button type="button" class="ai-quick-btn ai-purple" onclick="askEduAI('risk')">🟣 Risk altındaki öğrencileri analiz et</button>
+              <button type="button" class="ai-quick-btn ai-green" onclick="askEduAI('topic')">🟢 Bu hafta hangi konuyu tekrar etmeliyim?</button>
+              <button type="button" class="ai-quick-btn ai-orange" onclick="askEduAI('plan')">🟠 Sınıfım için çalışma planı oluştur</button>
+            </div>
+            <div id="ai-answer" class="mt-2"></div>
+          </div>
+        </section>
+
+        <!-- ============ AYARLAR ============ -->
+        <section class="page-section" id="page-settings">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">👤</span> Hesap Bilgisi</h3></div>
+            <div class="summary-tile-grid">
+              <div class="summary-tile"><div class="label">Ad Soyad</div><div class="value" id="settings-name">-</div></div>
+              <div class="summary-tile"><div class="label">Sınıf</div><div class="value" id="settings-class">-</div></div>
+            </div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🔑</span> Şifremi Değiştir</h3></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px">
+              <div>
+                <label class="form-label">Mevcut Şifre</label>
+                <input type="password" id="pw-current" class="form-control">
+              </div>
+              <div>
+                <label class="form-label">Yeni Şifre</label>
+                <input type="password" id="pw-new" class="form-control" placeholder="En az 4 karakter">
+              </div>
+            </div>
+            <button class="btn btn-primary mt-2" onclick="changePassword()">Şifremi Değiştir</button>
+            <p class="text-muted" id="pw-status" style="margin-top:10px;font-size:13px"></p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Mobil Alt Menü -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+    <button class="mobile-nav-item active" data-page="dashboard">
+      <span class="mobile-nav-icon">🏠</span><span class="mobile-nav-label">Ana Sayfa</span>
+    </button>
+    <button class="mobile-nav-item" data-page="analytics">
+      <span class="mobile-nav-icon">📊</span><span class="mobile-nav-label">Analiz</span>
+    </button>
+    <button class="mobile-nav-item" data-page="students">
+      <span class="mobile-nav-icon">👨‍🎓</span><span class="mobile-nav-label">Öğrenciler</span>
+    </button>
+    <button class="mobile-nav-item" data-page="ai">
+      <span class="mobile-nav-icon">🤖</span><span class="mobile-nav-label">Edu AI</span>
+    </button>
+    <button class="mobile-nav-item" data-page="settings">
+      <span class="mobile-nav-icon">⚙️</span><span class="mobile-nav-label">Ayarlar</span>
+    </button>
+  </nav>
+
+  <!-- ========== ÖĞRENCİ DETAY MODALI ========== -->
+  <div class="modal-overlay" id="student-modal-overlay">
+    <div class="modal modal-xl">
+      <div class="modal-header" style="border-bottom:none;padding-bottom:0">
+        <h2 id="student-modal-title" style="display:none">Öğrenci Detayı</h2>
+        <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+          <button type="button" class="btn-print" onclick="window.print()" title="Öğrenci karnesini yazdır / PDF olarak kaydet">🖨️ Yazdır / Rapor Al</button>
+          <button class="modal-close" onclick="closeStudentModal()" title="Kapat">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" id="student-modal-body" style="padding-top:4px">
+        <p class="text-muted" style="padding:40px;text-align:center">Öğrenci bilgileri yükleniyor...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== LİSTE MODALI (Düşüş / Tebrik) ========== -->
+  <div class="modal-overlay" id="list-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="list-modal-title">Öğrenciler</h2>
+        <button class="modal-close" onclick="closeListModal()">✕</button>
+      </div>
+      <div class="modal-body" id="list-modal-body"></div>
+    </div>
+  </div>
+
+  <script src="js/subjectSets.js"></script>
+  <script src="js/teacher/ogretmen.js"></script>
+</body>
+</html>

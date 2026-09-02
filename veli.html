@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veli Paneli - EduPusula</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <script src="js/vendor/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="css/parent/veli.css">
+</head>
+<body>
+  <div class="app-layout" id="app-layout">
+    <div class="sidebar-overlay"></div>
+
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">🧭</div>
+          <div class="sidebar-logo-text">
+            <h1>EduPusula</h1>
+            <p>Veli Paneli</p>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Ana Menü</div>
+        <div class="nav-item active" data-page="dashboard"><span class="nav-icon">🏠</span><span>Ana Sayfa</span></div>
+        <div class="nav-item" data-page="analytics"><span class="nav-icon">📊</span><span>Analizler</span></div>
+        <div class="nav-item" data-page="exams"><span class="nav-icon">📝</span><span>Denemeler</span></div>
+
+        <div class="nav-section-title">Yakında</div>
+        <div class="nav-item" onclick="comingSoon('Konular')"><span class="nav-icon">📚</span><span>Konular</span><span class="nav-badge">Yakında</span></div>
+        <div class="nav-item" onclick="comingSoon('Edu AI')"><span class="nav-icon">🤖</span><span>Edu AI</span><span class="nav-badge">Yakında</span></div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span><span>Ayarlar</span></div>
+        <button class="pwa-install-btn" style="background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.3);color:#fb7185" onclick="logout()">
+          <span>🚪</span> <span>Çıkış Yap</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="header">
+        <div class="header-left">
+          <button class="menu-toggle" id="menu-toggle">☰</button>
+          <h2 class="page-title" id="page-title">Ana Sayfa <span id="page-subtitle">Kontrol Merkezi</span></h2>
+        </div>
+        <div class="header-right" style="display:flex;align-items:center;gap:12px">
+          <button class="menu-toggle" onclick="comingSoon('Bildirimler')" title="Bildirimler">🔔</button>
+          <button class="menu-toggle" onclick="comingSoon('Edu AI')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
+          <div id="header-sub" class="sync-status-pill sync-offline" title="Hesap"><span class="sync-dot"></span><span>Yükleniyor...</span></div>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <div class="card mt-2" id="children-card" style="display:none">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">🧒</span> Çocuğunuz</h3></div>
+          <div id="child-tabs" class="child-tabs"></div>
+        </div>
+
+        <!-- ============ ANA SAYFA ============ -->
+        <section class="page-section active" id="page-dashboard">
+          <div class="greeting-header">
+            <div>
+              <div class="greeting-title" id="greeting-title">👋 Hoş Geldiniz! 🧭</div>
+              <p class="greeting-sub">Çocuğunuzun akademik gelişimini takip edin, güçlü yönlerini ve gelişim alanlarını keşfedin.</p>
+            </div>
+            <div class="greeting-date" id="greeting-date">📅 -</div>
+          </div>
+
+          <div class="stats-grid stats-grid-compact" id="scorecards"></div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Genel Başarı Skoru</h3></div>
+            <div class="score-hero">
+              <span class="score-number" id="score-number">-</span>
+              <span class="score-sub">/ 100</span>
+              <span class="score-growth" id="score-growth"></span>
+            </div>
+            <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
+            <div class="badges-row" id="badges-row"></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📌</span> Özet</h3></div>
+            <div id="summary" class="summary-tile-grid"></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🧭</span> Başarı Pusulası</h3></div>
+            <div id="compass"></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📡</span> Ders Yetkinlik Radarı</h3></div>
+            <p class="text-muted" style="font-size:13px">Son deneme netleri, sınıf ortalamasıyla karşılaştırmalı.</p>
+            <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📈</span> Gelişim Eğrisi</h3></div>
+            <div class="chart-box"><canvas id="net-area-chart"></canvas></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🎚️</span> Ders Bazlı İlerleme</h3></div>
+            <div id="subject-progress" class="subject-progress-list"></div>
+          </div>
+
+          <div class="card mt-2" id="study-plan-card" style="display:none">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📅</span> Bu Haftaki Eğitim Rotası</h3></div>
+            <div id="study-plan"></div>
+          </div>
+        </section>
+
+        <!-- ============ ANALİZLER ============ -->
+        <section class="page-section" id="page-analytics">
+          <div class="card" id="topic-card" style="display:none">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> En Son Denemedeki Zayıf Konular</h3></div>
+            <div id="topic-stats"></div>
+          </div>
+
+          <div class="card mt-2" id="error-memory-card" style="display:none">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🧠</span> Hata Hafızası</h3></div>
+            <p class="text-muted" style="font-size:13px">En son denemedeki yanlışların, o konudaki geçmiş performansına göre sınıflandırılması.</p>
+            <div id="error-memory-list"></div>
+            <div class="ai-comment-box mt-2">
+              <span class="ai-comment-label">🤖 Edu AI</span>
+              <span id="error-memory-comment"></span>
+            </div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Genel Sınıf Ortalamaları (Genel Bilgi)</h3></div>
+            <p class="text-muted" style="font-size:13px">Yalnızca ortalama net bilgisi gösterilir; diğer öğrencilerin bilgisine erişim yoktur.</p>
+            <div id="class-averages"></div>
+          </div>
+        </section>
+
+        <!-- ============ DENEMELER ============ -->
+        <section class="page-section" id="page-exams">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📝</span> Deneme Sonuçları</h3></div>
+            <div id="exam-results"></div>
+          </div>
+        </section>
+
+        <!-- ============ AYARLAR ============ -->
+        <section class="page-section" id="page-settings">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🔑</span> Şifremi Değiştir</h3></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px">
+              <div>
+                <label class="form-label">Mevcut Şifre</label>
+                <input type="password" id="pw-current" class="form-control">
+              </div>
+              <div>
+                <label class="form-label">Yeni Şifre</label>
+                <input type="password" id="pw-new" class="form-control" placeholder="En az 4 karakter">
+              </div>
+            </div>
+            <button class="btn btn-primary mt-2" onclick="changePassword()">Şifremi Değiştir</button>
+            <p class="text-muted" id="pw-status" style="margin-top:10px;font-size:13px"></p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Mobil Alt Menü -->
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+    <button class="mobile-nav-item active" data-page="dashboard">
+      <span class="mobile-nav-icon">🏠</span><span class="mobile-nav-label">Ana Sayfa</span>
+    </button>
+    <button class="mobile-nav-item" data-page="analytics">
+      <span class="mobile-nav-icon">📊</span><span class="mobile-nav-label">Analiz</span>
+    </button>
+    <button class="mobile-nav-item" data-page="exams">
+      <span class="mobile-nav-icon">📝</span><span class="mobile-nav-label">Denemeler</span>
+    </button>
+    <button class="mobile-nav-item" onclick="comingSoon('Edu AI')">
+      <span class="mobile-nav-icon">🤖</span><span class="mobile-nav-label">Edu AI</span>
+    </button>
+    <button class="mobile-nav-item" data-page="settings">
+      <span class="mobile-nav-icon">⚙️</span><span class="mobile-nav-label">Ayarlar</span>
+    </button>
+  </nav>
+
+  <script src="js/subjectSets.js"></script>
+  <script src="js/parent/veli.js"></script>
+</body>
+</html>

@@ -6,11 +6,21 @@ const App = {
   currentPage: 'dashboard',
   currentStudentId: null,
   deferredPwaPrompt: null,
+  currentUser: null,
+  _currentPageData: {},
+  _navHistory: [], // { page, data } yığını - bkz. navigateTo/goBack
 
   // ---- Initialize ----
   async init() {
     // Background self-healing for student-exam matches and duplicates
     db.repairAndLinkStudents().catch(console.error);
+
+    // Karşılama başlığı için giriş yapan admin bilgisi (bkz. renderDashboard)
+    try {
+      this.currentUser = await fetch('/api/me').then(r => r.json());
+    } catch (e) {
+      this.currentUser = null;
+    }
 
     // Initialize Cloud Sync Module
     if (typeof SyncModule !== 'undefined') {
@@ -85,7 +95,16 @@ const App = {
     });
   },
 
-  async navigateTo(page, data = {}) {
+  async navigateTo(page, data = {}, _isBack = false) {
+    // "Geri" ile gelinmiyorsa ve gerçekten farklı bir sayfaya geçiliyorsa,
+    // ayrıldığımız sayfayı (ve verisini) geçmiş yığınına ekle - bkz. goBack().
+    // Aynı sayfa içi veri değişiklikleri (ör. refreshCurrentPage) geçmişe
+    // eklenmez, yalnızca sayfa geçişleri izlenir.
+    if (!_isBack && this.currentPage && this.currentPage !== page) {
+      this._navHistory.push({ page: this.currentPage, data: this._currentPageData || {} });
+    }
+    this._currentPageData = data;
+
     // Update active nav in sidebar and mobile bottom nav
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.classList.toggle('active', item.dataset.page === page);
@@ -112,6 +131,8 @@ const App = {
       import: ['Veri Girişi', 'Manuel & Dosya İle'],
       reports: ['Raporlar', 'Dışa Aktarma & Paylaşım'],
       settings: ['Ayarlar', 'Veri Yönetimi'],
+      users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
+      'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
     };
 
     const [title, subtitle] = titles[page] || [page, ''];
@@ -149,11 +170,31 @@ const App = {
       case 'settings':
         await this.renderSettings();
         break;
+      case 'users':
+        await AdminUsers.render();
+        break;
+      case 'demo-talepleri':
+        await DemoRequests.render();
+        break;
     }
 
     // Close mobile sidebar
     document.querySelector('.sidebar')?.classList.remove('open');
     document.querySelector('.sidebar-overlay')?.classList.remove('active');
+
+    this._updateBackButton();
+  },
+
+  // Geçmiş yığınındaki bir önceki sayfaya döner (bkz. navigateTo)
+  goBack() {
+    const prev = this._navHistory.pop();
+    if (!prev) return;
+    this.navigateTo(prev.page, prev.data, true);
+  },
+
+  _updateBackButton() {
+    const btn = document.getElementById('nav-back-btn');
+    if (btn) btn.style.display = this._navHistory.length > 0 ? '' : 'none';
   },
 
   refreshCurrentPage() {
@@ -186,6 +227,270 @@ const App = {
   // ========================================
 
   // ---- Dashboard ----
+  // Öğretmen panelindeki /api/teacher/insights ile aynı mantık, burada
+  // Dexie üzerinden okul geneli (tüm sınıflar) için istemci tarafında
+  // hesaplanır - ayrı bir sunucu uç noktasına ihtiyaç yok.
+  async buildDashboardInsights() {
+    const [students, exams, allResults] = await Promise.all([
+      db.getAllStudents(),
+      db.getAllExams(),
+      db.db.results.toArray(),
+    ]);
+    if (students.length === 0 || exams.length === 0) return null;
+
+    const examMap = {};
+    exams.forEach(e => { examMap[e.id] = e; });
+    const studentMap = {};
+    students.forEach(s => { studentMap[s.id] = s; });
+
+    const byStudent = {};
+    allResults.forEach(r => {
+      const exam = examMap[r.examId];
+      if (!exam) return;
+      (byStudent[r.studentId] = byStudent[r.studentId] || []).push({
+        examId: r.examId, examName: exam.name, examDate: exam.date,
+        totalNet: db.calcTotalNet(r), subjects: r.subjects || {},
+      });
+    });
+    Object.values(byStudent).forEach(list => list.sort((a, b) => new Date(a.examDate) - new Date(b.examDate)));
+
+    // ---- 1) Son 3 denemede düşüşe geçen ders ----
+    const declineCounts = {};
+    Object.entries(byStudent).forEach(([sid, results]) => {
+      if (results.length < 3) return;
+      const last3 = results.slice(-3);
+      const keys = new Set();
+      last3.forEach(r => Object.keys(r.subjects).forEach(k => keys.add(k)));
+      keys.forEach(key => {
+        const nets = last3.map(r => r.subjects[key]?.net);
+        if (nets.some(n => n == null)) return;
+        if (nets[0] > nets[1] && nets[1] > nets[2]) {
+          (declineCounts[key] = declineCounts[key] || []).push(Number(sid));
+        }
+      });
+    });
+    let decline = null;
+    const declineEntries = Object.entries(declineCounts).sort((a, b) => b[1].length - a[1].length);
+    if (declineEntries.length) {
+      const [key, ids] = declineEntries[0];
+      decline = { subjectKey: key, count: ids.length, students: ids.map(id => ({ id, firstName: studentMap[id].firstName, lastName: studentMap[id].lastName })) };
+    }
+
+    // ---- 2) Kişisel rekor kıran öğrenciler ----
+    const personalRecords = [];
+    Object.entries(byStudent).forEach(([sid, results]) => {
+      if (results.length < 2) return;
+      const nets = results.map(r => r.totalNet);
+      const last = nets[nets.length - 1];
+      const prevMax = Math.max(...nets.slice(0, -1));
+      if (last >= prevMax && last > nets[nets.length - 2]) {
+        const s = studentMap[sid];
+        personalRecords.push({ id: Number(sid), firstName: s.firstName, lastName: s.lastName, totalNet: last, examName: results[results.length - 1].examName });
+      }
+    });
+
+    // ---- 3) Okul geneli net trendi (son 10 deneme) ----
+    const sortedExams = [...exams].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const averagesMap = await db.getAllExamsAverages();
+    const trendExams = sortedExams
+      .filter(e => averagesMap[e.id])
+      .slice(-10)
+      .map(e => ({ examId: e.id, examName: e.name, avgNet: averagesMap[e.id].totalNet }));
+    let growthPct = null;
+    if (trendExams.length >= 2 && trendExams[0].avgNet) {
+      growthPct = Math.round((trendExams[trendExams.length - 1].avgNet - trendExams[0].avgNet) / trendExams[0].avgNet * 1000) / 10;
+    }
+
+    // ---- 4) Konu başarı haritası: cevap anahtarlı en güncel deneme ----
+    let topicHeatmap = null, aiComment = null, belowAvgTopic = null;
+    for (let i = sortedExams.length - 1; i >= 0; i--) {
+      const analysis = await db.getExamTopicAnalysis(sortedExams[i].id);
+      if (analysis && analysis.hasData) {
+        topicHeatmap = analysis.topicStats.slice(0, 8);
+        break;
+      }
+    }
+    if (topicHeatmap && topicHeatmap.length) {
+      const weakest = topicHeatmap[0];
+      aiComment = `Öğrencilerin en çok zorlandığı alan ${weakest.kazanim} (%${weakest.successRate} başarı). Önümüzdeki hafta kısa bir tekrar yapılması öneriliyor.`;
+      const overallAvg = topicHeatmap.reduce((s, t) => s + t.successRate, 0) / topicHeatmap.length;
+      const weak = topicHeatmap.filter(t => t.successRate < overallAvg);
+      if (weak.length) belowAvgTopic = weak.reduce((min, t) => t.successRate < min.successRate ? t : min, weak[0]);
+    }
+
+    // ---- 5) Öğrenci radarı ----
+    const rising = [], attention = [], fluctuating = [];
+    Object.entries(byStudent).forEach(([sid, results]) => {
+      if (results.length < 2) return;
+      const window = results.length >= 3 ? results.slice(-3) : results.slice(-2);
+      const nets = window.map(r => r.totalNet);
+      const s = studentMap[sid];
+      const info = { id: Number(sid), firstName: s.firstName, lastName: s.lastName };
+      let increasing = true, decreasing = true;
+      for (let i = 0; i < nets.length - 1; i++) {
+        if (!(nets[i] < nets[i + 1])) increasing = false;
+        if (!(nets[i] > nets[i + 1])) decreasing = false;
+      }
+      if (increasing) rising.push(info);
+      else if (decreasing) attention.push(info);
+      else fluctuating.push(info);
+    });
+
+    return {
+      priority: { decline, belowAvgTopic, personalRecords },
+      trend: { exams: trendExams, growthPct },
+      topicHeatmap, aiComment,
+      radar: { rising, attention, fluctuating },
+    };
+  },
+
+  openDeclineModal() {
+    if (!this._insights?.priority?.decline) return;
+    const d = this._insights.priority.decline;
+    this._openInsightListModal(`${SUBJECT_LOOKUP[d.subjectKey]?.name || d.subjectKey} - Düşüş Gösteren Öğrenciler`,
+      d.students.map(s => ({ ...s, onClick: () => this.navigateTo('student-profile', { studentId: s.id }) })));
+  },
+
+  _openInsightListModal(title, items) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header"><h2>${title}</h2><button class="modal-close" data-close>✕</button></div>
+        <div class="modal-body" id="insight-list-modal-body"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    const close = () => { overlay.remove(); document.body.style.overflow = ''; };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-close]')) close(); });
+    const body = overlay.querySelector('#insight-list-modal-body');
+    items.forEach(item => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'radar-item';
+      btn.style.padding = '12px';
+      btn.textContent = `👤 ${item.firstName} ${item.lastName}`;
+      btn.onclick = () => { close(); item.onClick(); };
+      body.appendChild(btn);
+    });
+    if (!items.length) body.innerHTML = '<p class="text-muted">Kayıt bulunamadı.</p>';
+  },
+
+  openCongratsModal() {
+    const records = (this._insights && this._insights.priority && this._insights.priority.personalRecords) || [];
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header"><h2>Tebrik Mesajları</h2><button class="modal-close" data-close>✕</button></div>
+        <div class="modal-body">${records.length ? records.map((s, i) => {
+          const msg = `Tebrikler ${s.firstName}! ${s.examName} denemesinde ${s.totalNet} net ile kişisel rekorunu kırdın. Bu tempoyla devam! 🎉`;
+          return `<div class="summary-tile" style="margin-bottom:10px">
+            <div class="stat-label">${s.firstName} ${s.lastName}</div>
+            <p style="font-size:13.5px;margin-top:6px">${msg}</p>
+            <button type="button" class="btn btn-primary btn-sm mt-2" data-send-congrats data-student-id="${s.id}" data-message="${msg.replace(/"/g, '&quot;')}">📨 Öğrenciye Gönder</button>
+          </div>`;
+        }).join('') : '<p class="text-muted">Henüz kişisel rekor kıran öğrenci yok.</p>'}</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    const close = () => { overlay.remove(); document.body.style.overflow = ''; };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('[data-close]')) { close(); return; }
+      const sendBtn = e.target.closest('[data-send-congrats]');
+      if (sendBtn) App.sendCongratsMessage(Number(sendBtn.dataset.studentId), sendBtn.dataset.message, sendBtn);
+    });
+  },
+
+  async sendCongratsMessage(studentId, message, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Gönderiliyor...';
+    try {
+      const res = await fetch('/api/teacher/message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, message }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Gönderilemedi.');
+      btn.textContent = '✅ Öğrenciye Gönderildi';
+      UI.toast('Mesaj öğrenciye gönderildi.', 'success');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '📨 Öğrenciye Gönder';
+      UI.toast('Mesaj gönderilemedi: ' + err.message, 'danger');
+    }
+  },
+
+  renderInsightSections(insights) {
+    const priorityEl = document.getElementById('priority-cards');
+    const heatEl = document.getElementById('heatmap-list');
+    const aiEl = document.getElementById('ai-comment-text');
+    const radarEl = document.getElementById('radar-columns');
+    const growthEl = document.getElementById('dashboard-growth-caption');
+    if (!priorityEl) return;
+
+    if (!insights) {
+      priorityEl.innerHTML = '<p class="text-muted">Yeterli veri birikince öneriler burada görünecek.</p>';
+      heatEl.innerHTML = '<p class="text-muted">Henüz veri yok.</p>';
+      radarEl.innerHTML = '<p class="text-muted">Henüz veri yok.</p>';
+      return;
+    }
+    this._insights = insights;
+
+    const cards = [];
+    if (insights.priority.decline) {
+      const d = insights.priority.decline;
+      cards.push(`<div class="priority-card priority-critical">
+        <span class="priority-label">🔴 Öncelikli</span>
+        <p>${d.count} öğrencinin ${SUBJECT_LOOKUP[d.subjectKey]?.name || d.subjectKey} performansı son 3 denemede düşüş gösteriyor.</p>
+        <button class="priority-action" onclick="App.openDeclineModal()">Öğrencileri Gör →</button>
+      </div>`);
+    }
+    if (insights.priority.belowAvgTopic) {
+      const t = insights.priority.belowAvgTopic;
+      cards.push(`<div class="priority-card priority-warning">
+        <span class="priority-label">🟠 Dikkat</span>
+        <p>Okul genelinde <b>${t.kazanim}</b> konusu ortalamanın altında (%${t.successRate}).</p>
+        <button class="priority-action" onclick="document.getElementById('dashboard-heatmap-card').scrollIntoView({behavior:'smooth'})">Konu Analizine Git →</button>
+      </div>`);
+    }
+    if (insights.priority.personalRecords.length) {
+      cards.push(`<div class="priority-card priority-success">
+        <span class="priority-label">🟢 Başarı</span>
+        <p>${insights.priority.personalRecords.length} öğrenci son denemede kişisel rekorunu kırdı! 🎉</p>
+        <button class="priority-action" onclick="App.openCongratsModal()">Tebrik Mesajı Oluştur →</button>
+      </div>`);
+    }
+    priorityEl.innerHTML = cards.length ? cards.join('') : '<p class="text-muted">Şu an öne çıkan bir durum yok - her şey yolunda görünüyor 🎉</p>';
+
+    if (insights.topicHeatmap && insights.topicHeatmap.length) {
+      heatEl.innerHTML = insights.topicHeatmap.map(t => {
+        const cls = t.successRate < 50 ? 'hm-red' : t.successRate < 70 ? 'hm-yellow' : 'hm-green';
+        const icon = t.successRate < 50 ? '🔴' : t.successRate < 70 ? '🟡' : '🟢';
+        return `<div class="heatmap-row"><span class="heatmap-topic">${t.subjectName ? t.subjectName + ' - ' : ''}${t.kazanim}</span><span class="heatmap-score ${cls}">${icon} %${t.successRate}</span></div>`;
+      }).join('');
+    } else {
+      heatEl.innerHTML = '<p class="text-muted">Cevap anahtarlı (optik) bir deneme olmadığı için konu haritası henüz oluşturulamıyor.</p>';
+    }
+    if (aiEl) aiEl.textContent = insights.aiComment || 'Henüz yeterli veri yok.';
+
+    const col = (title, icon, items) => `
+      <div class="radar-column">
+        <h4>${icon} ${title}</h4>
+        ${items.length ? items.map(s => `<button type="button" class="radar-item" onclick="App.navigateTo('student-profile', {studentId: ${s.id}})">${s.firstName} ${s.lastName}</button>`).join('') : '<p class="text-muted" style="font-size:12.5px">Yok</p>'}
+      </div>`;
+    radarEl.innerHTML = col('Yükselişte', '🚀', insights.radar.rising) + col('Takip Gerekli', '⚠️', insights.radar.attention) + col('Dalgalı Performans', '〰️', insights.radar.fluctuating);
+
+    if (growthEl) {
+      if (insights.trend.growthPct != null) {
+        const dir = insights.trend.growthPct >= 0 ? 'gelişim' : 'gerileme';
+        growthEl.textContent = `📈 Okul genelinde son ${insights.trend.exams.length} denemede %${Math.abs(insights.trend.growthPct)} ${dir} gözlemlendi.`;
+      } else {
+        growthEl.textContent = '';
+      }
+    }
+  },
+
   async renderDashboard() {
     const container = document.getElementById('page-dashboard');
     const studentCount = await db.getStudentCount();
@@ -202,7 +507,18 @@ const App = {
     const criticalAlerts = alerts.filter(a => a.type === 'critical');
     const warningAlerts = alerts.filter(a => a.type === 'warning');
 
+    const greetingName = this.currentUser?.displayName || 'Yöneticim';
+    const todayStr = new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
+
     container.innerHTML = `
+      <div class="greeting-header">
+        <div>
+          <div class="greeting-title">👋 Hoş Geldiniz, ${greetingName}! 🧭</div>
+          <p class="greeting-sub">Okulunuzun gelişimini takip edin, sorunları erken fark edin ve doğru yönlendirmeler yapın.</p>
+        </div>
+        <div class="greeting-date">📅 ${todayStr}</div>
+      </div>
+
       <!-- Stats (küçük/sıkışık) -->
       <div class="stats-grid stats-grid-compact">
         <div class="stat-card">
@@ -229,8 +545,14 @@ const App = {
         </div>
       </div>
 
+      <!-- EduPusula Öneriyor -->
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🧭</span> EduPusula Öneriyor</h3></div>
+        <div id="priority-cards" class="priority-cards"><p class="text-muted">Yükleniyor...</p></div>
+      </div>
+
       <!-- Büyük Öğrenci Arama -->
-      <div class="card dashboard-search-card">
+      <div class="card dashboard-search-card mt-2">
         <h3>🔍 Öğrenci Bul</h3>
         <p class="text-muted">İsim veya okul numarası yazarak bir öğrencinin profiline anında ulaşın</p>
         <div class="dashboard-search-wrap">
@@ -273,6 +595,7 @@ const App = {
           <div class="chart-container" style="height:300px">
             <canvas id="dashboard-school-trend"></canvas>
           </div>
+          <p class="text-muted" id="dashboard-growth-caption" style="margin-top:6px;font-size:13px"></p>
         </div>
 
         <!-- Alerts -->
@@ -309,6 +632,24 @@ const App = {
         </div>
       </div>
       ` : ''}
+
+      <!-- Konu Başarı Haritası -->
+      <div class="card mt-2" id="dashboard-heatmap-card">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🔥</span> Konu Başarı Haritası</h3></div>
+        <div class="heatmap-grid">
+          <div id="heatmap-list"><p class="text-muted">Yükleniyor...</p></div>
+          <div class="ai-comment-box">
+            <span class="ai-comment-label">🤖 Edu AI</span>
+            <span id="ai-comment-text">Henüz yeterli veri yok.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Öğrenci Radarı -->
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Öğrenci Durumları</h3></div>
+        <div id="radar-columns" class="radar-columns"><p class="text-muted">Yükleniyor...</p></div>
+      </div>
     `;
 
     // Render charts
@@ -326,6 +667,9 @@ const App = {
       document.getElementById('dash-class-comparison-body').innerHTML =
         '<div class="empty-state" style="padding:24px"><p class="text-muted">Karşılaştırma için önce bir deneme ve sonuç girilmeli.</p></div>';
     }
+
+    // EduPusula Öneriyor / Konu Haritası / Öğrenci Radarı
+    this.buildDashboardInsights().then(insights => this.renderInsightSections(insights));
   },
 
   // ---- Anasayfa: Büyük Öğrenci Arama ----
@@ -640,14 +984,14 @@ const App = {
         datasets: [{
           label: `${className} Ortalama Net`,
           data: points.map(p => p.avg),
-          borderColor: '#6366f1',
-          backgroundColor: 'rgba(99, 102, 241, 0.12)',
+          borderColor: '#0D9488',
+          backgroundColor: 'rgba(20,184,166, 0.12)',
           borderWidth: 3,
           fill: true,
           tension: 0.4,
           pointRadius: 5,
           pointHoverRadius: 7,
-          pointBackgroundColor: '#6366f1',
+          pointBackgroundColor: '#0D9488',
         }],
       },
       options: Analysis.getChartDefaults(),
@@ -673,38 +1017,56 @@ const App = {
       return;
     }
 
-    // Get latest exam results for each student
-    const exams = await db.getAllExams();
-    const latestExam = exams[0];
-    let rankings = [];
-    if (latestExam) {
-      rankings = await db.getExamRankings(latestExam.id);
-    }
-    const rankMap = {};
-    rankings.forEach(r => { rankMap[r.studentId] = r; });
+    this._allStudentsCache = students;
+
+    const grades = [...new Set(students.map(s => this.parseClassName(s.className).grade).filter(Boolean))]
+      .sort((a, b) => Number(a) - Number(b));
+    const branches = [...new Set(students.map(s => this.parseClassName(s.className).branch).filter(Boolean))].sort();
 
     container.innerHTML = `
       <div class="card">
-        <div class="controls-bar">
-          <div class="controls-left">
-            <input type="text" class="form-input" id="students-filter" placeholder="Ara..." style="width:250px" oninput="App.filterStudents(this.value)">
-            <select class="filter-select" id="students-class-filter" onchange="App.filterStudentsByClass(this.value)">
-              <option value="">Tüm Sınıflar</option>
-              ${[...new Set(students.map(s => s.className).filter(Boolean))].sort().map(c => `<option value="${c}">${c}</option>`).join('')}
+        <div class="student-search-hero">
+          <div class="student-search-hero-icon">🧭</div>
+          <h2>Öğrenci Ara</h2>
+          <p>İsim veya okul numarasıyla arayın, ya da sınıf kademesi ve şubeye göre daraltın.</p>
+          <div class="student-search-box">
+            <span class="search-icon-inline">🔍</span>
+            <input type="text" class="form-input" id="students-filter" placeholder="İsim veya okul no ile ara..." oninput="App.filterStudentsManual()">
+          </div>
+          <div class="student-search-manual">
+            <select class="filter-select" id="students-grade-filter" onchange="App.filterStudentsManual()">
+              <option value="">Sınıf Kademesi</option>
+              ${grades.map(g => `<option value="${g}">${g}. Sınıf</option>`).join('')}
+            </select>
+            <select class="filter-select" id="students-branch-filter" onchange="App.filterStudentsManual()">
+              <option value="">Şube</option>
+              ${branches.map(b => `<option value="${b}">${b} Şubesi</option>`).join('')}
             </select>
           </div>
-          <div class="controls-right">
+        </div>
+
+        <div class="controls-bar" style="border-top:1px solid var(--bg-glass-border);padding-top:16px;margin-top:4px">
+          <div class="controls-left">
             <span class="text-muted">${students.length} öğrenci</span>
+          </div>
+          <div class="controls-right">
             <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
             <button class="btn btn-danger btn-sm" onclick="App.clearAllStudents()" title="Tüm kayıtlı öğrencileri ve sonuçlarını sil">🗑️ Tümünü Sil</button>
           </div>
         </div>
 
         <div id="students-table-container">
-          ${this.buildStudentsTable(students, rankMap, latestExam)}
+          <p class="text-muted" style="text-align:center;padding:20px 0">Yukarıdan aramaya başlayın ya da sınıf kademesi / şube seçin.</p>
         </div>
       </div>
     `;
+  },
+
+  // '5/A', '8-C' gibi sınıf adlarını kademe ('5','8') ve şube ('A','C') olarak ayırır.
+  parseClassName(className) {
+    const m = String(className || '').trim().match(/^(\d+)\s*[\/\-]\s*(.+)$/);
+    if (!m) return { grade: null, branch: null };
+    return { grade: m[1], branch: m[2].trim().toLocaleUpperCase('tr-TR') };
   },
 
   buildStudentsTable(students, rankMap, latestExam) {
@@ -748,8 +1110,29 @@ const App = {
     });
   },
 
-  async filterStudents(query) {
-    const students = query ? await db.searchStudents(query) : await db.getAllStudents();
+  // Serbest metin arama + sınıf kademesi + şube filtrelerini birlikte
+  // uygular, sonuçları isim sırasına göre listeler.
+  async filterStudentsManual() {
+    const query = (document.getElementById('students-filter')?.value || '').trim();
+    const grade = document.getElementById('students-grade-filter')?.value || '';
+    const branch = document.getElementById('students-branch-filter')?.value || '';
+    const container = document.getElementById('students-table-container');
+
+    if (!query && !grade && !branch) {
+      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:20px 0">Yukarıdan aramaya başlayın ya da sınıf kademesi / şube seçin.</p>';
+      return;
+    }
+
+    let students = query ? await db.searchStudents(query) : (this._allStudentsCache || await db.getAllStudents());
+    if (grade || branch) {
+      students = students.filter(s => {
+        const p = this.parseClassName(s.className);
+        return (!grade || p.grade === grade) && (!branch || p.branch === branch);
+      });
+    }
+    students = [...students].sort((a, b) =>
+      (a.firstName + ' ' + a.lastName).localeCompare(b.firstName + ' ' + b.lastName, 'tr'));
+
     const exams = await db.getAllExams();
     const latestExam = exams[0];
     let rankings = [];
@@ -757,25 +1140,9 @@ const App = {
     const rankMap = {};
     rankings.forEach(r => { rankMap[r.studentId] = r; });
 
-    const classFilter = document.getElementById('students-class-filter')?.value;
-    const filtered = classFilter ? students.filter(s => s.className === classFilter) : students;
-
-    document.getElementById('students-table-container').innerHTML = this.buildStudentsTable(filtered, rankMap, latestExam);
-  },
-
-  async filterStudentsByClass(className) {
-    const query = document.getElementById('students-filter')?.value || '';
-    let students = query ? await db.searchStudents(query) : await db.getAllStudents();
-    if (className) students = students.filter(s => s.className === className);
-
-    const exams = await db.getAllExams();
-    const latestExam = exams[0];
-    let rankings = [];
-    if (latestExam) rankings = await db.getExamRankings(latestExam.id);
-    const rankMap = {};
-    rankings.forEach(r => { rankMap[r.studentId] = r; });
-
-    document.getElementById('students-table-container').innerHTML = this.buildStudentsTable(students, rankMap, latestExam);
+    container.innerHTML = students.length
+      ? this.buildStudentsTable(students, rankMap, latestExam)
+      : '<p class="text-muted" style="text-align:center;padding:20px 0">Eşleşen öğrenci bulunamadı.</p>';
   },
 
   goToStudentProfile(studentId) {
@@ -904,7 +1271,7 @@ const App = {
 
       <!-- No Results Notice (if empty) -->
       ${!hasResults ? `
-      <div class="card mt-2" style="background:linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.04));border:1px solid rgba(99,102,241,0.25);padding:32px 24px;text-align:center;">
+      <div class="card mt-2" style="background:linear-gradient(135deg, rgba(20,184,166,0.08), rgba(15,118,110,0.04));border:1px solid rgba(20,184,166,0.25);padding:32px 24px;text-align:center;">
         <div style="font-size:40px;margin-bottom:12px">📊</div>
         <h3 style="font-size:18px;font-weight:700;margin-bottom:8px">Bu Öğrenci İçin Henüz Deneme Sonucu Bulunmuyor</h3>
         <p class="text-muted" style="max-width:540px;margin:0 auto 20px;font-size:14px;line-height:1.6">
@@ -1151,11 +1518,27 @@ const App = {
         </div>
       </div>
       ${UI.buildTable(columns, rows)}
+      <div id="profile-topic-analysis-container"></div>
     `;
 
     // Update radar chart
     chartContainer.innerHTML = '<div class="chart-container" style="height:300px"><canvas id="profile-radar-chart"></canvas></div>';
     Analysis.renderRadarChart('profile-radar-chart', result, averages, selectedExam.examType);
+
+    // Konu analizi: bu denemenin cevap anahtarı Excel'den yüklenmişse
+    // (bkz. db.getStudentTopicAnalysis), öğrencinin bu denemede zayıf olduğu
+    // konuları gösterir - haritası yoksa hiçbir şey gösterilmez.
+    const studentTopicAnalysis = await db.getStudentTopicAnalysis(studentId, examId);
+    const topicContainer = document.getElementById('profile-topic-analysis-container');
+    if (topicContainer && studentTopicAnalysis?.hasData) {
+      const weakTopics = studentTopicAnalysis.topicStats.filter(t => t.wrong + t.blank > 0).slice(0, 8);
+      topicContainer.innerHTML = weakTopics.length > 0 ? `
+        <div class="mt-2">
+          <h4 style="font-size:13px;margin-bottom:8px;font-weight:700">🎯 Bu Denemede Zayıf Olduğu Konular</h4>
+          ${this.renderTopicStatsTable(weakTopics)}
+        </div>
+      ` : `<p class="text-muted mt-2" style="font-size:13px">🎉 Bu öğrenci, konu haritası tanımlı sorularda hiç yanlış/boş yapmamış.</p>`;
+    }
   },
 
   async deleteStudentResult(studentId, examId) {
@@ -1225,7 +1608,7 @@ const App = {
             ${subjectInputsHtml}
           </div>
 
-          <div style="margin-top:16px;padding:14px 18px;background:rgba(99,102,241,0.08);border-radius:12px;border:1px solid rgba(99,102,241,0.2);display:flex;align-items:center;justify-content:space-between">
+          <div style="margin-top:16px;padding:14px 18px;background:rgba(20,184,166,0.08);border-radius:12px;border:1px solid rgba(20,184,166,0.2);display:flex;align-items:center;justify-content:space-between">
             <span style="font-weight:600;font-size:14px">Toplam Net:</span>
             <span class="font-mono font-bold" id="modal-result-total-net" style="font-size:22px;color:var(--accent-primary-light)">0.00</span>
           </div>
@@ -1268,7 +1651,7 @@ const App = {
             </div>
             <div class="form-group" style="margin-bottom:0">
               <label class="form-label" style="font-size:12px">Net</label>
-              <input type="text" class="form-input font-mono" id="modal-sub-${sub.key}-net" value="${Number(n).toFixed(2)}" readonly style="background:rgba(99,102,241,0.08);color:var(--accent-primary-light);font-weight:600">
+              <input type="text" class="form-input font-mono" id="modal-sub-${sub.key}-net" value="${Number(n).toFixed(2)}" readonly style="background:rgba(20,184,166,0.08);color:var(--accent-primary-light);font-weight:600">
             </div>
           </div>
         </div>
@@ -1580,22 +1963,8 @@ const App = {
           <div class="card-header">
             <h3 class="card-title"><span class="card-icon">📋</span> Ders Bazlı İstatistik</h3>
           </div>
-          <div class="table-wrapper">
-            <table>
-              <thead>
-                <tr><th>Ders</th><th style="text-align:center">Ort. Net</th><th style="text-align:center">Soru</th></tr>
-              </thead>
-              <tbody>
-                ${getSubjectsForExam(exam).map(sub => `
-                  <tr>
-                    <td>${UI.subjectBadge(sub.key)}</td>
-                    <td style="text-align:center">${UI.formatNet(averages?.[sub.key])}</td>
-                    <td style="text-align:center" class="text-muted">${sub.questions}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
+          <p class="text-muted" style="font-size:11px;margin:-4px 0 8px">Bir derse tıklayarak o dersin Soru & Konu Analizi'ni popup olarak görebilirsin.</p>
+          <div id="exam-subject-stats-container"></div>
         </div>
       </div>
 
@@ -1607,12 +1976,185 @@ const App = {
         </div>
         ${this.buildExamRankingsTable(rankings, exam)}
       </div>
+
+      <!-- Soru & Konu (Kazanım) Analizi -->
+      <div id="exam-topic-analysis-container"></div>
     `;
 
     // Render chart
     if (averages) {
       Analysis.renderExamSubjectBarsChart('exam-subject-chart', averages, exam.examType);
     }
+
+    // Soru/konu analizi: sadece cevap anahtarı Excel'den yüklenip bir konu
+    // haritası (topicMap) kaydedilmişse gösterilir - bkz. ImportOptical.loadAnswerKeyExcel
+    const topicAnalysis = await db.getExamTopicAnalysis(examId);
+    this._examTopicAnalysisCache = { examId, exam, averages, topicAnalysis };
+    const statsContainer = document.getElementById('exam-subject-stats-container');
+    if (statsContainer) statsContainer.innerHTML = this.buildSubjectStatsTable(exam, averages);
+
+    const topicContainer = document.getElementById('exam-topic-analysis-container');
+    if (topicContainer) topicContainer.innerHTML = this.buildTopicAnalysisCard(topicAnalysis);
+  },
+
+  // "Ders Bazlı İstatistik" tablosu - bir derse tıklamak o dersin Soru & Konu
+  // Analizi'ni doğrudan bir modal (popup) içinde açar (bkz. showSubjectTopicModal)
+  buildSubjectStatsTable(exam, averages) {
+    return `
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>Ders</th><th style="text-align:center">Ort. Net</th><th style="text-align:center">Soru</th></tr>
+          </thead>
+          <tbody>
+            ${getSubjectsForExam(exam).map(sub => `
+              <tr style="cursor:pointer" onclick="App.showSubjectTopicModal(${exam.id}, '${sub.key}')" title="${sub.name} için Soru & Konu Analizi'ni göster">
+                <td>${UI.subjectBadge(sub.key)}</td>
+                <td style="text-align:center">${UI.formatNet(averages?.[sub.key])}</td>
+                <td style="text-align:center" class="text-muted">${sub.questions}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  },
+
+  // Ders Bazlı İstatistik'te bir derse tıklandığında çağrılır - sayfada aşağı
+  // kaydırmak yerine o dersin soru/konu analizini doğrudan bir popup'ta açar.
+  // _examTopicAnalysisCache üzerinden çalışır, DB'ye tekrar gitmez.
+  showSubjectTopicModal(examId, subjectKey) {
+    const cache = this._examTopicAnalysisCache;
+    const sub = SUBJECT_LOOKUP[subjectKey];
+    if (!cache || cache.examId !== examId || !sub) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h2>${sub.name} — Soru & Konu Analizi</h2>
+          <button class="modal-close" data-action="close">✕</button>
+        </div>
+        <div class="modal-body">
+          ${this.buildTopicAnalysisBody(cache.topicAnalysis, subjectKey)}
+        </div>
+      </div>
+    `;
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.dataset.action === 'close') {
+        overlay.remove();
+        document.body.style.overflow = '';
+      }
+    });
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+  },
+
+  // Soru & Konu Analizi içeriği (başlıksız). subjectKey verilirse (bkz.
+  // showSubjectTopicModal) sadece o derse filtrelenir, yoksa sınıf/deneme
+  // genelinde en çok zorlanılan ilk 10 soru/8 konu gösterilir.
+  buildTopicAnalysisBody(topicAnalysis, subjectKey) {
+    if (!topicAnalysis) {
+      return `<p class="text-muted" style="font-size:13px">Bu deneme için henüz bir konu (kazanım) haritası yüklenmemiş. Optik/TXT sekmesinde "Cevap Anahtarını Excel'den Yükle" ile yükleyip yeniden değerlendirirsen bu analiz burada görünür.</p>`;
+    }
+    if (!topicAnalysis.hasData) {
+      return `<p class="text-muted" style="font-size:13px">Bu deneme için konu (kazanım) haritası yüklü, ancak henüz soru bazlı sonuç bulunmuyor. Bu analiz yalnızca Optik/TXT sekmesinden, cevap anahtarı Excel dosyasıyla birlikte değerlendirilen sonuçlarda oluşur.</p>`;
+    }
+
+    const sub = subjectKey ? SUBJECT_LOOKUP[subjectKey] : null;
+    const questionStats = sub ? topicAnalysis.questionStats.filter(q => q.subjectKey === subjectKey) : topicAnalysis.questionStats;
+    const topicStats = sub ? topicAnalysis.topicStats.filter(t => t.subjectKey === subjectKey) : topicAnalysis.topicStats;
+
+    if (sub && questionStats.length === 0) {
+      return `<p class="text-muted" style="font-size:13px">${sub.name} dersi için konu (kazanım) haritasında veri bulunamadı.</p>`;
+    }
+
+    // Sınıf geneli görünümde en zorlanılan ilk 10 soru/8 konu gösterilir;
+    // bir ders seçiliyken (modal) zaten az sayıda soru kaldığından tamamı gösterilir.
+    const worstQuestions = sub ? questionStats : questionStats.slice(0, 10);
+    const worstTopics = sub ? topicStats : topicStats.slice(0, 8);
+    const introText = sub
+      ? `Bu dersin tüm sorularının ve konularının başarı analizi.`
+      : `Cevap anahtarı Excel'inden yüklenen konu (kazanım) haritasına göre, sınıf genelinde en çok zorlanılan sorular ve konular. Belirli bir dersi görmek için "Ders Bazlı İstatistik" tablosundan bir derse tıkla.`;
+
+    return `
+      <p class="text-muted" style="font-size:13px;margin-bottom:14px">${introText}</p>
+      <h4 style="font-size:13px;margin:4px 0 8px;font-weight:700">📉 En Çok Yanlış/Boş Yapılan Sorular</h4>
+      ${this.renderQuestionStatsTable(worstQuestions)}
+      <h4 style="font-size:13px;margin:20px 0 8px;font-weight:700">📚 Konu Bazlı Başarı (en zayıftan güçlüye)</h4>
+      ${this.renderTopicStatsTable(worstTopics)}
+    `;
+  },
+
+  // Deneme geneli "Soru & Konu Analizi" kartı (sınıfın tamamı, ilk 10 soru/8
+  // konu). topicAnalysis null ise bu deneme için hiç konu haritası
+  // yüklenmemiştir (Optik/TXT sekmesinde cevap anahtarı Excel'den yüklenmedi)
+  // - kart hiç gösterilmez.
+  buildTopicAnalysisCard(topicAnalysis) {
+    if (!topicAnalysis) return '';
+    return `
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Soru & Konu Analizi</h3></div>
+        ${this.buildTopicAnalysisBody(topicAnalysis, null)}
+      </div>
+    `;
+  },
+
+  // Başarı oranına göre renk/etiket - hem soru hem konu tablolarında kullanılır
+  _topicSuccessLabel(rate) {
+    if (rate < 40) return { color: '#ef4444', text: '🔴 Zayıf' };
+    if (rate < 65) return { color: '#f59e0b', text: '🟡 Orta' };
+    return { color: '#10b981', text: '🟢 İyi' };
+  },
+
+  renderQuestionStatsTable(questionStats) {
+    return `
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Ders</th><th style="text-align:center">Soru No</th><th>Konu (Kazanım)</th><th style="text-align:center">D/Y/B</th><th style="text-align:center">Başarı</th></tr></thead>
+          <tbody>
+            ${questionStats.map(q => {
+              const label = this._topicSuccessLabel(q.successRate);
+              return `
+                <tr>
+                  <td>${UI.subjectBadge(q.subjectKey)}</td>
+                  <td style="text-align:center" class="font-mono">${q.dizilim}</td>
+                  <td style="font-size:13px">${q.kazanim}</td>
+                  <td style="text-align:center" class="font-mono"><span class="text-success">${q.correct}</span>/<span class="text-danger">${q.wrong}</span>/<span class="text-muted">${q.blank}</span></td>
+                  <td style="text-align:center;font-weight:700;color:${label.color}">${q.successRate}%</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  },
+
+  renderTopicStatsTable(topicStats) {
+    return `
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Ders</th><th>Konu (Kazanım)</th><th style="text-align:center">Soru</th><th style="text-align:center">D/Y/B</th><th style="text-align:center">Başarı</th><th>Durum</th></tr></thead>
+          <tbody>
+            ${topicStats.map(t => {
+              const label = this._topicSuccessLabel(t.successRate);
+              return `
+                <tr>
+                  <td>${UI.subjectBadge(t.subjectKey)}</td>
+                  <td style="font-size:13px">${t.kazanim}</td>
+                  <td style="text-align:center" class="text-muted">${t.questionCount}</td>
+                  <td style="text-align:center" class="font-mono"><span class="text-success">${t.correct}</span>/<span class="text-danger">${t.wrong}</span>/<span class="text-muted">${t.blank}</span></td>
+                  <td style="text-align:center;font-weight:700">${t.successRate}%</td>
+                  <td style="color:${label.color};font-weight:600">${label.text}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
   },
 
   buildExamRankingsTable(rankings, exam) {
@@ -1758,8 +2300,21 @@ const App = {
     const hasConfig = !!localStorage.getItem('lgs_firebase_config');
 
     container.innerHTML = `
+      <!-- Yetkilendirme / Kullanıcı Yönetimi Kısayolu -->
+      <div class="card" style="border: 1px solid rgba(16,185,129,0.3);background:rgba(15,23,42,0.75)">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">🔐</span> Öğretmen & Veli Erişimi</h3>
+        </div>
+        <p class="text-muted mb-2">
+          Öğretmen ve veliler kendi hesaplarıyla giriş yaparak yalnızca yetkili oldukları verileri
+          görebilir (öğretmen kendi sınıfını, veli kendi çocuğunu + genel ortalamaları).
+          Hesap oluşturmak ve veriyi sunucuya göndermek için Kullanıcılar sayfasına gidin.
+        </p>
+        <button class="btn btn-primary" onclick="App.navigateTo('users')">🔐 Kullanıcılar Sayfasına Git</button>
+      </div>
+
       <!-- Cloud Synchronization & Multi-Device Card -->
-      <div class="card" style="border: 1px solid rgba(99,102,241,0.3);background:rgba(15,23,42,0.75)">
+      <div class="card mt-2" style="border: 1px solid rgba(20,184,166,0.3);background:rgba(15,23,42,0.75)">
         <div class="card-header flex justify-between items-center">
           <h3 class="card-title"><span class="card-icon">☁️</span> Bulut Senkronizasyonu & Çoklu Cihaz</h3>
           <span class="sync-status-pill ${isConnected ? 'sync-connected' : 'sync-offline'}">
@@ -1790,7 +2345,7 @@ const App = {
           <div style="background:rgba(255,255,255,0.03);padding:16px;border-radius:12px;border:1px solid var(--bg-glass-border)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <label class="form-label" style="font-weight:700;margin:0">⚡ Otomatik Canlı Eşitleme</label>
-              <input type="checkbox" id="setting-auto-sync" style="width:20px;height:20px;accent-color:#6366f1;cursor:pointer" ${autoSync ? 'checked' : ''} onchange="SyncModule.setAutoSync(this.checked)">
+              <input type="checkbox" id="setting-auto-sync" style="width:20px;height:20px;accent-color:#0D9488;cursor:pointer" ${autoSync ? 'checked' : ''} onchange="SyncModule.setAutoSync(this.checked)">
             </div>
             <div style="font-size:13px;color:var(--text-muted)">
               <div>Son Eşitlenme: <b style="color:var(--text-primary)">${lastSync}</b></div>
@@ -1826,7 +2381,7 @@ const App = {
           <h3 class="card-title"><span class="card-icon">📱</span> Mobil & Başka PC'de Kullanım Kılavuzu</h3>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px">
-          <div style="padding:14px;background:rgba(99,102,241,0.06);border-radius:10px">
+          <div style="padding:14px;background:rgba(20,184,166,0.06);border-radius:10px">
             <h4 style="font-weight:700;font-size:14px;margin-bottom:6px">1. Cep Telefonuna Yükleme (PWA)</h4>
             <p class="text-muted" style="font-size:13px">
               Telefonunuzun tarayıcısında (Safari / Chrome) siteyi açtığınızda <b>"Paylaş > Ana Ekrana Ekle"</b> veya <b>"Uygulamayı Yükle"</b> diyerek tıpkı App Store / Play Store'dan yüklenmiş bir mobil uygulama gibi kullanabilirsiniz.
@@ -1853,7 +2408,7 @@ const App = {
           <h3 class="card-title"><span class="card-icon">📊</span> Veritabanı Durumu</h3>
         </div>
         <div class="stats-grid" style="margin-bottom:0">
-          <div style="padding:16px;background:rgba(99,102,241,0.05);border-radius:12px;text-align:center">
+          <div style="padding:16px;background:rgba(20,184,166,0.05);border-radius:12px;text-align:center">
             <div style="font-size:24px;font-weight:800">${studentCount}</div>
             <div class="text-muted" style="font-size:13px">Öğrenci</div>
           </div>
@@ -1917,12 +2472,12 @@ const App = {
   async saveFirebaseConfig() {
     const raw = document.getElementById('setting-firebase-config')?.value.trim();
     if (!raw) {
-      UI.toast('Lütfen Firebase yapılandırma JSON metnini girin.', 'warning');
+      UI.toast('Lütfen Firebase yapılandırma metnini girin.', 'warning');
       return;
     }
 
     try {
-      let config = JSON.parse(raw);
+      const config = this._parseFirebaseConfig(raw);
       const res = await SyncModule.connectFirebase(config, true);
       if (res.success) {
         SyncModule.setAutoSync(true);
@@ -1930,7 +2485,22 @@ const App = {
         this.renderSettings();
       }
     } catch (e) {
-      UI.toast('Geçersiz JSON formatı! Lütfen kontrol edin.', 'danger');
+      UI.toast('Yapılandırma metni okunamadı! Firebase konsolundan kopyaladığınız "firebaseConfig" bloğunun tamamını yapıştırdığınızdan emin olun.', 'danger');
+    }
+  },
+
+  // Firebase konsolu "const firebaseConfig = { apiKey: '...', ... };" şeklinde
+  // saf JSON olmayan bir JS nesnesi verir (tırnaksız anahtarlar, başında
+  // değişken tanımı, sonunda noktalı virgül). Kullanıcının bunu olduğu gibi
+  // kopyalayıp yapıştırabilmesi için önce JSON olarak, olmazsa JS nesne
+  // literali olarak ayrıştırmayı dener.
+  _parseFirebaseConfig(raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      const objectLiteral = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+      // eslint-disable-next-line no-new-func
+      return new Function('"use strict"; return (' + objectLiteral + ');')();
     }
   },
 

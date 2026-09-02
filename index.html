@@ -20,7 +20,7 @@
   <!-- Fonts & Styles -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 
   <!-- CDN Libraries -->
@@ -89,6 +89,28 @@
           <span class="nav-icon">📤</span>
           <span>Raporlar & Paylaşım</span>
         </div>
+
+        <div class="nav-section-title">Yönetim</div>
+        <div class="nav-item" data-page="users">
+          <span class="nav-icon">🔐</span>
+          <span>Kullanıcılar (Öğretmen/Veli)</span>
+        </div>
+        <div class="nav-item" data-page="demo-talepleri">
+          <span class="nav-icon">🧭</span>
+          <span>Demo Talepleri</span>
+        </div>
+
+        <div class="nav-section-title">Yakında</div>
+        <div class="nav-item" onclick="UI.toast('Konular çok yakında burada olacak! 🚀','info')">
+          <span class="nav-icon">📚</span>
+          <span>Konular</span>
+          <span class="nav-badge">Yakında</span>
+        </div>
+        <div class="nav-item" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')">
+          <span class="nav-icon">🤖</span>
+          <span>Edu AI</span>
+          <span class="nav-badge">Yakında</span>
+        </div>
       </nav>
 
       <div class="sidebar-footer">
@@ -99,6 +121,9 @@
           <span class="nav-icon">⚙️</span>
           <span>Ayarlar & Bulut</span>
         </div>
+        <button class="pwa-install-btn" style="background:rgba(244,63,94,0.12);border:1px solid rgba(244,63,94,0.3);color:#fb7185" onclick="AdminUsers.logout()">
+          <span>🚪</span> <span>Çıkış Yap</span>
+        </button>
       </div>
     </aside>
 
@@ -108,11 +133,18 @@
       <header class="header">
         <div class="header-left">
           <button class="menu-toggle" id="menu-toggle">☰</button>
+          <button class="menu-toggle" id="nav-back-btn" onclick="App.goBack()" title="Bir önceki sayfaya dön" style="display:none">←</button>
           <h2 class="page-title" id="page-title">Anasayfa <span>Genel Bakış</span></h2>
         </div>
 
         <!-- Header Actions: Sync Status Badge, Mobile Install -->
         <div class="header-right" style="display:flex;align-items:center;gap:12px">
+          <div class="header-search">
+            <input type="text" placeholder="Ara... (yakında)" disabled>
+            <span class="search-icon">🔍</span>
+          </div>
+          <button class="menu-toggle" onclick="UI.toast('Bildirimler çok yakında burada olacak! 🚀','info')" title="Bildirimler">🔔</button>
+          <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
           <!-- Cloud Sync Status Badge -->
           <div id="sync-status-badge" class="sync-status-pill sync-offline" title="Bulut Senkronizasyonu" onclick="App.navigateTo('settings')">
             <span class="sync-dot"></span>
@@ -154,6 +186,12 @@
 
         <!-- Settings -->
         <section class="page-section" id="page-settings"></section>
+
+        <!-- Users (Öğretmen/Veli Yönetimi) -->
+        <section class="page-section" id="page-users"></section>
+
+        <!-- Demo Talepleri (EduPusula tanıtım sayfası) -->
+        <section class="page-section" id="page-demo-talepleri"></section>
       </div>
     </main>
   </div>
@@ -189,8 +227,15 @@
   <script src="js/sync.js"></script>
   <script src="js/analysis.js"></script>
   <script src="js/optikProfiles.js"></script>
+  <script src="js/importCore.js"></script>
+  <script src="js/importManual.js"></script>
+  <script src="js/importExcel.js"></script>
+  <script src="js/importPdf.js"></script>
+  <script src="js/importOptical.js"></script>
   <script src="js/import.js"></script>
   <script src="js/export.js"></script>
+  <script src="js/adminUsers.js"></script>
+  <script src="js/demoRequests.js"></script>
   <script src="js/app.js"></script>
 
   <!-- Service Worker Registration -->

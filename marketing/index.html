@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EduPusula</title>
+<meta name="description" content="Öğretmen, veli ve öğrenciler için deneme sınavı analizi ve yapay zeka destekli yönlendirme platformu.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ["'Bricolage Grotesque'", "system-ui", "sans-serif"],
+          sans: ["'Inter'", "system-ui", "sans-serif"],
+          mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --surface-2: #F1F5F9;
+    --text: #0F172A;
+    --text-muted: #55647D;
+    --border: #E2E8F0;
+    --teal: #0D9488;
+    --teal-strong: #0F766E;
+    --success: #16A34A;
+    --sky: #2563EB;
+    --amber: #B45309;
+    --rose: #DC2626;
+    --needle-back: #B9C3D4;
+    --blue: #2563EB;
+    --blue-strong: #1D4ED8;
+    --hero-grad: radial-gradient(60% 60% at 78% 20%, rgba(13,148,136,0.10), transparent 60%);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0B1220;
+      --surface: #16213A;
+      --surface-2: #1E293B;
+      --text: #F1F5F9;
+      --text-muted: #94A3B8;
+      --border: #263449;
+      --teal: #2DD4BF;
+      --teal-strong: #14B8A6;
+      --success: #22C55E;
+      --sky: #60A5FA;
+      --amber: #F59E0B;
+      --rose: #F87171;
+      --needle-back: #3A4A66;
+      --hero-grad: radial-gradient(60% 60% at 78% 20%, rgba(45,212,191,0.14), transparent 60%);
+      --blue: #3B82F6;
+      --blue-strong: #2563EB;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B1220;
+    --surface: #16213A;
+    --surface-2: #1E293B;
+    --text: #F1F5F9;
+    --text-muted: #94A3B8;
+    --border: #263449;
+    --teal: #2DD4BF;
+    --teal-strong: #14B8A6;
+    --success: #22C55E;
+    --sky: #60A5FA;
+    --amber: #F59E0B;
+    --rose: #F87171;
+    --needle-back: #3A4A66;
+    --hero-grad: radial-gradient(60% 60% at 78% 20%, rgba(45,212,191,0.14), transparent 60%);
+    --blue: #3B82F6;
+    --blue-strong: #2563EB;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+  h1, h2, h3, .font-display { font-family: 'Bricolage Grotesque', system-ui, sans-serif; text-wrap: balance; }
+  .font-mono-tag { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--teal);
+  }
+
+  .surface { background: var(--surface); border: 1px solid var(--border); }
+  .surface-2 { background: var(--surface-2); }
+  .muted { color: var(--text-muted); }
+  .divider { border-color: var(--border); }
+
+  .btn-primary {
+    background: var(--blue-strong);
+    color: #ffffff;
+    font-weight: 600;
+    border-radius: 12px;
+    padding: 12px 22px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 12px 28px -14px color-mix(in srgb, var(--blue-strong) 70%, transparent);
+  }
+  .btn-primary:hover { transform: translateY(-1px); }
+  .btn-primary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+
+  .btn-ghost {
+    color: var(--text);
+    font-weight: 600;
+    border-radius: 12px;
+    padding: 12px 20px;
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn-ghost:hover { background: var(--surface-2); }
+  .btn-ghost:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+
+  nav a.navlink { color: var(--text-muted); font-weight: 500; font-size: 14px; }
+  nav a.navlink:hover { color: var(--text); }
+
+  /* ---- Compass hero graphic ---- */
+  .compass-wrap { position: relative; width: min(420px, 82vw); aspect-ratio: 1; margin-inline: auto; }
+  .compass-needle { transform-origin: 100px 100px; animation: settle 2.6s cubic-bezier(.18,1,.32,1) forwards; }
+  @keyframes settle {
+    0%   { transform: rotate(210deg); }
+    55%  { transform: rotate(30deg); }
+    78%  { transform: rotate(52deg); }
+    100% { transform: rotate(45deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .compass-needle { animation: none; transform: rotate(45deg); }
+  }
+  .quad-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 5px 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .quad-dot { width: 7px; height: 7px; border-radius: 999px; }
+
+  /* ---- Başarı Pusulası quadrant widget (shared with standalone component) ---- */
+  .compass-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .quadrant {
+    position: relative;
+    padding: 20px 18px 18px;
+    background: color-mix(in srgb, var(--q) 9%, var(--surface));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 168px;
+  }
+  .quadrant::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    background: var(--q);
+  }
+  .q-nw { border-top-left-radius: 20px; }
+  .q-ne { border-top-right-radius: 20px; }
+  .q-sw { border-bottom-left-radius: 20px; }
+  .q-se { border-bottom-right-radius: 20px; }
+  .q-dir { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--q); }
+  .q-heading { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 15px; line-height: 1.2; }
+  .q-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+  .q-tags { display: flex; flex-direction: column; gap: 5px; margin-top: auto; }
+  .q-tags li { list-style: none; display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; background: color-mix(in srgb, var(--q) 14%, transparent); border-radius: 8px; padding: 5px 9px; }
+  .q-tags b { font-family: 'JetBrains Mono', monospace; color: var(--q); font-weight: 600; }
+  .compass-pivot {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 52px; height: 52px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.4);
+    display: flex; align-items: center; justify-content: center; z-index: 2;
+  }
+
+  .role-card { transition: transform 0.15s ease, border-color 0.15s ease; }
+  .role-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--teal) 40%, var(--border)); }
+
+  .assistant-bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 16px 4px;
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  ::selection { background: color-mix(in srgb, var(--teal) 35%, transparent); }
+
+  /* ---- Scroll reveal (tek seferlik, abartısız) ---- */
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.is-visible { opacity: 1; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+  }
+
+  /* ---- Nav: scroll'da küçülme ---- */
+  #site-nav { transition: height 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease; }
+  #site-nav .nav-inner { transition: height 0.2s ease; }
+  #site-nav.is-scrolled { box-shadow: 0 8px 24px -18px rgba(15,23,42,0.4); }
+  #site-nav.is-scrolled .nav-inner { height: 56px; }
+
+  /* ---- Platform Özellikleri kartları ---- */
+  .feature-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 26px;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+  .feature-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--blue) 35%, var(--border)); box-shadow: 0 20px 40px -28px color-mix(in srgb, var(--blue) 50%, transparent); }
+  .feature-icon {
+    width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--fc, var(--blue)) 14%, transparent); color: var(--fc, var(--blue));
+  }
+
+  /* ---- Nasıl Çalışır: step flow ---- */
+  .step-flow { position: relative; }
+  .step-num {
+    font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 34px;
+    color: color-mix(in srgb, var(--blue) 30%, transparent); line-height: 1;
+  }
+  .step-line { position: absolute; top: 26px; left: 0; right: 0; height: 1px; background: var(--border); z-index: 0; }
+  @media (max-width: 767px) { .step-line { display: none; } }
+
+  /* ---- Hero Dashboard Preview ---- */
+  .dash-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+    box-shadow: 0 30px 70px -35px rgba(15,23,42,0.45); overflow: hidden;
+  }
+  .dash-card-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .dash-dot { width: 8px; height: 8px; border-radius: 999px; }
+  .dash-card-title { margin-left: 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .dash-body { padding: 18px; }
+  .dash-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dash-stat { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; }
+  .dash-stat .l { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+  .dash-stat .v { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 18px; margin-top: 4px; }
+  .dash-stat.good .v { color: var(--success); }
+  .dash-stat.warn .v { color: var(--amber); }
+  .dash-chart-box { margin-top: 12px; background: var(--surface-2); border-radius: 12px; padding: 14px; }
+  .dash-bars { display: flex; align-items: flex-end; gap: 6px; height: 44px; }
+  .dash-bars i { flex: 1; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--blue), color-mix(in srgb, var(--blue) 40%, transparent)); }
+  .progress-ring circle { transition: stroke-dashoffset 1s ease; }
+
+  /* ---- Pusula Asistanı: AI chat mockup ---- */
+  .ai-chat-window { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; box-shadow: 0 24px 60px -32px rgba(15,23,42,0.4); }
+  .ai-chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--blue) 6%, var(--surface)); }
+  .ai-chat-body { padding: 16px; display: flex; flex-direction: column; gap: 10px; max-height: 340px; overflow-y: auto; }
+  .ai-msg-user { align-self: flex-end; background: color-mix(in srgb, var(--blue) 12%, var(--surface-2)); border-radius: 14px 14px 4px 14px; padding: 10px 14px; font-size: 13.5px; max-width: 80%; }
+  .ai-msg-bot { align-self: flex-start; background: var(--surface-2); border-radius: 14px 14px 14px 4px; padding: 10px 14px; font-size: 13.5px; max-width: 85%; line-height: 1.5; }
+  .ai-chat-input { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .ai-chat-input input { flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; color: var(--text); }
+  .ai-suggest { font-size: 12.5px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; text-align: left; }
+  .ai-suggest:hover { border-color: color-mix(in srgb, var(--blue) 40%, var(--border)); }
+
+  /* ---- Tam Dashboard Preview (sidebar mockup) ---- */
+  .app-mockup { background: var(--ink, #0F172A); border-radius: 22px; overflow: hidden; box-shadow: 0 40px 90px -40px rgba(0,0,0,0.5); display: grid; grid-template-columns: 200px 1fr; min-height: 420px; }
+  @media (max-width: 767px) { .app-mockup { grid-template-columns: 1fr; } .app-sidebar { display: none; } }
+  .app-sidebar { background: rgba(255,255,255,0.03); border-right: 1px solid rgba(255,255,255,0.08); padding: 18px 14px; color: #E2E8F0; }
+  .app-nav-item { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 9px; font-size: 13px; color: #94A3B8; }
+  .app-nav-item.active { background: color-mix(in srgb, var(--blue) 24%, transparent); color: #fff; }
+  .app-main { padding: 22px; color: #E2E8F0; }
+  .app-today-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 18px; }
+
+  /* ---- İstatistik sayaçları ---- */
+  .stat-counter { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; font-size: 40px; color: var(--blue-strong); }
+
+  /* ---- CTA gradyan ---- */
+  .cta-gradient {
+    background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 55%, #0F766E 100%);
+    color: #F8FAFC; border-radius: 28px; position: relative; overflow: hidden;
+  }
+  .cta-gradient::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(50% 80% at 85% 0%, rgba(45,212,191,0.25), transparent 60%);
+  }
+
+  /* ---- SSS accordion ---- */
+  .faq-item { border-bottom: 1px solid var(--border); }
+  .faq-item:last-child { border-bottom: none; }
+  .faq-item summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 20px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item .faq-icon { transition: transform 0.2s ease; flex-shrink: 0; color: var(--teal-strong); }
+  .faq-item[open] .faq-icon { transform: rotate(45deg); }
+  .faq-item p { padding: 0 4px 20px; margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-muted); max-width: 60ch; }
+
+  /* ---- Kayıt formu ---- */
+  .field-label { font-size: 12.5px; font-weight: 600; margin-bottom: 6px; display: block; }
+  .field-input {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 13px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .field-input:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
+  .field-input::placeholder { color: var(--text-muted); }
+  #form-success { display: none; }
+  #signup-form.is-sent { display: none; }
+  #signup-form.is-sent + #form-success { display: block; }
+</style>
+</head>
+<body class="antialiased">
+
+  <!-- NAV -->
+  <header id="site-nav" class="sticky top-0 z-40" style="background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);">
+    <div class="nav-inner max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2.5">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke="var(--teal-strong)" stroke-width="1.6"/>
+          <path d="M12 5.5 L13.6 12 L12 18.5 L10.4 12 Z" fill="var(--teal-strong)" transform="rotate(35 12 12)"/>
+          <path d="M8.5 14 L11 9.5 L13 12 L15.5 8" stroke="var(--blue)" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+        </svg>
+        <span class="font-display font-bold text-[17px]">EduPusula</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-7">
+        <a class="navlink" href="#ozellikler">Özellikler</a>
+        <a class="navlink" href="#nasil-calisir">Nasıl Çalışır?</a>
+        <a class="navlink" href="#kimler-icin">Kimler İçin?</a>
+        <a class="navlink" href="#basari-pusulasi">Başarı Pusulası</a>
+        <a class="navlink" href="#pusula-asistani">Pusula Asistanı</a>
+      </nav>
+      <div class="flex items-center gap-3">
+        <a href="/login.html" class="btn-ghost !py-2 !px-4 text-sm hidden sm:inline-flex">Giriş Yap</a>
+        <a href="#kayit" class="btn-primary !py-2 !px-4 text-sm">🚀 Hemen Başla</a>
+        <button id="mobile-menu-btn" class="md:hidden btn-ghost !p-2" aria-label="Menüyü aç" aria-expanded="false" aria-controls="mobile-menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="mobile-menu" class="hidden md:hidden border-t px-6 py-4 flex flex-col gap-1" style="border-color: var(--border); background: var(--bg);">
+      <a class="navlink py-2" href="#ozellikler">Özellikler</a>
+      <a class="navlink py-2" href="#nasil-calisir">Nasıl Çalışır?</a>
+      <a class="navlink py-2" href="#kimler-icin">Kimler İçin?</a>
+      <a class="navlink py-2" href="#basari-pusulasi">Başarı Pusulası</a>
+      <a class="navlink py-2" href="#pusula-asistani">Pusula Asistanı</a>
+      <a class="navlink py-2" href="/login.html">Giriş Yap</a>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="relative overflow-hidden" style="background-image: var(--hero-grad);">
+    <div class="max-w-6xl mx-auto px-6 pt-16 pb-20 md:pt-24 md:pb-28 grid md:grid-cols-2 gap-14 items-center">
+      <div>
+        <div class="eyebrow mb-5">LGS · TYT · AYT için deneme analiz platformu</div>
+        <h1 class="text-[40px] md:text-[54px] leading-[1.08] font-extrabold tracking-tight">
+          🧭 Başarının Yönünü <span style="color: var(--blue-strong);">Keşfet.</span>
+        </h1>
+        <p class="mt-6 text-[17px] leading-relaxed muted max-w-md">
+          EduPusula ile öğrencilerinizin gelişimini sadece takip etmeyin,
+          anlayın ve doğru adımlarla geleceğe yön verin.
+        </p>
+
+        <div class="mt-7 flex flex-wrap gap-2.5">
+          <span class="quad-chip">📊 Deneme Analizi</span>
+          <span class="quad-chip">📈 Gelişim Takibi</span>
+          <span class="quad-chip">🎯 Kişiselleştirilmiş Öneriler</span>
+          <span class="quad-chip">🤖 Akıllı Geri Bildirim</span>
+        </div>
+
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+          <a href="#kayit" class="btn-primary">🚀 EduPusula'yı Keşfet</a>
+          <a href="#nasil-calisir" class="btn-ghost">▶ Nasıl Çalışıyor?</a>
+        </div>
+        <div class="mt-10 flex items-center gap-6 font-mono-tag text-[11px] muted uppercase tracking-wider">
+          <span>Sunucu taraflı yetkilendirme</span>
+          <span class="w-1 h-1 rounded-full" style="background: var(--border);"></span>
+          <span>Anonim genel istatistikler</span>
+        </div>
+      </div>
+
+      <div class="reveal">
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <span class="dash-dot" style="background:#EF4444"></span>
+            <span class="dash-dot" style="background:#F59E0B"></span>
+            <span class="dash-dot" style="background:#22C55E"></span>
+            <span class="dash-card-title">EduPusula · Öğrenci Paneli</span>
+          </div>
+          <div class="dash-body">
+            <div class="dash-stats">
+              <div class="dash-stat">
+                <div class="l">📊 Genel Başarı</div>
+                <div class="v">62.4 <span style="font-size:11px;color:var(--text-muted);font-weight:500">Net</span></div>
+              </div>
+              <div class="dash-stat good">
+                <div class="l">📈 Son Gelişim</div>
+                <div class="v">+8.2 <span style="font-size:11px;color:var(--text-muted);font-weight:500">Net</span></div>
+              </div>
+              <div class="dash-stat">
+                <div class="l">🎯 En Güçlü Ders</div>
+                <div class="v" style="font-size:15px">Matematik</div>
+              </div>
+              <div class="dash-stat warn">
+                <div class="l">⚠️ Geliştirilmesi Gereken</div>
+                <div class="v" style="font-size:15px">Fen Bilimleri</div>
+              </div>
+            </div>
+
+            <div class="dash-chart-box">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-[11px] muted font-medium">Net Gelişim Grafiği</span>
+                <span class="text-[11px] font-mono-tag" style="color:var(--success)">▲ +8.2</span>
+              </div>
+              <svg viewBox="0 0 200 46" class="w-full" style="height:46px" preserveAspectRatio="none">
+                <polyline points="0,38 33,32 66,34 100,22 133,20 166,10 200,6" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="200" cy="6" r="3.5" fill="var(--blue)"/>
+              </svg>
+            </div>
+
+            <div class="dash-chart-box">
+              <div class="text-[11px] muted font-medium mb-2">Ders Performansı</div>
+              <div class="dash-bars">
+                <i style="height:55%" title="Türkçe"></i>
+                <i style="height:78%" title="Matematik"></i>
+                <i style="height:62%" title="Fen Bilimleri"></i>
+                <i style="height:70%" title="Sosyal Bilimler"></i>
+                <i style="height:45%" title="İngilizce"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BUGÜNÜN PUSULASI STRIP -->
+  <section class="border-y" style="border-color: var(--border); background: var(--surface);">
+    <div class="max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center gap-x-10 gap-y-4">
+      <div class="eyebrow !text-current opacity-60">BUGÜNÜN PUSULASI</div>
+      <div class="flex items-center gap-2 text-sm">
+        <span class="muted">Bu ay ortalama net değişimi</span>
+        <b class="font-mono-tag" style="color:var(--success)">+3.2</b>
+      </div>
+      <div class="flex items-center gap-2 text-sm">
+        <span class="muted">En çok gelişen ders</span>
+        <b class="font-mono-tag">Türkçe</b>
+      </div>
+      <div class="flex items-center gap-2 text-sm">
+        <span class="muted">Aktif takip edilen öğrenci</span>
+        <b class="font-mono-tag">1.240+</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- PLATFORM ÖZELLİKLERİ -->
+  <section id="ozellikler" class="max-w-6xl mx-auto px-6 py-24">
+    <div class="max-w-xl reveal">
+      <div class="eyebrow mb-4">Platform özellikleri</div>
+      <h2 class="text-3xl md:text-[34px] font-bold">Her Veriyi Bir Yöne Dönüştürün.</h2>
+      <p class="mt-4 muted leading-relaxed">EduPusula sadece sonuçları göstermez. Verileri anlamlı geri bildirimlere dönüştürür.</p>
+    </div>
+
+    <div class="mt-12 grid sm:grid-cols-2 md:grid-cols-3 gap-5">
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--blue)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 19V10M11 19V5M18 19v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">📊 Deneme Analizi</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Öğrencilerin deneme sonuçlarını detaylı şekilde analiz edin.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--success)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 17l6-6 4 4 8-8M21 7v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">📈 Gelişim Takibi</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Her denemede öğrencinin gelişimini görün.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--amber)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="0.5" fill="currentColor" stroke="currentColor" stroke-width="2"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">🎯 Kişisel Analiz</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Her öğrencinin güçlü ve geliştirilmesi gereken yönlerini keşfedin.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--teal-strong)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M12 6.5 L13.4 12 L12 17.5 L10.6 12 Z" fill="currentColor"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">🧭 Başarı Pusulası</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Öğrencinin akademik yolculuğunu tek ekranda anlayın.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--blue)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" stroke-width="2"/><path d="M8.5 12.5l2 2 4.5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">🤖 Pusula Asistanı</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Yapay zekâ destekli akıllı geri bildirimler alın.</p>
+      </div>
+      <div class="feature-card reveal">
+        <div class="feature-icon" style="--fc: var(--rose)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="9" r="2.5" stroke="currentColor" stroke-width="2"/><path d="M3 20c0-3 2.5-5 5-5s5 2 5 5M14 20c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <h3 class="font-display font-bold text-[15px] mt-4">👥 Çoklu Kullanıcı Sistemi</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Öğretmen, öğrenci ve veliler için özel deneyimler.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- KİMLER İÇİN -->
+  <section id="kimler-icin" class="max-w-6xl mx-auto px-6 py-24">
+    <div class="max-w-xl reveal">
+      <div class="eyebrow mb-4">Rol bazlı erişim</div>
+      <h2 class="text-3xl md:text-[34px] font-bold">Herkes İçin Kişisel Bir Pusula.</h2>
+      <p class="mt-4 muted leading-relaxed">Yetkilendirme arayüzde saklanmaz — veri sorgusunun kendisinde uygulanır. Bir öğretmen başka sınıfın öğrenci adını hiçbir zaman göremez.</p>
+    </div>
+
+    <div class="mt-12 grid md:grid-cols-3 gap-5">
+      <div class="role-card surface rounded-2xl p-7 reveal">
+        <div class="quad-chip mb-5"><span class="quad-dot" style="background:var(--sky)"></span>👨‍🏫 ÖĞRETMEN</div>
+        <h3 class="text-lg font-bold font-display">Öğrencilerinizi Daha Yakından Tanıyın.</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Sınıflarınızın ve öğrencilerinizin gelişimini tek bir ekrandan takip edin.</p>
+        <ul class="mt-4 space-y-2 text-sm leading-relaxed">
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Sınıf Analizi</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Öğrenci Performansı</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Deneme Karşılaştırması</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Gelişim Takibi</li>
+        </ul>
+      </div>
+      <div class="role-card surface rounded-2xl p-7 reveal">
+        <div class="quad-chip mb-5"><span class="quad-dot" style="background:var(--success)"></span>👨‍👩‍👧 VELİ</div>
+        <h3 class="text-lg font-bold font-display">Çocuğunuzun Gelişimini Takip Edin.</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Akademik gelişimini anlaşılır veriler ve grafiklerle takip edin.</p>
+        <ul class="mt-4 space-y-2 text-sm leading-relaxed">
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Sonuçlar</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Gelişim Grafikleri</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Güçlü Yönler</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Öneriler</li>
+        </ul>
+      </div>
+      <div class="role-card surface rounded-2xl p-7 reveal">
+        <div class="quad-chip mb-5"><span class="quad-dot" style="background:var(--amber)"></span>🎓 ÖĞRENCİ</div>
+        <h3 class="text-lg font-bold font-display">Kendi Başarı Yolunu Keşfet.</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Güçlü yönlerini gör, eksiklerini keşfet ve hedeflerine doğru ilerle.</p>
+        <ul class="mt-4 space-y-2 text-sm leading-relaxed">
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Kişisel Analiz</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Hedef Takibi</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Gelişim Grafikleri</li>
+          <li class="flex items-center gap-2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="var(--success)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Akıllı Öneriler</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- NASIL ÇALIŞIR -->
+  <section id="nasil-calisir" class="max-w-6xl mx-auto px-6 py-24">
+    <div class="max-w-xl reveal">
+      <div class="eyebrow mb-4">Nasıl çalışır</div>
+      <h2 class="text-3xl md:text-[34px] font-bold">3 Adımda Başarı Yolunu Keşfet.</h2>
+    </div>
+
+    <div class="step-flow mt-14 grid md:grid-cols-3 gap-10 md:gap-6">
+      <div class="step-line hidden md:block"></div>
+      <div class="reveal">
+        <div class="step-num">01</div>
+        <h3 class="font-display font-bold text-lg mt-3">📥 Verilerini Ekle</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Deneme sonuçlarını sisteme aktar — optik okuma, Excel, PDF veya manuel giriş ile.</p>
+      </div>
+      <div class="reveal">
+        <div class="step-num">02</div>
+        <h3 class="font-display font-bold text-lg mt-3">📊 Analiz Et</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">EduPusula verileri analiz eder; ders ve konu bazlı başarı görünür hâle gelir.</p>
+      </div>
+      <div class="reveal">
+        <div class="step-num">03</div>
+        <h3 class="font-display font-bold text-lg mt-3">🧭 Doğru Yöne İlerle</h3>
+        <p class="muted text-sm mt-2 leading-relaxed">Güçlü ve geliştirilmesi gereken alanlarını keşfet, Pusula Asistanı'nın önerileriyle ilerle.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- BAŞARI PUSULASI -->
+  <section id="basari-pusulasi" class="max-w-6xl mx-auto px-6 py-24">
+    <div class="grid md:grid-cols-2 gap-14 items-center">
+      <div class="reveal">
+        <div class="eyebrow mb-4">EduPusula'nın özel özelliği</div>
+        <h2 class="text-3xl md:text-[34px] font-bold">Sayılardan Daha Fazlasını Görün.</h2>
+        <p class="mt-4 muted leading-relaxed max-w-md">
+          Bir öğrencinin başarısı sadece net sayısından ibaret değildir.
+          EduPusula gelişimin yönünü gösterir.
+        </p>
+        <dl class="mt-8 space-y-4 text-sm">
+          <div class="flex gap-3"><dt class="w-2 h-2 mt-1.5 rounded-full shrink-0" style="background:var(--success)"></dt><dd><b>Kuzey-Doğu:</b> <span class="muted">%80 üzeri başarı sağlanan konular</span></dd></div>
+          <div class="flex gap-3"><dt class="w-2 h-2 mt-1.5 rounded-full shrink-0" style="background:var(--sky)"></dt><dd><b>Kuzey-Batı:</b> <span class="muted">son denemelerde net artışı olan dersler</span></dd></div>
+          <div class="flex gap-3"><dt class="w-2 h-2 mt-1.5 rounded-full shrink-0" style="background:var(--amber)"></dt><dd><b>Güney-Doğu:</b> <span class="muted">yanlış oranı yüksek konular</span></dd></div>
+          <div class="flex gap-3"><dt class="w-2 h-2 mt-1.5 rounded-full shrink-0" style="background:var(--rose)"></dt><dd><b>Güney-Batı:</b> <span class="muted">acil müdahale gereken kazanımlar</span></dd></div>
+        </dl>
+      </div>
+
+      <div class="surface rounded-[28px] p-7">
+        <div class="eyebrow">Başarı Pusulası</div>
+        <h3 class="font-display font-bold text-lg mt-1">Ali Yılmaz'ın bu ayki yönü</h3>
+        <p class="q-desc mt-0.5">Son 5 LGS denemesi baz alınarak oluşturuldu</p>
+
+        <div class="compass-grid mt-5">
+          <div class="quadrant q-nw" style="--q: var(--sky)">
+            <span class="q-dir">KUZEY-BATI</span>
+            <h4 class="q-heading">Gelişim Alanları</h4>
+            <ul class="q-tags">
+              <li>Türkçe <b>+4.5 net</b></li>
+              <li>Fen Bilimleri <b>+2.0 net</b></li>
+            </ul>
+          </div>
+          <div class="quadrant q-ne" style="--q: var(--success)">
+            <span class="q-dir">KUZEY-DOĞU</span>
+            <h4 class="q-heading">Güçlü Yönler</h4>
+            <ul class="q-tags">
+              <li>Matematik – Sayılar <b>%92</b></li>
+              <li>Fen – Kuvvet/Enerji <b>%86</b></li>
+            </ul>
+          </div>
+          <div class="quadrant q-sw" style="--q: var(--rose)">
+            <span class="q-dir">GÜNEY-BATI</span>
+            <h4 class="q-heading">Öncelikli Çalışma</h4>
+            <ul class="q-tags">
+              <li>İnkılap – Atatürk İlkeleri</li>
+            </ul>
+          </div>
+          <div class="quadrant q-se" style="--q: var(--amber)">
+            <span class="q-dir">GÜNEY-DOĞU</span>
+            <h4 class="q-heading">Dikkat Gerekenler</h4>
+            <ul class="q-tags">
+              <li>İngilizce – Zamanlar <b>%52</b></li>
+            </ul>
+          </div>
+          <div class="compass-pivot" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9.5" stroke="var(--text-muted)" stroke-width="1.2" opacity="0.5"/>
+              <path d="M12 4 L14 12 L12 20 L10 12 Z" fill="var(--teal-strong)"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PUSULA ASİSTANI -->
+  <section id="pusula-asistani" class="max-w-6xl mx-auto px-6 pb-24">
+    <div class="grid md:grid-cols-2 gap-14 items-center">
+      <div class="reveal">
+        <div class="eyebrow mb-4">Yapay zekâ danışman</div>
+        <h2 class="text-3xl md:text-[34px] font-bold">Verilerinizi Anlayan Bir Asistan.</h2>
+        <p class="mt-4 muted leading-relaxed max-w-md">
+          Pusula Asistanı öğrencinin gelişimini analiz eder ve anlaşılır geri
+          bildirimler sunar. Veli asistanı sadece bağlı çocuğu, öğretmen
+          asistanı sadece yetkili sınıfı analiz eder — sınır burada da geçerlidir.
+        </p>
+        <div class="mt-6 grid gap-2.5 max-w-sm">
+          <button type="button" class="ai-suggest" onclick="askAssistant(this)">Son denememde neyi geliştirdim?</button>
+          <button type="button" class="ai-suggest" onclick="askAssistant(this)">Hangi derse daha fazla çalışmalıyım?</button>
+          <button type="button" class="ai-suggest" onclick="askAssistant(this)">Son 5 denemedeki gelişimim nasıl?</button>
+          <button type="button" class="ai-suggest" onclick="askAssistant(this)">Bana çalışma önerisi ver.</button>
+        </div>
+      </div>
+
+      <div class="reveal">
+        <div class="ai-chat-window">
+          <div class="ai-chat-head">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="4" stroke="var(--blue)" stroke-width="1.8"/><path d="M8.5 12.5l2 2 4.5-5" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="font-display font-bold text-sm">Pusula Asistanı</span>
+          </div>
+          <div class="ai-chat-body" id="ai-chat-body">
+            <div class="ai-msg-user">Son 5 denemedeki gelişimim nasıl?</div>
+            <div class="ai-msg-bot">Son üç denemede <b>Matematik</b> performansında düzenli bir yükseliş görülüyor. <b>Problem</b> sorularındaki sonuçların ise diğer konulara göre daha fazla dikkat gerektirdiği görülüyor. Bugün 10 soruluk bir problem seti çözmeni öneririm.</div>
+          </div>
+          <div class="ai-chat-input">
+            <input type="text" placeholder="Bir soru sor..." disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="color:var(--blue)"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD PREVIEW -->
+  <section class="max-w-6xl mx-auto px-6 py-24">
+    <div class="max-w-xl mx-auto text-center reveal">
+      <div class="eyebrow mb-4">Uygulama önizlemesi</div>
+      <h2 class="text-3xl md:text-[34px] font-bold">Tüm Gelişim Tek Ekranda.</h2>
+    </div>
+
+    <div class="mt-12 app-mockup reveal">
+      <aside class="app-sidebar">
+        <div class="flex items-center gap-2 mb-6 px-1">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="var(--teal)" stroke-width="1.6"/><path d="M12 6.5 L13.4 12 L12 17.5 L10.6 12 Z" fill="var(--teal)"/></svg>
+          <span class="font-display font-bold text-sm text-white">EduPusula</span>
+        </div>
+        <div class="app-nav-item active">🏠 Ana Sayfa</div>
+        <div class="app-nav-item">👥 Öğrenciler</div>
+        <div class="app-nav-item">📝 Denemeler</div>
+        <div class="app-nav-item">📊 Analizler</div>
+        <div class="app-nav-item">🧭 Başarı Pusulası</div>
+        <div class="app-nav-item">🤖 Pusula Asistanı</div>
+        <div class="app-nav-item">⚙️ Ayarlar</div>
+      </aside>
+      <div class="app-main">
+        <p class="text-sm" style="color:#94A3B8">Hoş Geldiniz 👋</p>
+        <div class="app-today-card mt-3">
+          <div class="eyebrow mb-3" style="color:var(--teal)">🧭 Bugünün Pusulası</div>
+          <div class="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
+            <div><div class="text-[11px]" style="color:#94A3B8">📈 Genel gelişim</div><div class="font-mono-tag font-bold" style="color:var(--success)">+4.2 Net</div></div>
+            <div><div class="text-[11px]" style="color:#94A3B8">🎯 En çok gelişen ders</div><div class="font-mono-tag font-bold text-white">Matematik</div></div>
+            <div><div class="text-[11px]" style="color:#94A3B8">⚠️ Dikkat edilmesi gereken</div><div class="font-mono-tag font-bold" style="color:var(--amber)">Problemler</div></div>
+            <div><div class="text-[11px]" style="color:#94A3B8">🏆 Son başarı</div><div class="font-mono-tag font-bold text-white">3 denemedir yükseliş</div></div>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4 mt-4">
+          <div class="app-today-card">
+            <div class="text-[11px] mb-2" style="color:#94A3B8">📈 Net Gelişim Grafiği</div>
+            <svg viewBox="0 0 200 50" class="w-full" style="height:50px" preserveAspectRatio="none">
+              <polyline points="0,40 40,34 80,36 120,20 160,18 200,8" fill="none" stroke="var(--teal)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="app-today-card">
+            <div class="text-[11px] mb-2" style="color:#94A3B8">🎯 Ders Performansı</div>
+            <div class="dash-bars" style="height:50px">
+              <i style="height:60%;background:var(--teal)"></i>
+              <i style="height:82%;background:var(--teal)"></i>
+              <i style="height:48%;background:var(--teal)"></i>
+              <i style="height:70%;background:var(--teal)"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- İSTATİSTİK -->
+  <section class="max-w-6xl mx-auto px-6 py-20">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+      <div class="reveal">
+        <div class="stat-counter" data-count="1000" data-suffix="+">0</div>
+        <div class="muted text-sm mt-1">📊 Analiz Edilen Deneme</div>
+      </div>
+      <div class="reveal">
+        <div class="stat-counter" data-count="500" data-suffix="+">0</div>
+        <div class="muted text-sm mt-1">🎓 Takip Edilen Öğrenci</div>
+      </div>
+      <div class="reveal">
+        <div class="stat-counter" data-count="85" data-suffix="%" data-prefix-side="none">0</div>
+        <div class="muted text-sm mt-1">📈 Gelişim Takibi</div>
+      </div>
+      <div class="reveal">
+        <div class="stat-counter" data-count="1" data-suffix="">0</div>
+        <div class="muted text-sm mt-1">🧭 Platform, Tüm Eğitim Verileri</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="max-w-6xl mx-auto px-6 pb-24">
+    <div class="cta-gradient text-center px-8 py-16 md:py-20 reveal">
+      <div class="relative">
+        <h2 class="text-3xl md:text-[38px] font-bold text-white max-w-2xl mx-auto">Başarının Yönünü Bugün Keşfedin.</h2>
+        <p class="mt-4 text-white/75 max-w-md mx-auto">Öğrencilerinizin gelişimini daha yakından takip etmeye başlayın.</p>
+        <a href="#kayit" class="btn-primary mt-8" style="background:#fff;color:var(--ink,#0F172A);box-shadow:none">🚀 EduPusula'yı Keşfet</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- SSS -->
+  <section id="sss" class="max-w-3xl mx-auto px-6 py-24">
+    <div class="mb-10">
+      <div class="eyebrow mb-4">Sıkça sorulan sorular</div>
+      <h2 class="text-3xl font-bold">Merak edilenler</h2>
+    </div>
+
+    <div>
+      <details class="faq-item" open>
+        <summary>Öğrenci verileri nerede saklanıyor, kim görebilir?</summary>
+        <p>Veriler sunucu tarafında tutulur ve her istekte kullanıcının rolüne göre filtrelenir — bir öğretmen yalnızca kendi sınıfının öğrencilerini, bir veli yalnızca bağlı olduğu çocuğu görür. Bu kısıtlama arayüzde gizleme değil, veritabanı sorgusunun kendisinde uygulanır.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Hangi sınav türlerini destekliyorsunuz?</summary>
+        <p>LGS, TYT ve AYT denemeleri. Sonuçları optik okuma, Excel/CSV, PDF veya manuel giriş ile aktarabilirsiniz; konu/kazanım bazlı analiz yalnızca optik okumadan gelen sonuçlarda görüntülenir.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Mevcut deneme arşivimizi aktarabilir miyiz?</summary>
+        <p>Evet. Excel, PDF ve optik format şablonlarından toplu içe aktarma desteklenir; kurulum sırasında geçmiş verilerinizi taşımanıza yardımcı oluruz.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Bir veli birden fazla çocuğunu tek hesaptan takip edebilir mi?</summary>
+        <p>Evet. Bir veli hesabı birden fazla öğrenciye bağlanabilir; giriş yaptıktan sonra çocukları arasında geçiş yapabilir.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Ücretsiz deneme süresi ne kadar?</summary>
+        <p>Tüm planlarda 14 gün, kredi kartı gerekmeden. Süre sonunda otomatik ücretlendirme yapılmaz.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- KAYIT / DEMO TALEBİ -->
+  <section id="kayit" class="max-w-6xl mx-auto px-6 pb-24">
+    <div class="surface rounded-[28px] p-9 md:p-12 grid md:grid-cols-2 gap-12">
+      <div>
+        <div class="eyebrow mb-4">Demo talep et</div>
+        <h2 class="text-3xl font-bold">Okulunuz için yönünüzü birlikte belirleyelim.</h2>
+        <p class="mt-4 muted leading-relaxed max-w-sm">Formu doldurun, ekibimiz 1 iş günü içinde sizinle iletişime geçip kurulum için uygun bir zaman ayarlasın.</p>
+      </div>
+
+      <div>
+        <form id="signup-form" class="grid sm:grid-cols-2 gap-4" onsubmit="return handleSignupSubmit(event)">
+          <div class="sm:col-span-2">
+            <label class="field-label" for="f-okul">Okul / Kurum Adı</label>
+            <input class="field-input" id="f-okul" name="okul" type="text" placeholder="Örn: Atatürk Ortaokulu" required>
+          </div>
+          <div>
+            <label class="field-label" for="f-ad">Yetkili Ad Soyad</label>
+            <input class="field-input" id="f-ad" name="ad" type="text" placeholder="Adınız Soyadınız" required>
+          </div>
+          <div>
+            <label class="field-label" for="f-tel">Telefon</label>
+            <input class="field-input" id="f-tel" name="tel" type="tel" placeholder="05xx xxx xx xx">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="field-label" for="f-eposta">E-posta</label>
+            <input class="field-input" id="f-eposta" name="eposta" type="email" placeholder="siz@okulunuz.edu.tr" required>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="field-label" for="f-ogrenci">Yaklaşık öğrenci sayısı</label>
+            <select class="field-input" id="f-ogrenci" name="ogrenci_sayisi">
+              <option>50'den az</option>
+              <option>50 – 250</option>
+              <option>250 – 1000</option>
+              <option>1000'den fazla</option>
+            </select>
+          </div>
+          <div id="form-error" class="sm:col-span-2 text-sm rounded-lg px-3 py-2" style="display:none; background: color-mix(in srgb, var(--rose) 12%, transparent); color: var(--rose);" role="alert"></div>
+          <div class="sm:col-span-2">
+            <button type="submit" class="btn-primary w-full justify-center">Demo Talep Et</button>
+          </div>
+        </form>
+        <div id="form-success" class="surface rounded-2xl p-7 text-center" role="status">
+          <div class="eyebrow mb-2">Teşekkürler</div>
+          <p class="font-display font-bold text-lg">Talebiniz alındı.</p>
+          <p class="muted text-sm mt-2">Ekibimiz 1 iş günü içinde size dönüş yapacak.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="border-t" style="border-color: var(--border);">
+    <div class="max-w-6xl mx-auto px-6 py-14 grid sm:grid-cols-2 md:grid-cols-4 gap-10">
+      <div>
+        <div class="flex items-center gap-2.5">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" stroke="var(--teal-strong)" stroke-width="1.6"/>
+            <path d="M12 5.5 L13.6 12 L12 18.5 L10.4 12 Z" fill="var(--teal-strong)" transform="rotate(35 12 12)"/>
+          </svg>
+          <span class="font-display font-bold text-[15px]">EduPusula</span>
+        </div>
+        <p class="muted text-sm mt-3 max-w-[22ch]">Başarının Yönünü Keşfet.</p>
+      </div>
+      <div>
+        <div class="eyebrow mb-4">Platform</div>
+        <ul class="space-y-2.5 text-sm">
+          <li><a class="navlink" href="#ozellikler">Özellikler</a></li>
+          <li><a class="navlink" href="#nasil-calisir">Nasıl Çalışır?</a></li>
+          <li><a class="navlink" href="#basari-pusulasi">Başarı Pusulası</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="eyebrow mb-4">Kullanıcılar</div>
+        <ul class="space-y-2.5 text-sm">
+          <li><a class="navlink" href="#kimler-icin">Öğretmenler</a></li>
+          <li><a class="navlink" href="#kimler-icin">Veliler</a></li>
+          <li><a class="navlink" href="#kimler-icin">Öğrenciler</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="eyebrow mb-4">Destek</div>
+        <ul class="space-y-2.5 text-sm">
+          <li><a class="navlink" href="#sss">Yardım</a></li>
+          <li><a class="navlink" href="#kayit">İletişim</a></li>
+          <li><a class="navlink" href="#">Gizlilik</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="border-t" style="border-color: var(--border);">
+      <div class="max-w-6xl mx-auto px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <p class="muted text-xs font-mono-tag">© 2026 EduPusula</p>
+        <p class="muted text-xs">Öğrenci verileri yalnızca yetkili kullanıcılara gösterilir.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    async function handleSignupSubmit(event) {
+      event.preventDefault();
+      const form = document.getElementById('signup-form');
+      const errorBox = document.getElementById('form-error');
+      const btn = form.querySelector('button[type="submit"]');
+      errorBox.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Gönderiliyor...';
+
+      const payload = {
+        okul: form.okul.value.trim(),
+        ad: form.ad.value.trim(),
+        tel: form.tel.value.trim(),
+        eposta: form.eposta.value.trim(),
+        ogrenci_sayisi: form.ogrenci_sayisi.value,
+      };
+
+      try {
+        const res = await fetch('/api/demo-talebi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Gönderim başarısız, lütfen tekrar deneyin.');
+        form.classList.add('is-sent');
+      } catch (err) {
+        errorBox.textContent = err.message || 'Bağlantı hatası, lütfen tekrar deneyin.';
+        errorBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Demo Talep Et';
+      }
+      return false;
+    }
+
+    // ---- Nav: scroll'da küçülme ----
+    const siteNav = document.getElementById('site-nav');
+    window.addEventListener('scroll', () => {
+      siteNav.classList.toggle('is-scrolled', window.scrollY > 24);
+    }, { passive: true });
+
+    // ---- Mobil menü ----
+    const mobileBtn = document.getElementById('mobile-menu-btn');
+    const mobileMenu = document.getElementById('mobile-menu');
+    mobileBtn.addEventListener('click', () => {
+      const isOpen = !mobileMenu.classList.contains('hidden');
+      mobileMenu.classList.toggle('hidden', isOpen);
+      mobileBtn.setAttribute('aria-expanded', String(!isOpen));
+    });
+    mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+      mobileMenu.classList.add('hidden');
+      mobileBtn.setAttribute('aria-expanded', 'false');
+    }));
+
+    // ---- Scroll reveal ----
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!prefersReduced && 'IntersectionObserver' in window) {
+      const revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            revealObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
+      document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+    } else {
+      document.querySelectorAll('.reveal').forEach(el => el.classList.add('is-visible'));
+    }
+
+    // ---- İstatistik sayaçları ----
+    function animateCounter(el) {
+      const target = parseFloat(el.dataset.count);
+      const suffix = el.dataset.suffix || '';
+      const duration = 1200;
+      const start = performance.now();
+      function tick(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.textContent = Math.round(target * eased) + suffix;
+        if (progress < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+    if ('IntersectionObserver' in window) {
+      const counterObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            animateCounter(entry.target);
+            counterObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.4 });
+      document.querySelectorAll('.stat-counter').forEach(el => counterObserver.observe(el));
+    }
+
+    // ---- Pusula Asistanı: örnek soru butonları ----
+    const aiAnswers = {
+      'Son denememde neyi geliştirdim?': 'Son denemende <b>Türkçe</b> netin 4.5 arttı — bu, son dönemin en belirgin gelişim alanın oldu.',
+      'Hangi derse daha fazla çalışmalıyım?': '<b>Fen Bilimleri</b>\'ndeki başarı oranın %52 seviyesinde; bu dönem önceliğin bu ders olmalı.',
+      'Son 5 denemedeki gelişimim nasıl?': 'Son üç denemede <b>Matematik</b> performansında düzenli bir yükseliş görülüyor. <b>Problem</b> sorularındaki sonuçların ise diğer konulara göre daha fazla dikkat gerektirdiği görülüyor.',
+      'Bana çalışma önerisi ver.': 'Bugün için 10 soruluk bir <b>Problemler</b> seti öneriyorum; bu konu son 3 denemedir en düşük başarı oranına sahip.',
+    };
+    function askAssistant(btn) {
+      const body = document.getElementById('ai-chat-body');
+      const question = btn.textContent;
+      const userMsg = document.createElement('div');
+      userMsg.className = 'ai-msg-user';
+      userMsg.textContent = question;
+      body.appendChild(userMsg);
+      body.scrollTop = body.scrollHeight;
+
+      setTimeout(() => {
+        const botMsg = document.createElement('div');
+        botMsg.className = 'ai-msg-bot';
+        botMsg.innerHTML = aiAnswers[question] || 'Bu konuda henüz bir öneri hazırlayamadım, lütfen tekrar dener misin?';
+        body.appendChild(botMsg);
+        body.scrollTop = body.scrollHeight;
+      }, 500);
+    }
+  </script>
+
+</body>
+</html>

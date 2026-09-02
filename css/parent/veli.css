@@ -1,0 +1,108 @@
+    /* ===================================================
+       EduPusula Veli Paneli — Marka Retinti
+       Aynı desen: css/student/ogrenci.css ve css/teacher/ogretmen.css
+       =================================================== */
+    :root {
+      --accent-primary: #14B8A6;
+      --accent-primary-light: #2DD4BF;
+      --accent-secondary: #3B82F6;
+      --accent-pink: #14B8A6;
+      --accent-gradient: linear-gradient(135deg, #0F766E 0%, #14B8A6 55%, #3B82F6 100%);
+      --accent-gradient-hover: linear-gradient(135deg, #3B82F6 0%, #14B8A6 55%, #0F766E 100%);
+      --ai-purple: #14B8A6;
+      --ai-purple-light: #2DD4BF;
+      --ai-purple-bg: rgba(20,184,166,0.15);
+      --shadow-glow: 0 0 35px -5px rgba(20,184,166,0.35);
+    }
+    .card-title, .page-title, .q-heading {
+      font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
+    }
+    .summary-tile .value, .badge-net, .q-dir, .q-tags li b, .subject-progress-row .sp-value {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+    }
+    body::before {
+      background:
+        radial-gradient(circle at 20% 30%, rgba(20,184,166,0.18) 0%, transparent 45%),
+        radial-gradient(circle at 80% 20%, rgba(59,130,246,0.15) 0%, transparent 40%),
+        radial-gradient(circle at 50% 85%, rgba(6,182,212,0.14) 0%, transparent 50%),
+        radial-gradient(circle at 75% 70%, rgba(15,118,110,0.16) 0%, transparent 45%) !important;
+    }
+    .nav-item:hover { background: rgba(20,184,166,0.12) !important; }
+    .nav-item.active {
+      background: linear-gradient(90deg, rgba(20,184,166,0.22), rgba(59,130,246,0.12)) !important;
+      box-shadow: 0 4px 16px rgba(20,184,166,0.18), inset 0 0 0 1px rgba(20,184,166,0.3) !important;
+    }
+    .menu-toggle:hover {
+      background: rgba(20,184,166,0.2) !important;
+      border-color: rgba(20,184,166,0.4) !important;
+    }
+    .page-title {
+      background: linear-gradient(135deg, #ffffff 0%, #e2e8f0 70%, #5eead4 100%) !important;
+      -webkit-background-clip: text; background-clip: text;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: #2DD4BF !important;
+      box-shadow: 0 0 0 3px rgba(20,184,166,0.25), 0 0 20px rgba(20,184,166,0.2) !important;
+    }
+
+    .chart-box { position: relative; height: 280px; margin-top: 10px; }
+    .subject-progress-list { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+    .subject-progress-row { display: flex; align-items: center; gap: 12px; }
+    .subject-progress-row .sp-name { width: 130px; flex-shrink: 0; font-size: 13.5px; color: var(--text-secondary); }
+    .subject-progress-row .sp-track { flex: 1; height: 10px; border-radius: 999px; background: var(--bg-glass); overflow: hidden; }
+    .subject-progress-row .sp-fill { height: 100%; border-radius: 999px; transition: width 0.6s ease; }
+    .subject-progress-row .sp-value { width: 50px; text-align: right; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+    table.simple-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    table.simple-table th, table.simple-table td {
+      text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--bg-glass-border); font-size: 13px;
+    }
+    table.simple-table th { color: var(--text-muted); font-weight: 600; }
+    .badge-net { font-weight: 800; color: var(--accent-primary-light); }
+    .child-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .child-tab {
+      padding: 8px 16px; border-radius: 10px; border: 1px solid var(--bg-glass-border);
+      background: rgba(255,255,255,0.04); color: var(--text-primary); cursor: pointer; font-size: 13px;
+    }
+    .child-tab.active { background: rgba(20,184,166,0.25); border-color: rgba(20,184,166,0.5); }
+    .summary-tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 10px; }
+    .summary-tile {
+      padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.04);
+      border: 1px solid var(--bg-glass-border);
+    }
+    .summary-tile .label { font-size: 12px; color: var(--text-muted); }
+    .summary-tile .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
+
+    /* ---- Başarı Pusulası ---- */
+    :root {
+      --ep-teal: #14B8A6; --ep-success: #22C55E; --ep-sky: #3B82F6;
+      --ep-amber: #F59E0B; --ep-rose: #EF4444;
+    }
+    .compass-grid {
+      position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+      border-radius: 20px; overflow: hidden; border: 1px solid var(--bg-glass-border);
+    }
+    .quadrant {
+      position: relative; padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 6px;
+      min-height: 140px; background: color-mix(in srgb, var(--q) 10%, rgba(255,255,255,0.03));
+    }
+    .quadrant::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--q); }
+    .q-nw { border-top-left-radius: 18px; }
+    .q-ne { border-top-right-radius: 18px; }
+    .q-sw { border-bottom-left-radius: 18px; }
+    .q-se { border-bottom-right-radius: 18px; background: color-mix(in srgb, var(--q) 20%, rgba(255,255,255,0.03)); }
+    .q-dir { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--q); }
+    .q-heading { font-size: 14px; font-weight: 700; line-height: 1.2; margin: 2px 0 4px; }
+    .q-tags { list-style: none; display: flex; flex-direction: column; gap: 5px; margin-top: auto; padding: 0; }
+    .q-tags li { display: block; overflow: hidden; font-size: 12px; background: color-mix(in srgb, var(--q) 16%, transparent); border-radius: 8px; padding: 5px 9px; }
+    .q-tags li b { float: right; margin-left: 8px; color: var(--q); font-weight: 700; white-space: nowrap; }
+    .compass-pivot {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 46px; height: 46px; border-radius: 999px; background: #0f172a;
+      border: 1px solid var(--bg-glass-border); box-shadow: 0 8px 20px -6px rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center; z-index: 2;
+    }
+
+    @media (max-width: 768px) {
+      table.simple-table th, table.simple-table td { font-size: 14.5px; padding: 12px 10px; }
+      .compass-grid { grid-template-columns: 1fr; }
+    }

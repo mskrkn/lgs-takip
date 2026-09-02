@@ -21,7 +21,7 @@ const ExportModule = {
     let y = 15;
 
     // Title
-    doc.setFillColor(99, 102, 241);
+    doc.setFillColor(20, 184, 166);
     doc.rect(0, 0, pageWidth, 35, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
@@ -172,7 +172,7 @@ const ExportModule = {
     let y = 15;
 
     // Title
-    doc.setFillColor(99, 102, 241);
+    doc.setFillColor(20, 184, 166);
     doc.rect(0, 0, pageWidth, 30, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(16);
