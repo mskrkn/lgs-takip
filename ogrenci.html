@@ -74,7 +74,7 @@
         <section class="page-section active" id="page-dashboard">
 
           <!-- ÖĞRETMEN MESAJLARI -->
-          <div class="ep-card anim-fade-up" id="teacher-messages-card" style="display:none;margin-top:0;margin-bottom:16px;border-color:rgba(245,158,11,0.3)">
+          <div class="ep-card anim-fade-up" id="teacher-messages-card" style="display:none;border-color:rgba(245,158,11,0.3)">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">📬</div> Öğretmen Mesajları</div>
             </div>
@@ -82,7 +82,7 @@
           </div>
 
           <!-- HERO -->
-          <div class="ep-hero anim-fade-up" style="margin-top:0">
+          <div class="ep-hero anim-fade-up">
             <div class="ep-hero-left">
               <div class="ep-hero-greeting">👋 Merhaba!</div>
               <div class="ep-hero-name" id="greeting-title">Hoş Geldin 🧭</div>
@@ -102,12 +102,12 @@
           </div>
 
           <!-- KPI STRIP -->
-          <div class="ep-kpi-strip mt-ep anim-fade-up anim-fade-up-d1" id="scorecards">
+          <div class="ep-kpi-strip anim-fade-up anim-fade-up-d1" id="scorecards">
             <!-- JS tarafından doldurulur -->
           </div>
 
           <!-- BUGÜNKÜ GÖREV + ÇALIŞMA SERİSİ -->
-          <div class="ep-twin mt-ep">
+          <div class="ep-twin">
             <!-- Bugünkü Görev -->
             <div class="ep-task-card anim-fade-up anim-fade-up-d2" id="task-card-el">
               <div class="ep-section-hd" style="margin-bottom:0">
@@ -214,7 +214,7 @@
           </div>
 
           <!-- PUSİ — AI ASISTAN -->
-          <div class="ep-pusi anim-fade-up anim-fade-up-d5 mt-ep">
+          <div class="ep-pusi anim-fade-up anim-fade-up-d5">
             <div class="ep-pusi-avatar">🧭</div>
             <div style="flex:1">
               <span class="ep-pusi-label">🤖 Pusula AI — Pusi</span>
@@ -242,20 +242,20 @@
         <!-- ============ ANALİZLER ============ -->
         <section class="page-section" id="page-analytics">
 
-          <div class="ep-card" id="topic-card" style="display:none;margin-top:0">
+          <div class="ep-card" id="topic-card" style="display:none">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Konu Analizin (Son Deneme)</div>
             </div>
             <div id="topic-stats"></div>
           </div>
 
-          <div class="ep-card mt-ep" id="error-memory-card" style="display:none">
+          <div class="ep-card" id="error-memory-card" style="display:none">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">🧠</div> Hata Hafızan</div>
             </div>
             <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">En son denemedeki yanlışların, o konudaki geçmiş performansına göre sınıflandırılması.</p>
             <div id="error-memory-list"></div>
-            <div class="ep-pusi mt-ep" style="background:rgba(124,58,237,0.08)">
+            <div class="ep-pusi mt-ep" style="background:rgba(15,118,110,0.08)">
               <div class="ep-pusi-avatar" style="width:44px;height:44px;font-size:20px">🤖</div>
               <div>
                 <span class="ep-pusi-label">Pusula AI Yorumu</span>
@@ -264,7 +264,7 @@
             </div>
           </div>
 
-          <div class="ep-card mt-ep">
+          <div class="ep-card">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">📊</div> Genel Karşılaştırma</div>
             </div>
@@ -276,7 +276,7 @@
 
         <!-- ============ DENEMELERİM ============ -->
         <section class="page-section" id="page-exams">
-          <div class="ep-card" style="margin-top:0">
+          <div class="ep-card">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">📝</div> Tüm Denemelerim</div>
             </div>
@@ -286,7 +286,7 @@
 
         <!-- ============ AYARLAR ============ -->
         <section class="page-section" id="page-settings">
-          <div class="ep-card" style="margin-top:0">
+          <div class="ep-card">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">🔑</div> Şifremi Değiştir</div>
             </div>
@@ -300,7 +300,7 @@
                 <input type="password" id="pw-new" class="form-control" placeholder="En az 4 karakter">
               </div>
             </div>
-            <button class="ep-task-cta mt-ep" style="margin-top:18px" onclick="changePassword()">🔒 Şifremi Değiştir</button>
+            <button class="ep-task-cta" style="margin-top:18px" onclick="changePassword()">🔒 Şifremi Değiştir</button>
             <p style="margin-top:12px;font-size:13px;color:var(--text-muted)" id="pw-status"></p>
           </div>
         </section>

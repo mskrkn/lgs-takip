@@ -71,6 +71,15 @@
       box-shadow: 0 0 0 3px rgba(20,184,166,0.25), 0 0 20px rgba(20,184,166,0.2) !important;
     }
 
+    /* ---- Bölüm ritmi: her kartın kendi margin-top'unu yönetmesi yerine
+       (ki bu ilk kart için hep "margin-top:0" ile elle iptal edilmesini
+       gerektiriyordu) aralığı tek yerden, section'ın kendisi kontrol eder. */
+    .page-section.active {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
     /* ---- Fade-in animation system ---- */
     @keyframes fadeUp {
       from { opacity:0; transform:translateY(18px); }
@@ -444,7 +453,6 @@
     /* ---- STRENGTHS ---- */
     .ep-strengths-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 600px) { .ep-strengths-grid { grid-template-columns: 1fr; } }
-    .ep-strength-col { }
     .ep-strength-head {
       display: flex; align-items: center; gap: 8px;
       font-size: 14px; font-weight: 800; margin-bottom: 12px;
@@ -502,7 +510,7 @@
 
     /* ---- GELISIM EGRISI FILTRE BUTONLARI ---- */
     .ep-filter-btn {
-      padding: 6px 13px; border-radius: 999px; border: 1px solid var(--bg-glass-border, rgba(255,255,255,0.12));
+      padding: 6px 13px; border-radius: 99px; border: 1px solid var(--bg-glass-border, rgba(255,255,255,0.12));
       background: rgba(255,255,255,0.04); color: var(--text-muted, #94a3b8);
       font-size: 12px; font-weight: 700; font-family: inherit; cursor: pointer;
       transition: all .18s ease;
@@ -638,7 +646,6 @@
       border: 1px solid var(--ep-glass-b);
       border-radius: 22px;
       padding: 24px;
-      margin-top: 16px;
       position: relative;
     }
 
