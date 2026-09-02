@@ -40,7 +40,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 try:
-    from flask import Flask, request, jsonify, session, send_from_directory, redirect, g
+    from flask import Flask, request, jsonify, session, send_from_directory, redirect, g, Response
 except ImportError:
     print("\n❌ 'flask' kütüphanesi kurulu değil.")
     print("   Lütfen şu komutu çalıştırıp tekrar deneyin:")
@@ -48,6 +48,7 @@ except ImportError:
     sys.exit(1)
 
 from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
 
 try:
     from argon2 import PasswordHasher
@@ -58,9 +59,19 @@ except ImportError:
     print("   pip install argon2-cffi\n")
     sys.exit(1)
 
+try:
+    import pdf_question_extractor
+except ImportError:
+    print("\n❌ 'PyMuPDF' kütüphanesi kurulu değil (Soru Havuzu PDF girişi için gerekli).")
+    print("   Lütfen şu komutu çalıştırıp tekrar deneyin:")
+    print("   pip install PyMuPDF\n")
+    sys.exit(1)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
 PORT = 8080
 
 app = Flask(__name__, static_folder=None)
@@ -108,6 +119,7 @@ def get_secret_key():
 
 app.secret_key = get_secret_key()
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # Soru Havuzu PDF yükleme - kötüye kullanımı sınırlar
 
 
 # ============================================================
@@ -472,6 +484,92 @@ def _create_v2_tables(conn):
     conn.commit()
 
 
+# ============================================================
+# Soru Havuzu (EduPusula Adaptif Öğrenme Motoru - Aşama 1)
+# ============================================================
+# ÖNEMLİ: Bu tablolar questions/student_question_results'tan TAMAMEN
+# BAĞIMSIZDIR ve kasıtlı olarak farklı isimlendirilmiştir. questions ve
+# student_question_results, sync_derived_tables() içinde her sunucu
+# başlangıcında ve her /api/admin/sync çağrısında SİLİNİP YENİDEN KURULUR
+# (bkz. yukarısı, satır ~628) - buraya gerçek soru verisi yazsaydık her
+# yeniden başlatmada sessizce kaybolurdu. question_bank ve ilişkili
+# tablolar bu döngünün tamamen dışında durur; hiçbir yerde DELETE FROM
+# question_bank / question_import_batches / topics / learning_outcomes
+# çağrısı YAPILMAMALIDIR.
+def _create_question_bank_tables(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(subject_id, name)
+        );
+
+        CREATE TABLE IF NOT EXISTS learning_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(topic_id, name)
+        );
+
+        CREATE TABLE IF NOT EXISTS question_import_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            source_filename TEXT NOT NULL,
+            page_count INTEGER,
+            status TEXT NOT NULL DEFAULT 'processing'
+                CHECK(status IN ('processing','ready_for_review','completed','failed')),
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS question_bank (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            batch_id INTEGER REFERENCES question_import_batches(id) ON DELETE SET NULL,
+            display_code TEXT UNIQUE,
+
+            subject_id INTEGER NOT NULL REFERENCES subjects(id),
+            grade_level TEXT,
+            topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+            learning_outcome_id INTEGER REFERENCES learning_outcomes(id) ON DELETE SET NULL,
+
+            question_type TEXT,
+            difficulty_level INTEGER,
+            tags TEXT,
+
+            image_path TEXT NOT NULL,
+            source_page_number INTEGER,
+            crop_x REAL, crop_y REAL, crop_width REAL, crop_height REAL,
+            question_text TEXT,
+
+            correct_answer TEXT,
+            correct_answer_source TEXT CHECK(correct_answer_source IN ('answer_key','manual','edited')),
+            explanation TEXT,
+
+            status TEXT NOT NULL DEFAULT 'pending_review'
+                CHECK(status IN ('pending_review','reviewed','excluded','approved')),
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    # Var olan kurulumlarda (question_number sütunu eklenmeden önce
+    # oluşturulmuş question_bank tablosu) veri kaybetmeden sütunu ekler -
+    # bu sütun olmadan "Soru 12" gibi orijinal numara PNG dosya adından
+    # başka hiçbir yerde tutulmuyordu.
+    qb_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_bank)").fetchall()]
+    if qb_cols and "question_number" not in qb_cols:
+        conn.execute("ALTER TABLE question_bank ADD COLUMN question_number INTEGER")
+    conn.commit()
+
+
 def _get_default_org_id(conn):
     row = conn.execute("SELECT id FROM organizations LIMIT 1").fetchone()
     if row:
@@ -483,6 +581,16 @@ def _get_default_org_id(conn):
     )
     conn.commit()
     return conn.execute("SELECT id FROM organizations LIMIT 1").fetchone()["id"]
+
+
+def _current_org_id(db):
+    """Oturumdaki kullanıcının kurum id'si; yoksa varsayılan kuruma düşer
+    (tek-kurumlu kurulumlar için)."""
+    org_row = db.execute(
+        "SELECT organization_id FROM users WHERE id=?", (session["user_id"],)
+    ).fetchone()
+    return (org_row["organization_id"] if org_row and org_row["organization_id"] else None) \
+        or _get_default_org_id(db)
 
 
 def _seed_reference_data(conn):
@@ -721,6 +829,7 @@ def run_v2_migration(conn):
     init_db() ve /api/admin/sync tarafından çağrılır - tamamen idempotent."""
     conn.row_factory = sqlite3.Row
     _create_v2_tables(conn)
+    _create_question_bank_tables(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -744,6 +853,7 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
 
 
 def init_db():
+    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
 
     # 1) Önce 'users' tablosunu oluştur/düzelt - diğer tablolar buna FK ile
@@ -2198,6 +2308,354 @@ def api_admin_demo_talepleri():
         "FROM demo_requests ORDER BY created_at DESC"
     ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+# ============================================================
+# Soru Havuzu: PDF yükleme + otomatik kırpma tespiti
+# ============================================================
+# Akış: PDF yüklenir -> pdf_question_extractor ile soru sınırları ve varsa
+# cevap anahtarı tespit edilir -> her soru question_bank'e "pending_review"
+# durumuyla, kırpılmış görüntüsüyle birlikte yazılır. Hiçbir soru bu adımda
+# "approved" olmaz - öğretmenin kırpma/konu/kazanım onayı ayrı bir adımdır
+# (henüz yazılmadı, bkz. question_bank.status).
+
+_MAX_PDF_PAGES = 60
+
+
+@app.route("/api/admin/question-bank/upload", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_upload():
+    file = request.files.get("file")
+    if not file or not (file.filename or "").lower().endswith(".pdf"):
+        return jsonify({"error": "Geçerli bir PDF dosyası seçin."}), 400
+
+    subject_code = (request.form.get("subject_code") or "").strip()
+    if not subject_code:
+        return jsonify({"error": "Ders seçimi gerekli."}), 400
+
+    db = get_db()
+    subject_row = db.execute("SELECT id FROM subjects WHERE code=?", (subject_code,)).fetchone()
+    if not subject_row:
+        return jsonify({"error": "Geçersiz ders."}), 400
+    subject_id = subject_row["id"]
+    user_id = session["user_id"]
+    org_id = _current_org_id(db)
+
+    now = datetime.now().isoformat()
+    safe_name = secure_filename(file.filename) or "yuklenen.pdf"
+    cur = db.execute(
+        "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, created_at) "
+        "VALUES (?,?,?,?,?)",
+        (org_id, user_id, safe_name, "processing", now),
+    )
+    batch_id = cur.lastrowid
+    db.commit()
+
+    source_dir = os.path.join(UPLOADS_DIR, "source_pdfs")
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
+    pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
+    file.save(pdf_path)
+
+    try:
+        result = pdf_question_extractor.extract_questions(pdf_path)
+        if result["page_count"] > _MAX_PDF_PAGES:
+            raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
+    except Exception as exc:
+        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
+        db.commit()
+        return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
+
+    created = []
+    for q in result["questions"]:
+        image_filename = f"{batch_id}_{q['number']}.png"
+        pdf_question_extractor.render_question_crop(
+            pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename)
+        )
+        answer = result["answer_key"].get(q["number"])
+        rect = q["rect"]
+        qcur = db.execute(
+            "INSERT INTO question_bank (organization_id, batch_id, subject_id, image_path, "
+            "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
+            "correct_answer, correct_answer_source, status, created_by, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (org_id, batch_id, subject_id, f"questions/{image_filename}",
+             q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
+             answer, "answer_key" if answer else None, "pending_review", user_id, now, now),
+        )
+        created.append({
+            "id": qcur.lastrowid, "number": q["number"], "correctAnswer": answer,
+            "imageUrl": f"/api/admin/question-bank/image/{qcur.lastrowid}",
+        })
+
+    db.execute(
+        "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
+        (result["page_count"], batch_id),
+    )
+    db.commit()
+
+    return jsonify({
+        "batchId": batch_id,
+        "pageCount": result["page_count"],
+        "questionCount": len(created),
+        "answerKeyFound": len(result["answer_key"]) > 0,
+        "questions": created,
+    })
+
+
+@app.route("/api/admin/question-bank/batches")
+@login_required(role="admin")
+def api_question_bank_batches():
+    db = get_db()
+    org_id = _current_org_id(db)
+    rows = db.execute(
+        "SELECT b.id, b.source_filename, b.status, b.page_count, b.created_at, "
+        "COUNT(q.id) AS question_count, "
+        "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count "
+        "FROM question_import_batches b LEFT JOIN question_bank q ON q.batch_id = b.id "
+        "WHERE b.organization_id=? GROUP BY b.id ORDER BY b.id DESC",
+        (org_id,),
+    ).fetchall()
+    return jsonify({"batches": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/batches/<int:batch_id>")
+@login_required(role="admin")
+def api_question_bank_batch(batch_id):
+    db = get_db()
+    org_id = _current_org_id(db)
+    batch = db.execute(
+        "SELECT * FROM question_import_batches WHERE id=? AND organization_id=?",
+        (batch_id, org_id),
+    ).fetchone()
+    if not batch:
+        return jsonify({"error": "Bulunamadı."}), 404
+    rows = db.execute(
+        "SELECT id, subject_id, question_number, source_page_number, crop_x, crop_y, "
+        "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
+        "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code "
+        "FROM question_bank WHERE batch_id=? ORDER BY question_number, id",
+        (batch_id,),
+    ).fetchall()
+    questions = []
+    for r in rows:
+        item = dict(r)
+        item["imageUrl"] = f"/api/admin/question-bank/image/{r['id']}"
+        questions.append(item)
+    return jsonify({"batch": dict(batch), "questions": questions})
+
+
+def _get_owned_question(db, question_id, org_id):
+    return db.execute(
+        "SELECT * FROM question_bank WHERE id=? AND organization_id=?", (question_id, org_id)
+    ).fetchone()
+
+
+def _source_pdf_path(batch_id):
+    return os.path.join(UPLOADS_DIR, "source_pdfs", f"batch_{batch_id}.pdf")
+
+
+@app.route("/api/admin/question-bank/image/<int:question_id>")
+@login_required(role="admin")
+def api_question_bank_image(question_id):
+    db = get_db()
+    row = db.execute(
+        "SELECT image_path, organization_id FROM question_bank WHERE id=?", (question_id,)
+    ).fetchone()
+    if not row or row["organization_id"] != _current_org_id(db):
+        return jsonify({"error": "Bulunamadı."}), 404
+    filename = os.path.basename(row["image_path"])
+    resp = send_from_directory(QUESTION_IMAGES_DIR, filename)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/context-image")
+@login_required(role="admin")
+def api_question_bank_context_image(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+    pdf_path = _source_pdf_path(row["batch_id"])
+    if not os.path.isfile(pdf_path):
+        return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
+    try:
+        png_bytes, page_w, page_h = pdf_question_extractor.render_page_image_bytes(
+            pdf_path, row["source_page_number"] - 1
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Sayfa görüntüsü oluşturulamadı: {exc}"}), 400
+    resp = Response(png_bytes, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Page-Width-Pt"] = str(page_w)
+    resp.headers["X-Page-Height-Pt"] = str(page_h)
+    resp.headers["X-Dpi"] = str(pdf_question_extractor.CONTEXT_DPI)
+    return resp
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/recrop", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_recrop(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        x, y, w, h = float(data["x"]), float(data["y"]), float(data["width"]), float(data["height"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Geçersiz kırpma sınırları."}), 400
+    if w <= 0 or h <= 0:
+        return jsonify({"error": "Kırpma alanı geçersiz."}), 400
+
+    pdf_path = _source_pdf_path(row["batch_id"])
+    if not os.path.isfile(pdf_path):
+        return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
+
+    out_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(row["image_path"]))
+    try:
+        rect = pdf_question_extractor.render_question_crop_from_bounds(
+            pdf_path, row["source_page_number"] - 1, x, y, x + w, y + h, out_path
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Yeniden kırpma başarısız: {exc}"}), 400
+
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE question_bank SET crop_x=?, crop_y=?, crop_width=?, crop_height=?, updated_at=? WHERE id=?",
+        (rect.x0, rect.y0, rect.width, rect.height, now, question_id),
+    )
+    db.commit()
+    return jsonify({
+        "cropX": rect.x0, "cropY": rect.y0, "cropWidth": rect.width, "cropHeight": rect.height,
+        "imageUrl": f"/api/admin/question-bank/image/{question_id}?t={int(datetime.now().timestamp())}",
+    })
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>", methods=["PATCH"])
+@login_required(role="admin")
+def api_question_bank_update(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, params = [], []
+
+    for key, column in (
+        ("topicId", "topic_id"), ("learningOutcomeId", "learning_outcome_id"),
+        ("difficultyLevel", "difficulty_level"), ("questionType", "question_type"),
+        ("explanation", "explanation"),
+    ):
+        if key in data:
+            fields.append(f"{column}=?")
+            params.append(data[key] or None)
+
+    if "correctAnswer" in data:
+        fields.append("correct_answer=?")
+        params.append((data["correctAnswer"] or "").strip() or None)
+        fields.append("correct_answer_source=?")
+        params.append("edited")
+
+    status = data.get("status")
+    if status:
+        if status not in ("pending_review", "reviewed", "excluded", "approved"):
+            return jsonify({"error": "Geçersiz durum."}), 400
+        fields.append("status=?")
+        params.append(status)
+        fields.append("reviewed_by=?")
+        params.append(session["user_id"])
+        fields.append("reviewed_at=?")
+        params.append(datetime.now().isoformat())
+
+    if not fields:
+        return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400
+
+    fields.append("updated_at=?")
+    params.append(datetime.now().isoformat())
+    params.append(question_id)
+    db.execute(f"UPDATE question_bank SET {', '.join(fields)} WHERE id=?", params)
+
+    display_code = row["display_code"]
+    if status == "approved" and not display_code:
+        subject_row = db.execute("SELECT code FROM subjects WHERE id=?", (row["subject_id"],)).fetchone()
+        subject_code = (subject_row["code"] if subject_row else "soru").upper()
+        display_code = f"{subject_code}-{question_id:05d}"
+        db.execute("UPDATE question_bank SET display_code=? WHERE id=?", (display_code, question_id))
+
+    db.commit()
+    return jsonify({"ok": True, "displayCode": display_code})
+
+
+@app.route("/api/admin/question-bank/topics")
+@login_required(role="admin")
+def api_question_bank_topics():
+    db = get_db()
+    subject_id = request.args.get("subject_id", type=int)
+    if not subject_id:
+        return jsonify({"error": "subject_id gerekli."}), 400
+    rows = db.execute(
+        "SELECT id, name FROM topics WHERE subject_id=? ORDER BY name", (subject_id,)
+    ).fetchall()
+    return jsonify({"topics": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/topics", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_create_topic():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    subject_id = data.get("subjectId")
+    name = (data.get("name") or "").strip()
+    if not subject_id or not name:
+        return jsonify({"error": "subjectId ve name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "INSERT OR IGNORE INTO topics (subject_id, name, created_at) VALUES (?,?,?)",
+        (subject_id, name, now),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT id, name FROM topics WHERE subject_id=? AND name=?", (subject_id, name)
+    ).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/admin/question-bank/learning-outcomes")
+@login_required(role="admin")
+def api_question_bank_learning_outcomes():
+    db = get_db()
+    topic_id = request.args.get("topic_id", type=int)
+    if not topic_id:
+        return jsonify({"error": "topic_id gerekli."}), 400
+    rows = db.execute(
+        "SELECT id, name FROM learning_outcomes WHERE topic_id=? ORDER BY name", (topic_id,)
+    ).fetchall()
+    return jsonify({"learningOutcomes": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/learning-outcomes", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_create_learning_outcome():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    topic_id = data.get("topicId")
+    name = (data.get("name") or "").strip()
+    if not topic_id or not name:
+        return jsonify({"error": "topicId ve name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "INSERT OR IGNORE INTO learning_outcomes (topic_id, name, created_at) VALUES (?,?,?)",
+        (topic_id, name, now),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT id, name FROM learning_outcomes WHERE topic_id=? AND name=?", (topic_id, name)
+    ).fetchone()
+    return jsonify(dict(row))
 
 
 # ============================================================
