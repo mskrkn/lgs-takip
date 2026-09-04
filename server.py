@@ -1295,6 +1295,14 @@ def api_admin_sync():
     results = payload.get("results") or []
 
     db = get_db()
+    # parent_students.student_id -> students(id) ON DELETE CASCADE tanimli;
+    # asagidaki DELETE FROM students bu yuzden tum veli-ogrenci baglantilarini
+    # da siler. Ayni id'yle geri gelen ogrenciler icin bu baglantilari geri
+    # kurabilmek icin once yedekliyoruz (bkz. asagidaki geri yukleme).
+    existing_parent_links = db.execute(
+        "SELECT parent_user_id, student_id FROM parent_students"
+    ).fetchall()
+
     db.execute("DELETE FROM students")
     db.execute("DELETE FROM exams")
     db.execute("DELETE FROM results")
@@ -1316,6 +1324,14 @@ def api_admin_sync():
             "INSERT INTO results (id, student_id, exam_id, data_json) VALUES (?,?,?,?)",
             (r.get("id"), r.get("studentId"), r.get("examId"), json.dumps(r)),
         )
+
+    new_student_ids = {s.get("id") for s in students}
+    for link in existing_parent_links:
+        if link["student_id"] in new_student_ids:
+            db.execute(
+                "INSERT OR IGNORE INTO parent_students (parent_user_id, student_id) VALUES (?,?)",
+                (link["parent_user_id"], link["student_id"]),
+            )
     db.commit()
 
     # v2: normalize edilmiş tabloları (sınıflar, kayıtlar, sınav sonuçları,
