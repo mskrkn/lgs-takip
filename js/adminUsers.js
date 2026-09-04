@@ -6,9 +6,9 @@
 const AdminUsers = {
 
   // "7/A", "8/C" gibi sinif adlarini sinif seviyesine (7, 8, ...) gore
-  // gruplar - "Sinif (Ogrenci Icin)" secim kutusunda "8. Siniflar" /
-  // "7. Siniflar" basliklari altinda toplanmasi icin. "B" gibi seviye
-  // ontaki olmayan adlar en sona "Diger" grubuna duser.
+  // gruplar - once "Sinif Duzeyi" (5./6./7./8. Siniflar) secilir, sonra o
+  // duzeyin subeleri (7/A, 7/B, ...) ikinci kutuda gorunur. Seviye onteki
+  // olmayan adlar (varsa) "Diger" grubuna duser.
   _groupClassesByGrade(classNames) {
     const groups = {};
     const other = [];
@@ -21,9 +21,9 @@ const AdminUsers = {
       }
     });
     const result = Object.keys(groups)
-      .sort((a, b) => Number(b) - Number(a))
-      .map(grade => ({ label: `${grade}. Sınıflar`, classes: groups[grade] }));
-    if (other.length) result.push({ label: 'Diğer', classes: other });
+      .sort((a, b) => Number(a) - Number(b))
+      .map(grade => ({ grade, label: `${grade}. Sınıflar`, classes: groups[grade] }));
+    if (other.length) result.push({ grade: null, label: 'Diğer', classes: other });
     return result;
   },
 
@@ -40,6 +40,7 @@ const AdminUsers = {
 
     this._students = students;
     const classNames = [...new Set(students.map(s => s.class_name).filter(Boolean))].sort();
+    this._classGroups = this._groupClassesByGrade(classNames);
 
     container.innerHTML = `
       <div class="card" style="border:1px solid rgba(20,184,166,0.3)">
@@ -95,13 +96,14 @@ const AdminUsers = {
             <small class="text-muted" style="display:block;margin-top:6px">Birden fazla sınıf seçilebilir, ya da "Tümü" ile hepsine erişim verilebilir.</small>
           </div>
           <div id="new-user-student-wrap" style="display:none">
-            <label class="form-label">Sınıf (Öğrenci İçin)</label>
-            <select id="new-user-student-class" class="form-control" onchange="AdminUsers.onStudentClassChange()">
-              <option value="">Sınıf seçin...</option>
-              ${this._groupClassesByGrade(classNames).map(g => `
-                <optgroup label="${g.label}">
-                  ${g.classes.map(c => `<option value="${c}">${c}</option>`).join('')}
-                </optgroup>`).join('')}
+            <label class="form-label">Sınıf Düzeyi (Öğrenci İçin)</label>
+            <select id="new-user-student-grade" class="form-control" onchange="AdminUsers.onStudentGradeChange()">
+              <option value="">Sınıf düzeyi seçin...</option>
+              ${this._classGroups.map(g => `<option value="${g.label}">${g.label}</option>`).join('')}
+            </select>
+            <label class="form-label mt-2">Şube</label>
+            <select id="new-user-student-class" class="form-control" disabled onchange="AdminUsers.onStudentClassChange()">
+              <option value="">Önce sınıf düzeyini seçin...</option>
             </select>
             <label class="form-label mt-2">Öğrenci</label>
             <select id="new-user-studentid" class="form-control" disabled>
@@ -193,6 +195,21 @@ const AdminUsers = {
       cb.disabled = allChecked;
       if (allChecked) cb.checked = false;
     });
+  },
+
+  onStudentGradeChange() {
+    const gradeLabel = document.getElementById('new-user-student-grade').value;
+    const classSelect = document.getElementById('new-user-student-class');
+    const group = (this._classGroups || []).find(g => g.label === gradeLabel);
+    if (!group) {
+      classSelect.disabled = true;
+      classSelect.innerHTML = '<option value="">Önce sınıf düzeyini seçin...</option>';
+    } else {
+      classSelect.disabled = false;
+      classSelect.innerHTML = '<option value="">Şube seçin...</option>' +
+        group.classes.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+    this.onStudentClassChange();
   },
 
   onStudentClassChange() {
