@@ -24,9 +24,43 @@ ile VM arasında rastgele paylaştırmasına ve iki farklı SQLite veritabanın�
 habersiz ilerlemesine yol açar (bir teşhis ve düzeltme süreciyle bu tam olarak yaşandı,
 bkz. proje geçmişi). `baslat.bat` artık tüneli başlatmıyor, sadece yerel test içindir.
 
-## 🚀 Yeni Kodu Canlıya Almak (Deploy)
+## 🌿 Branch Yapısı ve Yayın Akışı
 
-1. Değişikliği bu depoda `main` dalına push edin (feature dalındaysanız önce merge edin).
+```
+feature/*  veya  fix/*   (develop'tan açılır)
+        ↓ (local test)
+    develop                 -> STAGING'e otomatik hedef dal
+        ↓ (staging'de test edilir, kontrol listesi tamamlanır)
+      main                  -> PRODUCTION'a otomatik hedef dal
+```
+
+Acil canlı hata: `main`'den `hotfix/*` aç, düzelt, hem `main`'e hem `develop`'a
+yansıt (aksi halde aynı hata develop'tan tekrar gelir).
+
+**Asla** doğrudan `main`'e/production'a test edilmemiş kod göndermeyin — önce
+`develop` + staging'den geçsin.
+
+## 🧪 Staging Ortamı
+
+`https://staging.edupusula.com` — **aynı VM'de**, `edupusula.service`'ten tamamen
+bağımsız ikinci bir servis (`edupusula-staging.service`, port 8081,
+`/home/mskrk/edupusula-staging`, `develop` dalı). Kendi veritabanı ve gizli
+anahtarı var — production verisiyle hiçbir ilişkisi yok. Sayfa üstünde sarı
+"⚠️ STAGING ORTAMI — gerçek veri değil" şeridi görünür (`EDUPUSULA_ENV=staging`
+ortam değişkeni ile, bkz. `server.py` `_inject_env_banner`), böylece production
+ile karıştırılmaz.
+
+Yeni kod staging'e göndermek: **`deploy_staging.bat`** (önce `develop`'a push
+edilmiş olmalı).
+
+Staging'de test edilecekler (her güncellemede): giriş/çıkış/yetkilendirme,
+öğretmen paneli (öğrenci/sınıf listesi, istatistikler), deneme sistemi (ekleme,
+net hesaplama, grafikler), Pusi (analiz, rank, eksik veri, veri uydurmama),
+Soru Havuzu (listeleme, grid, filtreleme, çoklu seçim).
+
+## 🚀 Production'a Almak (Deploy)
+
+1. Staging'de test tamamlandı ve sorun yoksa `develop`'u `main`'e merge edin.
 2. Bu bilgisayarda **`deploy_vm.bat`**'a çift tıklayın. Bu script VM'e SSH ile bağlanıp
    `git pull --ff-only` yapar ve `edupusula.service`'i yeniden başlatır.
 3. Birkaç saniye içinde `https://edupusula.com` yeni kodu servis eder.
@@ -35,6 +69,12 @@ Elle yapmak isterseniz (gcloud CLI kurulu olmalı):
 
 ```
 gcloud compute ssh edupusula-sunucu --zone us-central1-a --command "cd /home/mskrk/edupusula && git pull --ff-only && sudo systemctl restart edupusula"
+```
+
+Ayni sekilde staging icin:
+
+```
+gcloud compute ssh edupusula-sunucu --zone us-central1-a --command "cd /home/mskrk/edupusula-staging && git pull --ff-only && sudo systemctl restart edupusula-staging"
 ```
 
 ## 🖥️ Yerel/LAN'da Test Etme
@@ -55,12 +95,14 @@ VM'ye bağlanmak: `gcloud compute ssh edupusula-sunucu --zone us-central1-a`
 
 Servis durumları:
 ```
-sudo systemctl status edupusula      # Flask uygulaması
-sudo systemctl status cloudflared    # Cloudflare Tunnel bağlayıcısı
-sudo journalctl -u edupusula -f      # canlı loglar
+sudo systemctl status edupusula          # Flask uygulaması (production, :8080)
+sudo systemctl status edupusula-staging  # Flask uygulaması (staging, :8081)
+sudo systemctl status cloudflared        # Cloudflare Tunnel bağlayıcısı (ikisini de tasir)
+sudo journalctl -u edupusula -f          # production canlı loglar
+sudo journalctl -u edupusula-staging -f  # staging canlı loglar
 ```
 
-İkisi de `enabled` + `Restart=on-failure` ile kurulu; VM yeniden başlarsa otomatik ayağa
+Üçü de `enabled` + `Restart=on-failure` ile kurulu; VM yeniden başlarsa otomatik ayağa
 kalkarlar.
 
 ## 📲 Cep Telefonunda Uygulama Olarak Kurulum (PWA)
