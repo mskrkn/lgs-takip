@@ -1293,8 +1293,42 @@ def api_admin_sync():
     students = payload.get("students") or []
     exams = payload.get("exams") or []
     results = payload.get("results") or []
+    force = bool(payload.get("force"))
 
     db = get_db()
+
+    # GUVENLIK KILIDI: bu uc nokta gonderilen veriyle SUNUCUDAKI HER SEYIN
+    # (students/exams/results) yerini alir - bu, hicbir yerel verisi olmayan
+    # (or: ilk kez acilan bir telefon/tarayici) bir cihazdan yanlislikla
+    # gelen BOS bir senkronun, gercek veriyle dolu sunucuyu sessizce
+    # sifirlamasina yol acabilir (2026-09-04'te tam olarak bu yasandi - bir
+    # telefonda ilk kez acilan bos admin paneli otomatik senkronla tum
+    # ogrenci/deneme/sonuc verisini sildi). Gelen veri, var olan veriye kiyasla
+    # anlamli sekilde daha azsa (ve var olan veri bossa degil) islemi reddet;
+    # admin bilerek/istemli bosaltmak isterse client "force" gonderebilir.
+    if not force:
+        current_counts = {
+            "students": db.execute("SELECT COUNT(*) FROM students").fetchone()[0],
+            "exams": db.execute("SELECT COUNT(*) FROM exams").fetchone()[0],
+            "results": db.execute("SELECT COUNT(*) FROM results").fetchone()[0],
+        }
+        incoming_counts = {"students": len(students), "exams": len(exams), "results": len(results)}
+        for key, current in current_counts.items():
+            incoming = incoming_counts[key]
+            if current >= 3 and incoming < current * 0.5:
+                return jsonify({
+                    "error": (
+                        f"Güvenlik: gönderilen veri sunucudakinden çok daha az "
+                        f"({key}: sunucuda {current}, gönderilen {incoming}). Bu genelde "
+                        f"boş/yeni bir cihazdan yanlışlıkla gönderim anlamına gelir ve "
+                        f"gerçek veriyi silebilir. Gerçekten bu veriyle değiştirmek "
+                        f"istediğinizden eminseniz tekrar deneyip onaylayın."
+                    ),
+                    "requiresForce": True,
+                    "currentCounts": current_counts,
+                    "incomingCounts": incoming_counts,
+                }), 409
+
     # parent_students.student_id -> students(id) ON DELETE CASCADE tanimli;
     # asagidaki DELETE FROM students bu yuzden tum veli-ogrenci baglantilarini
     # da siler. Ayni id'yle geri gelen ogrenciler icin bu baglantilari geri

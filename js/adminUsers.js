@@ -201,7 +201,7 @@ const AdminUsers = {
 
   _syncInFlight: false,
   _syncQueued: false,
-  async syncToServer(silent = false) {
+  async syncToServer(silent = false, force = false) {
     if (this._syncInFlight) {
       // Zaten devam eden bir gönderim var; bitince en güncel veriyle tekrar gönder.
       this._syncQueued = true;
@@ -213,12 +213,26 @@ const AdminUsers = {
     if (statusEl) statusEl.textContent = 'Gönderiliyor...';
     try {
       const fullData = await db.exportData();
+      if (force) fullData.force = true;
       const res = await fetch('/api/admin/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullData),
       });
       const result = await res.json();
+      if (res.status === 409 && result.requiresForce && !silent) {
+        // Sunucu, mevcut veriyi buyuk olcude azaltacak bir gonderimi
+        // guvenlik icin reddetti (bkz. server.py api_admin_sync). Sessiz
+        // otomatik gonderimde ASLA otomatik onaylamayin - sadece admin'in
+        // bilingli "Simdi Gonder" tiklamasinda sorup force ile tekrar dene.
+        this._syncInFlight = false;
+        const ok = confirm(
+          result.error + '\n\nYine de bu cihazdaki veriyle değiştirmek istiyor musunuz?'
+        );
+        if (ok) return this.syncToServer(silent, true);
+        if (statusEl) statusEl.textContent = '⏸️ Gönderim iptal edildi (veri farkı onaylanmadı).';
+        return;
+      }
       if (!res.ok) throw new Error(result.error || 'Gönderim başarısız.');
       const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       if (statusEl) statusEl.textContent = `✅ Otomatik gönderildi (${time}): ${result.counts.students} öğrenci, ${result.counts.exams} deneme, ${result.counts.results} sonuç.`;
