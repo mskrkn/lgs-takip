@@ -137,7 +137,7 @@
       document.getElementById('settings-class').textContent = me.className || '-';
 
       const greetingName = me.displayName || 'Öğretmenim';
-      document.getElementById('greeting-title').textContent = `👋 Hoş Geldiniz, ${greetingName}! 🧭`;
+      document.getElementById('greeting-title').textContent = `👋 Hoş Geldiniz, ${greetingName} öğretmenim! 🧭`;
       document.getElementById('greeting-date').textContent = '📅 ' + new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
 
       const [overview, insights] = await Promise.all([
