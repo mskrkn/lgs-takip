@@ -5,6 +5,28 @@
 
 const AdminUsers = {
 
+  // "7/A", "8/C" gibi sinif adlarini sinif seviyesine (7, 8, ...) gore
+  // gruplar - "Sinif (Ogrenci Icin)" secim kutusunda "8. Siniflar" /
+  // "7. Siniflar" basliklari altinda toplanmasi icin. "B" gibi seviye
+  // ontaki olmayan adlar en sona "Diger" grubuna duser.
+  _groupClassesByGrade(classNames) {
+    const groups = {};
+    const other = [];
+    (classNames || []).forEach(c => {
+      const m = /^(\d+)\s*\/\s*(.+)$/.exec(c || '');
+      if (m) {
+        (groups[m[1]] = groups[m[1]] || []).push(c);
+      } else if (c) {
+        other.push(c);
+      }
+    });
+    const result = Object.keys(groups)
+      .sort((a, b) => Number(b) - Number(a))
+      .map(grade => ({ label: `${grade}. Sınıflar`, classes: groups[grade] }));
+    if (other.length) result.push({ label: 'Diğer', classes: other });
+    return result;
+  },
+
   async render() {
     const container = document.getElementById('page-users');
     if (!container) return;
@@ -76,7 +98,10 @@ const AdminUsers = {
             <label class="form-label">Sınıf (Öğrenci İçin)</label>
             <select id="new-user-student-class" class="form-control" onchange="AdminUsers.onStudentClassChange()">
               <option value="">Sınıf seçin...</option>
-              ${classNames.map(c => `<option value="${c}">${c}</option>`).join('')}
+              ${this._groupClassesByGrade(classNames).map(g => `
+                <optgroup label="${g.label}">
+                  ${g.classes.map(c => `<option value="${c}">${c}</option>`).join('')}
+                </optgroup>`).join('')}
             </select>
             <label class="form-label mt-2">Öğrenci</label>
             <select id="new-user-studentid" class="form-control" disabled>
