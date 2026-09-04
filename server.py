@@ -76,9 +76,50 @@ DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))
+
+# development / staging / production - her checkout kendi ortamini
+# EDUPUSULA_ENV ortam degiskeniyle bildirir (systemd servis dosyasinda
+# Environment= ile ayarlanir). production disindaki ortamlarda karisikligi
+# onlemek icin sayfalarin basina goze carpan bir seritli banner enjekte
+# edilir - kodda dallanma yok, sadece gorsel isaret.
+APP_ENV = os.environ.get("EDUPUSULA_ENV", "production")
 
 app = Flask(__name__, static_folder=None)
+
+
+@app.after_request
+def _inject_env_banner(resp):
+    if APP_ENV == "production":
+        return resp
+    if resp.content_type and resp.content_type.startswith("text/html"):
+        banner = (
+            f'<div style="position:fixed;top:0;left:0;right:0;z-index:999999;'
+            f'background:#f59e0b;color:#1a1a1a;font:700 13px system-ui;'
+            f'text-align:center;padding:4px 0;letter-spacing:.05em">'
+            f'⚠️ {APP_ENV.upper()} ORTAMI — gercek veri degil</div>'
+        )
+        resp.direct_passthrough = False
+        body = resp.get_data(as_text=True)
+        if "<body" in body:
+            resp.set_data(_insert_after_body_open(body, banner))
+    return resp
+
+
+def _insert_after_body_open(html, banner):
+    idx = html.find("<body")
+    if idx == -1:
+        return html
+    close_idx = html.find(">", idx)
+    if close_idx == -1:
+        return html
+    insert_at = close_idx + 1
+    return html[:insert_at] + banner + html[insert_at:]
+
+
+@app.route("/api/meta")
+def api_meta():
+    return jsonify({"env": APP_ENV})
 
 
 # ============================================================
