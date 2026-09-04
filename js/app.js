@@ -2221,9 +2221,17 @@ const App = {
           tam boyutta inceleyebilir, gerekirse kırpma sınırını elle düzeltip konu/kazanım/
           zorluk/doğru cevap girerek onaylayabilirsiniz.
         </p>
-        <div class="form-group" style="max-width:320px;margin-bottom:16px">
-          <label class="form-label">Ders</label>
-          <select class="form-select" id="qb-subject-select">${subjectOptionsHtml}</select>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+          <div class="form-group" style="max-width:320px;margin-bottom:0">
+            <label class="form-label">Ders</label>
+            <select class="form-select" id="qb-subject-select">${subjectOptionsHtml}</select>
+          </div>
+          <div class="form-group" style="max-width:140px;margin-bottom:0">
+            <label class="form-label">Kitapçık</label>
+            <select class="form-select" id="qb-booklet-select">
+              ${['A', 'B', 'C', 'D', 'E'].map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
         </div>
         <div class="drop-zone" id="qb-drop-zone">
           <div class="drop-icon">📄</div>
@@ -2235,14 +2243,22 @@ const App = {
         <div id="qb-results"></div>
       </div>
       <div class="card mt-2">
-        <div class="card-header">
+        <div class="card-header" style="justify-content:space-between">
           <h3 class="card-title"><span class="card-icon">🗂️</span> Yüklenen Setler</h3>
+          <button class="btn btn-secondary btn-sm" onclick="App.exportApprovedQuestions()">⬇️ Onaylanmış Soruları İndir (ZIP)</button>
         </div>
         <div id="qb-batch-list"><p class="text-muted">Yükleniyor...</p></div>
       </div>`;
 
     ImportModule.setupDropZone('qb-drop-zone', 'qb-file-input', (file) => this.uploadQuestionBankPdf(file));
     this.loadQuestionBankBatches();
+  },
+
+  exportApprovedQuestions() {
+    const subjectSelect = document.getElementById('qb-subject-select');
+    const subjectCode = subjectSelect ? subjectSelect.value : '';
+    const url = '/api/admin/question-bank/export' + (subjectCode ? `?subject_code=${encodeURIComponent(subjectCode)}` : '');
+    window.location.href = url;
   },
 
   async loadQuestionBankBatches() {
@@ -2258,16 +2274,56 @@ const App = {
       listEl.innerHTML = data.batches.map(b => `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
           <div>
-            <div style="font-weight:700">${b.source_filename}</div>
+            <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
             <div class="text-muted" style="font-size:12.5px">
               ${b.question_count} soru • ${UI.formatDate(b.created_at)}
               ${b.pending_count > 0 ? ` • <span style="color:var(--warning)">${b.pending_count} onay bekliyor</span>` : ' • tümü incelendi'}
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="App.openBatchReview(${b.id})">🔍 İncele</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin-bottom:0" title="Kitapçık eşleme CSV veya JSON dosyası yükle">
+              📎 Eşle (CSV/JSON)
+              <input type="file" accept=".csv,.json" style="display:none" onchange="App.importBookletMap(${b.id}, this.files[0]); this.value='';">
+            </label>
+            <button class="btn btn-secondary btn-sm" onclick="App._qbShowBatchGrid(${b.id})">🔍 İncele</button>
+            <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, ${b.question_count}, ${b.approved_count || 0})" title="Bu seti sil">🗑️</button>
+          </div>
         </div>`).join('');
     } catch (err) {
       listEl.innerHTML = `<p style="color:var(--danger)">Set listesi yüklenemedi: ${err.message}</p>`;
+    }
+  },
+
+  async deleteQuestionBankBatch(batchId, questionCount, approvedCount) {
+    const message = approvedCount > 0
+      ? `Bu sette ${questionCount} soru var, ${approvedCount} tanesi zaten ONAYLANMIŞ ve havuzda kullanılıyor olabilir. Seti ve TÜM sorularını (onaylananlar dahil) kalıcı olarak silmek istediğinize emin misiniz?`
+      : `Bu seti ve içindeki ${questionCount} soruyu kalıcı olarak silmek istediğinize emin misiniz?`;
+    const ok = await UI.confirm(message, '🗑️ Seti Sil');
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Silinemedi.');
+      UI.toast('Set silindi.', 'success');
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async importBookletMap(batchId, file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}/import-booklet-map`, {
+        method: 'POST', body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eşleme yüklenemedi.');
+      UI.toast(`Eşlendi: ${data.mapped}, atlandı: ${data.skipped}`, 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
     }
   },
 
@@ -2281,11 +2337,13 @@ const App = {
       return;
     }
     const subjectCode = document.getElementById('qb-subject-select').value;
+    const bookletCode = document.getElementById('qb-booklet-select').value;
     statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (birkaç saniye sürebilir)</p>`;
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('subject_code', subjectCode);
+    formData.append('booklet_code', bookletCode);
 
     try {
       const res = await fetch('/api/admin/question-bank/upload', { method: 'POST', body: formData });
@@ -2314,6 +2372,130 @@ const App = {
     }
   },
 
+  // ==== Toplu İnceleme Izgarası (bir sette birden çok soruyu tek tek
+  // modalı açmadan seçip onaylama/hariç tutma) ====
+  _qbGridState: null,
+
+  async _qbShowBatchGrid(batchId) {
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Set yüklenemedi.');
+      if (!data.questions.length) {
+        UI.toast('Bu sette soru bulunamadı.', 'warning');
+        return;
+      }
+      const prevSelected = (this._qbGridState && this._qbGridState.batchId === batchId) ? this._qbGridState.selected : new Set();
+      this._qbGridState = { batchId, questions: data.questions, selected: prevSelected };
+      this._qbMountGrid();
+    } catch (err) {
+      UI.toast('İnceleme açılamadı: ' + err.message, 'danger');
+    }
+  },
+
+  _qbMountGrid() {
+    const s = this._qbGridState;
+    if (!s) return;
+    let overlay = document.getElementById('qb-grid-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'qb-grid-overlay';
+      overlay.className = 'modal-overlay active';
+      overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) this._qbCloseGrid();
+      });
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+    }
+    const statusLabels = {
+      pending_review: ['⏳ Onay Bekliyor', 'var(--warning)'],
+      reviewed: ['👁️ İncelendi', 'var(--text-muted)'],
+      approved: ['✅ Onaylandı', 'var(--success)'],
+      excluded: ['🚫 Hariç Tutuldu', 'var(--danger)'],
+    };
+    overlay.innerHTML = `
+      <div class="modal modal-lg" style="max-width:1180px">
+        <div class="modal-header">
+          <h2>Soru Seti — Toplu İnceleme</h2>
+          <button class="modal-close" onclick="App._qbCloseGrid()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-secondary btn-sm" onclick="App._qbGridSelectAll()">Tümünü Seç</button>
+            <button class="btn btn-ghost btn-sm" onclick="App._qbGridSelectNone()">Seçimi Temizle</button>
+            <span class="text-muted" style="font-size:12.5px">${s.selected.size} seçili</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-primary btn-sm" onclick="App._qbGridBulk('approved')">✅ Seçilenleri Onayla</button>
+            <button class="btn btn-danger btn-sm" onclick="App._qbGridBulk('excluded')">🚫 Seçilenleri Hariç Tut</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:60vh;overflow:auto">
+            ${s.questions.map((q, i) => {
+              const [label, color] = statusLabels[q.status] || statusLabels.pending_review;
+              return `
+              <div class="card qb-thumb" style="padding:8px;text-align:center;margin-top:0;position:relative">
+                <input type="checkbox" ${s.selected.has(q.id) ? 'checked' : ''}
+                  onclick="event.stopPropagation();App._qbGridToggle(${q.id})"
+                  style="position:absolute;top:10px;left:10px;width:18px;height:18px;z-index:2">
+                <div style="width:100%;height:140px;border-radius:8px;border:1px solid var(--bg-glass-border);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer"
+                  onclick="App._qbCloseGrid();App.openBatchReview(${s.batchId}, ${i})">
+                  <img src="${q.imageUrl}" alt="Soru ${q.question_number ?? ''}" loading="lazy" style="max-width:100%;max-height:100%;object-fit:contain">
+                </div>
+                <div style="margin-top:6px;font-weight:700;font-size:13px">Soru ${q.question_number ?? ''}</div>
+                <div style="font-size:11px;color:${color}">${label}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+  },
+
+  _qbGridToggle(id) {
+    const s = this._qbGridState;
+    if (!s) return;
+    if (s.selected.has(id)) s.selected.delete(id); else s.selected.add(id);
+    this._qbMountGrid();
+  },
+
+  _qbGridSelectAll() {
+    const s = this._qbGridState;
+    if (!s) return;
+    s.questions.forEach(q => s.selected.add(q.id));
+    this._qbMountGrid();
+  },
+
+  _qbGridSelectNone() {
+    const s = this._qbGridState;
+    if (!s) return;
+    s.selected.clear();
+    this._qbMountGrid();
+  },
+
+  async _qbGridBulk(status) {
+    const s = this._qbGridState;
+    if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
+    try {
+      const res = await fetch('/api/admin/question-bank/questions/bulk-update', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionIds: Array.from(s.selected), status }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
+      UI.toast(`${data.updated} soru güncellendi.`, 'success');
+      s.selected.clear();
+      await this._qbShowBatchGrid(s.batchId);
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  _qbCloseGrid() {
+    const overlay = document.getElementById('qb-grid-overlay');
+    if (overlay) overlay.remove();
+    document.body.style.overflow = '';
+    this._qbGridState = null;
+  },
+
   // ==== Soru İnceleme Modalı ====
   // Tek bir global _qbState nesnesinde tutulur (aynı anda tek inceleme
   // oturumu olur) - modal HTML'i her açılışta document.body'e eklenir,
@@ -2332,7 +2514,7 @@ const App = {
       this._qbState = {
         batchId, questions: data.questions, index: Math.min(startIndex, data.questions.length - 1),
         contextUrl: null, pageWidthPt: 0, pageHeightPt: 0, cropRect: null, cropDrag: null,
-        topicsCache: {}, outcomesCache: {},
+        topicsCache: {}, outcomesCache: {}, bookletRows: [],
       };
       this._qbMount();
       await this._qbShowCurrent();
@@ -2421,13 +2603,22 @@ const App = {
                 <label class="form-label">Açıklama / Çözüm (opsiyonel)</label>
                 <textarea class="form-control" id="qbr-explanation" rows="3"></textarea>
               </div>
+              <div class="form-group">
+                <label class="form-label">Kitapçık Eşlemeleri <span class="text-muted" id="qbr-native-booklet" style="font-weight:400"></span></label>
+                <div id="qbr-booklet-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbAddBookletRow()">➕ Kitapçık ekle</button>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbSaveBookletNumbers()">💾 Eşlemeleri Kaydet</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
         <div class="modal-footer" style="justify-content:space-between">
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
             <button class="btn btn-ghost btn-sm" onclick="App._qbNav(-1)">⟵ Önceki</button>
             <button class="btn btn-ghost btn-sm" onclick="App._qbNav(1)">Sonraki ⟶</button>
+            <span class="text-muted" style="font-size:11.5px">A: onayla, X: hariç tut</span>
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="App._qbSaveFields()">💾 Kaydet</button>
@@ -2474,6 +2665,8 @@ const App = {
     if (e.key === 'Escape') this._qbClose();
     else if (e.key === 'ArrowLeft') this._qbNav(-1);
     else if (e.key === 'ArrowRight') this._qbNav(1);
+    else if (e.key === 'a' || e.key === 'A') this._qbSaveFields('approved');
+    else if (e.key === 'x' || e.key === 'X') this._qbSaveFields('excluded');
   },
 
   _qbNav(delta) {
@@ -2519,6 +2712,87 @@ const App = {
 
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
+    await this._qbLoadBookletNumbers(q.id);
+  },
+
+  // ---- Kitapçık Eşlemeleri (A kitapçığı 1.soru = B kitapçığı 5.soru gibi) ----
+  async _qbLoadBookletNumbers(questionId) {
+    const s = this._qbState;
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${questionId}/booklet-numbers`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kitapçık eşlemeleri yüklenemedi.');
+      s.bookletRows = (data.numbers || []).map(n => ({ code: n.bookletCode, number: n.questionNumber }));
+      const nativeEl = document.getElementById('qbr-native-booklet');
+      if (nativeEl) {
+        nativeEl.textContent = data.nativeBookletCode
+          ? `(bu set: kitapçık ${data.nativeBookletCode}, soru ${data.nativeQuestionNumber ?? '?'})`
+          : '';
+      }
+    } catch (err) {
+      s.bookletRows = [];
+      UI.toast(err.message, 'danger');
+    }
+    this._qbRenderBookletRows();
+  },
+
+  _qbRenderBookletRows() {
+    const s = this._qbState;
+    const wrap = document.getElementById('qbr-booklet-rows');
+    if (!s || !wrap) return;
+    if (!s.bookletRows.length) {
+      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Henüz başka kitapçık eşlemesi yok.</span>`;
+      return;
+    }
+    wrap.innerHTML = s.bookletRows.map((r, i) => `
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="form-control" style="width:60px;text-transform:uppercase" maxlength="1" value="${r.code}"
+          onchange="App._qbUpdateBookletRow(${i}, 'code', this.value)" placeholder="B">
+        <input class="form-control" type="number" style="width:90px" value="${r.number}"
+          onchange="App._qbUpdateBookletRow(${i}, 'number', this.value)" placeholder="Soru no">
+        <button class="btn btn-ghost btn-sm" onclick="App._qbRemoveBookletRow(${i})" title="Kaldır">🗑️</button>
+      </div>`).join('');
+  },
+
+  _qbAddBookletRow() {
+    const s = this._qbState;
+    if (!s) return;
+    s.bookletRows.push({ code: '', number: '' });
+    this._qbRenderBookletRows();
+  },
+
+  _qbUpdateBookletRow(index, field, value) {
+    const s = this._qbState;
+    if (!s || !s.bookletRows[index]) return;
+    s.bookletRows[index][field] = field === 'code' ? value.trim().toUpperCase().slice(0, 1) : value;
+  },
+
+  _qbRemoveBookletRow(index) {
+    const s = this._qbState;
+    if (!s) return;
+    s.bookletRows.splice(index, 1);
+    this._qbRenderBookletRows();
+  },
+
+  async _qbSaveBookletNumbers() {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+    const numbers = {};
+    for (const r of s.bookletRows) {
+      if (r.code && r.number !== '' && r.number != null) numbers[r.code] = parseInt(r.number);
+    }
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/booklet-numbers`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ numbers }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+      UI.toast('Kitapçık eşlemeleri kaydedildi.', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   async _qbLoadContextImage(questionId) {
