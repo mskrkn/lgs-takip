@@ -1498,19 +1498,24 @@ def _all_class_averages(db, exam_id=None):
     exam_filter = "WHERE exam_id = ?" if exam_id else ""
     params = (exam_id,) if exam_id else ()
     rows = db.execute(
-        f"SELECT r.data_json, s.class_name FROM results r "
+        f"SELECT r.data_json, r.student_id, s.class_name FROM results r "
         f"JOIN students s ON s.id = r.student_id {exam_filter}", params
     ).fetchall()
     by_class = {}
+    students_by_class = {}
     for r in rows:
         data = json.loads(r["data_json"])
         cls = r["class_name"] or "Bilinmiyor"
         by_class.setdefault(cls, []).append(calc_total_net(data.get("subjects")))
+        # Bir öğrencinin birden fazla denemesi olabilir - "öğrenci sayısı" sonuç
+        # SATIRI sayısı değil, DISTINCT öğrenci sayısı olmalı (aksi halde 3
+        # deneme giren 50 kişilik bir sınıf "150 öğrenci" gösterir).
+        students_by_class.setdefault(cls, set()).add(r["student_id"])
     out = []
     for cls, nets in sorted(by_class.items()):
         out.append({
             "className": cls,
-            "studentCount": len(nets),
+            "studentCount": len(students_by_class[cls]),
             "avgNet": round(sum(nets) / len(nets), 2) if nets else 0,
         })
     return out
