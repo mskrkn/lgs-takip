@@ -450,6 +450,28 @@
       box-shadow: 0 8px 20px rgba(0,0,0,0.5);
     }
 
+    /* ---- COMPASS FOOTER: marketing/basari-pusulasi-karti.html'deki
+       .footer-row deseniyle aynı — "genel yön" özeti + Pusi'ye Sor ---- */
+    .ep-compass-footer {
+      margin-top: 18px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    .ep-compass-readout {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 13px; color: var(--text-muted);
+    }
+    .ep-compass-readout b { font-weight: 700; }
+    .ep-compass-readout b.up   { color: var(--ep-green); }
+    .ep-compass-readout b.down { color: var(--ep-red); }
+    .ep-compass-readout b.flat { color: var(--text-secondary); }
+    .ep-compass-cta {
+      font-family: inherit; font-weight: 700; font-size: 12.5px; color: #fff;
+      background: var(--ep-teal); border: none; border-radius: 10px;
+      padding: 9px 16px; cursor: pointer; transition: all .18s ease;
+    }
+    .ep-compass-cta:hover { background: #0d9488; transform: translateY(-1px); }
+
     /* ---- STRENGTHS ---- */
     .ep-strengths-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 600px) { .ep-strengths-grid { grid-template-columns: 1fr; } }
@@ -534,6 +556,24 @@
     }
     .ep-ach-label { font-size: 13.5px; font-weight: 700; }
     .ep-ach-desc  { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+
+    /* ---- ZONE HEADER: sayfayı "Bugün / Hedefin / Ders Analizi / Başarılar"
+       bölgelerine ayıran, marketing/basari-pusulasi-karti.html'deki
+       ".eyebrow" deseniyle aynı ince etiket ---- */
+    .ep-zone-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-top: 8px;
+    }
+    .ep-zone-header span {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px; font-weight: 700; letter-spacing: .14em;
+      color: var(--ep-teal); text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .ep-zone-header::after {
+      content: ''; flex: 1; height: 1px;
+      background: linear-gradient(90deg, var(--ep-glass-b), transparent);
+    }
 
     /* ---- SECTION HEADER ---- */
     .ep-section-hd {

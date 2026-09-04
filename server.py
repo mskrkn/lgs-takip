@@ -21,10 +21,13 @@ değiştirebilir ve öğretmen / veli hesapları oluşturabilirsiniz.
 
 import os
 import sys
+import io
+import csv
 import json
 import socket
 import sqlite3
 import secrets
+import zipfile
 import webbrowser
 from datetime import datetime
 from functools import wraps
@@ -40,7 +43,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 try:
-    from flask import Flask, request, jsonify, session, send_from_directory, redirect, g
+    from flask import Flask, request, jsonify, session, send_from_directory, redirect, g, Response
 except ImportError:
     print("\n❌ 'flask' kütüphanesi kurulu değil.")
     print("   Lütfen şu komutu çalıştırıp tekrar deneyin:")
@@ -48,6 +51,7 @@ except ImportError:
     sys.exit(1)
 
 from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
 
 try:
     from argon2 import PasswordHasher
@@ -58,9 +62,20 @@ except ImportError:
     print("   pip install argon2-cffi\n")
     sys.exit(1)
 
+try:
+    import pdf_question_extractor
+except ImportError as exc:
+    print(f"\n❌ Soru Havuzu PDF girişi için gerekli bir kütüphane kurulu değil ({exc}).")
+    print("   Lütfen şu komutu çalıştırıp tekrar deneyin:")
+    print("   pip install -r requirements.txt")
+    print("   (Taranmış PDF'lerde OCR için ayrıca Tesseract-OCR programının da kurulu olması gerekir.)\n")
+    sys.exit(1)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
 PORT = 8080
 
 app = Flask(__name__, static_folder=None)
@@ -108,6 +123,7 @@ def get_secret_key():
 
 app.secret_key = get_secret_key()
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # Soru Havuzu PDF yükleme - kötüye kullanımı sınırlar
 
 
 # ============================================================
@@ -472,6 +488,108 @@ def _create_v2_tables(conn):
     conn.commit()
 
 
+# ============================================================
+# Soru Havuzu (EduPusula Adaptif Öğrenme Motoru - Aşama 1)
+# ============================================================
+# ÖNEMLİ: Bu tablolar questions/student_question_results'tan TAMAMEN
+# BAĞIMSIZDIR ve kasıtlı olarak farklı isimlendirilmiştir. questions ve
+# student_question_results, sync_derived_tables() içinde her sunucu
+# başlangıcında ve her /api/admin/sync çağrısında SİLİNİP YENİDEN KURULUR
+# (bkz. yukarısı, satır ~628) - buraya gerçek soru verisi yazsaydık her
+# yeniden başlatmada sessizce kaybolurdu. question_bank ve ilişkili
+# tablolar bu döngünün tamamen dışında durur; hiçbir yerde DELETE FROM
+# question_bank / question_import_batches / topics / learning_outcomes
+# çağrısı YAPILMAMALIDIR.
+def _create_question_bank_tables(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(subject_id, name)
+        );
+
+        CREATE TABLE IF NOT EXISTS learning_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(topic_id, name)
+        );
+
+        CREATE TABLE IF NOT EXISTS question_import_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            source_filename TEXT NOT NULL,
+            page_count INTEGER,
+            status TEXT NOT NULL DEFAULT 'processing'
+                CHECK(status IN ('processing','ready_for_review','completed','failed')),
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS question_booklet_numbers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            booklet_code TEXT NOT NULL,
+            question_number INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(question_id, booklet_code)
+        );
+
+        CREATE TABLE IF NOT EXISTS question_bank (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            batch_id INTEGER REFERENCES question_import_batches(id) ON DELETE SET NULL,
+            display_code TEXT UNIQUE,
+
+            subject_id INTEGER NOT NULL REFERENCES subjects(id),
+            grade_level TEXT,
+            topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+            learning_outcome_id INTEGER REFERENCES learning_outcomes(id) ON DELETE SET NULL,
+
+            question_type TEXT,
+            difficulty_level INTEGER,
+            tags TEXT,
+
+            image_path TEXT NOT NULL,
+            source_page_number INTEGER,
+            crop_x REAL, crop_y REAL, crop_width REAL, crop_height REAL,
+            question_text TEXT,
+
+            correct_answer TEXT,
+            correct_answer_source TEXT CHECK(correct_answer_source IN ('answer_key','manual','edited')),
+            explanation TEXT,
+
+            status TEXT NOT NULL DEFAULT 'pending_review'
+                CHECK(status IN ('pending_review','reviewed','excluded','approved')),
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    # Var olan kurulumlarda (question_number sütunu eklenmeden önce
+    # oluşturulmuş question_bank tablosu) veri kaybetmeden sütunu ekler -
+    # bu sütun olmadan "Soru 12" gibi orijinal numara PNG dosya adından
+    # başka hiçbir yerde tutulmuyordu.
+    qb_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_bank)").fetchall()]
+    if qb_cols and "question_number" not in qb_cols:
+        conn.execute("ALTER TABLE question_bank ADD COLUMN question_number INTEGER")
+
+    # Var olan kurulumlarda booklet_code sütunu eklenmeden önce oluşturulmuş
+    # question_import_batches tablosuna, çoklu kitapçık eşleştirmesinin
+    # dayandığı "bu batch hangi kitapçık" bilgisini kaybetmeden ekler.
+    batch_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
+    if batch_cols and "booklet_code" not in batch_cols:
+        conn.execute("ALTER TABLE question_import_batches ADD COLUMN booklet_code TEXT NOT NULL DEFAULT 'A'")
+    conn.commit()
+
+
 def _get_default_org_id(conn):
     row = conn.execute("SELECT id FROM organizations LIMIT 1").fetchone()
     if row:
@@ -483,6 +601,16 @@ def _get_default_org_id(conn):
     )
     conn.commit()
     return conn.execute("SELECT id FROM organizations LIMIT 1").fetchone()["id"]
+
+
+def _current_org_id(db):
+    """Oturumdaki kullanıcının kurum id'si; yoksa varsayılan kuruma düşer
+    (tek-kurumlu kurulumlar için)."""
+    org_row = db.execute(
+        "SELECT organization_id FROM users WHERE id=?", (session["user_id"],)
+    ).fetchone()
+    return (org_row["organization_id"] if org_row and org_row["organization_id"] else None) \
+        or _get_default_org_id(db)
 
 
 def _seed_reference_data(conn):
@@ -721,6 +849,7 @@ def run_v2_migration(conn):
     init_db() ve /api/admin/sync tarafından çağrılır - tamamen idempotent."""
     conn.row_factory = sqlite3.Row
     _create_v2_tables(conn)
+    _create_question_bank_tables(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -744,6 +873,7 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
 
 
 def init_db():
+    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
 
     # 1) Önce 'users' tablosunu oluştur/düzelt - diğer tablolar buna FK ile
@@ -2198,6 +2328,687 @@ def api_admin_demo_talepleri():
         "FROM demo_requests ORDER BY created_at DESC"
     ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+# ============================================================
+# Soru Havuzu: PDF yükleme + otomatik kırpma tespiti
+# ============================================================
+# Akış: PDF yüklenir -> pdf_question_extractor ile soru sınırları ve varsa
+# cevap anahtarı tespit edilir -> her soru question_bank'e "pending_review"
+# durumuyla, kırpılmış görüntüsüyle birlikte yazılır. Hiçbir soru bu adımda
+# "approved" olmaz - öğretmenin kırpma/konu/kazanım onayı ayrı bir adımdır
+# (henüz yazılmadı, bkz. question_bank.status).
+
+_MAX_PDF_PAGES = 60
+
+
+@app.route("/api/admin/question-bank/upload", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_upload():
+    file = request.files.get("file")
+    if not file or not (file.filename or "").lower().endswith(".pdf"):
+        return jsonify({"error": "Geçerli bir PDF dosyası seçin."}), 400
+
+    subject_code = (request.form.get("subject_code") or "").strip()
+    if not subject_code:
+        return jsonify({"error": "Ders seçimi gerekli."}), 400
+
+    booklet_code = (request.form.get("booklet_code") or "A").strip().upper()[:1] or "A"
+
+    db = get_db()
+    subject_row = db.execute("SELECT id FROM subjects WHERE code=?", (subject_code,)).fetchone()
+    if not subject_row:
+        return jsonify({"error": "Geçersiz ders."}), 400
+    subject_id = subject_row["id"]
+    user_id = session["user_id"]
+    org_id = _current_org_id(db)
+
+    now = datetime.now().isoformat()
+    safe_name = secure_filename(file.filename) or "yuklenen.pdf"
+    cur = db.execute(
+        "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, booklet_code, created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (org_id, user_id, safe_name, "processing", booklet_code, now),
+    )
+    batch_id = cur.lastrowid
+    db.commit()
+
+    source_dir = os.path.join(UPLOADS_DIR, "source_pdfs")
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
+    pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
+    file.save(pdf_path)
+
+    try:
+        result = pdf_question_extractor.extract_questions(pdf_path)
+        if result["page_count"] > _MAX_PDF_PAGES:
+            raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
+    except Exception as exc:
+        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
+        db.commit()
+        return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
+
+    created = []
+    for q in result["questions"]:
+        image_filename = f"{batch_id}_{q['number']}.png"
+        pdf_question_extractor.render_question_crop(
+            pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename)
+        )
+        answer = result["answer_key"].get(q["number"])
+        rect = q["rect"]
+        qcur = db.execute(
+            "INSERT INTO question_bank (organization_id, batch_id, subject_id, image_path, "
+            "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
+            "correct_answer, correct_answer_source, status, created_by, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (org_id, batch_id, subject_id, f"questions/{image_filename}",
+             q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
+             answer, "answer_key" if answer else None, "pending_review", user_id, now, now),
+        )
+        created.append({
+            "id": qcur.lastrowid, "number": q["number"], "correctAnswer": answer,
+            "imageUrl": f"/api/admin/question-bank/image/{qcur.lastrowid}",
+        })
+
+    db.execute(
+        "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
+        (result["page_count"], batch_id),
+    )
+    db.commit()
+
+    return jsonify({
+        "batchId": batch_id,
+        "pageCount": result["page_count"],
+        "questionCount": len(created),
+        "answerKeyFound": len(result["answer_key"]) > 0,
+        "questions": created,
+    })
+
+
+@app.route("/api/admin/question-bank/batches")
+@login_required(role="admin")
+def api_question_bank_batches():
+    db = get_db()
+    org_id = _current_org_id(db)
+    rows = db.execute(
+        "SELECT b.id, b.source_filename, b.status, b.page_count, b.booklet_code, b.created_at, "
+        "COUNT(q.id) AS question_count, "
+        "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
+        "SUM(CASE WHEN q.status='approved' THEN 1 ELSE 0 END) AS approved_count "
+        "FROM question_import_batches b LEFT JOIN question_bank q ON q.batch_id = b.id "
+        "WHERE b.organization_id=? GROUP BY b.id ORDER BY b.id DESC",
+        (org_id,),
+    ).fetchall()
+    return jsonify({"batches": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/batches/<int:batch_id>")
+@login_required(role="admin")
+def api_question_bank_batch(batch_id):
+    db = get_db()
+    org_id = _current_org_id(db)
+    batch = db.execute(
+        "SELECT * FROM question_import_batches WHERE id=? AND organization_id=?",
+        (batch_id, org_id),
+    ).fetchone()
+    if not batch:
+        return jsonify({"error": "Bulunamadı."}), 404
+    rows = db.execute(
+        "SELECT id, subject_id, question_number, source_page_number, crop_x, crop_y, "
+        "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
+        "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code "
+        "FROM question_bank WHERE batch_id=? ORDER BY question_number, id",
+        (batch_id,),
+    ).fetchall()
+    questions = []
+    for r in rows:
+        item = dict(r)
+        item["imageUrl"] = f"/api/admin/question-bank/image/{r['id']}"
+        questions.append(item)
+    return jsonify({"batch": dict(batch), "questions": questions})
+
+
+def _get_owned_question(db, question_id, org_id):
+    return db.execute(
+        "SELECT * FROM question_bank WHERE id=? AND organization_id=?", (question_id, org_id)
+    ).fetchone()
+
+
+def _source_pdf_path(batch_id):
+    return os.path.join(UPLOADS_DIR, "source_pdfs", f"batch_{batch_id}.pdf")
+
+
+@app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
+@login_required(role="admin")
+def api_question_bank_delete_batch(batch_id):
+    """Bir yükleme setini ve içindeki TÜM soruları (onaylanmış olsa da)
+    kalıcı olarak siler - kırpma görselleri ve kaynak PDF'i diskten de
+    kaldırır. question_booklet_numbers, question_bank silinince FK CASCADE
+    ile otomatik temizlenir (bkz. get_db()'deki PRAGMA foreign_keys=ON)."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    batch = db.execute(
+        "SELECT id FROM question_import_batches WHERE id=? AND organization_id=?",
+        (batch_id, org_id),
+    ).fetchone()
+    if not batch:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    image_rows = db.execute(
+        "SELECT image_path FROM question_bank WHERE batch_id=?", (batch_id,)
+    ).fetchall()
+
+    db.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
+    db.execute("DELETE FROM question_import_batches WHERE id=?", (batch_id,))
+    db.commit()
+
+    for r in image_rows:
+        path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(r["image_path"]))
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    pdf_path = _source_pdf_path(batch_id)
+    if os.path.isfile(pdf_path):
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/question-bank/image/<int:question_id>")
+@login_required(role="admin")
+def api_question_bank_image(question_id):
+    db = get_db()
+    row = db.execute(
+        "SELECT image_path, organization_id FROM question_bank WHERE id=?", (question_id,)
+    ).fetchone()
+    if not row or row["organization_id"] != _current_org_id(db):
+        return jsonify({"error": "Bulunamadı."}), 404
+    filename = os.path.basename(row["image_path"])
+    resp = send_from_directory(QUESTION_IMAGES_DIR, filename)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/context-image")
+@login_required(role="admin")
+def api_question_bank_context_image(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+    pdf_path = _source_pdf_path(row["batch_id"])
+    if not os.path.isfile(pdf_path):
+        return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
+    try:
+        png_bytes, page_w, page_h = pdf_question_extractor.render_page_image_bytes(
+            pdf_path, row["source_page_number"] - 1
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Sayfa görüntüsü oluşturulamadı: {exc}"}), 400
+    resp = Response(png_bytes, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Page-Width-Pt"] = str(page_w)
+    resp.headers["X-Page-Height-Pt"] = str(page_h)
+    resp.headers["X-Dpi"] = str(pdf_question_extractor.CONTEXT_DPI)
+    return resp
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/recrop", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_recrop(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        x, y, w, h = float(data["x"]), float(data["y"]), float(data["width"]), float(data["height"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Geçersiz kırpma sınırları."}), 400
+    if w <= 0 or h <= 0:
+        return jsonify({"error": "Kırpma alanı geçersiz."}), 400
+
+    pdf_path = _source_pdf_path(row["batch_id"])
+    if not os.path.isfile(pdf_path):
+        return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
+
+    out_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(row["image_path"]))
+    try:
+        rect = pdf_question_extractor.render_question_crop_from_bounds(
+            pdf_path, row["source_page_number"] - 1, x, y, x + w, y + h, out_path
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Yeniden kırpma başarısız: {exc}"}), 400
+
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE question_bank SET crop_x=?, crop_y=?, crop_width=?, crop_height=?, updated_at=? WHERE id=?",
+        (rect.x0, rect.y0, rect.width, rect.height, now, question_id),
+    )
+    db.commit()
+    return jsonify({
+        "cropX": rect.x0, "cropY": rect.y0, "cropWidth": rect.width, "cropHeight": rect.height,
+        "imageUrl": f"/api/admin/question-bank/image/{question_id}?t={int(datetime.now().timestamp())}",
+    })
+
+
+_QUESTION_STATUSES = ("pending_review", "reviewed", "excluded", "approved")
+
+
+def _apply_question_status(db, row, status, user_id):
+    """question_bank satırının durumunu değiştirir; 'approved' olduğunda
+    henüz display_code atanmamışsa <DERS_KODU>-00001 kalıbıyla üretir.
+    Hem tekil PATCH hem toplu bulk-update endpoint'i bu fonksiyonu kullanır."""
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE question_bank SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=?",
+        (status, user_id, now, now, row["id"]),
+    )
+    display_code = row["display_code"]
+    if status == "approved" and not display_code:
+        subject_row = db.execute("SELECT code FROM subjects WHERE id=?", (row["subject_id"],)).fetchone()
+        subject_code = (subject_row["code"] if subject_row else "soru").upper()
+        display_code = f"{subject_code}-{row['id']:05d}"
+        db.execute("UPDATE question_bank SET display_code=? WHERE id=?", (display_code, row["id"]))
+    return display_code
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>", methods=["PATCH"])
+@login_required(role="admin")
+def api_question_bank_update(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, params = [], []
+
+    for key, column in (
+        ("topicId", "topic_id"), ("learningOutcomeId", "learning_outcome_id"),
+        ("difficultyLevel", "difficulty_level"), ("questionType", "question_type"),
+        ("explanation", "explanation"),
+    ):
+        if key in data:
+            fields.append(f"{column}=?")
+            params.append(data[key] or None)
+
+    if "correctAnswer" in data:
+        fields.append("correct_answer=?")
+        params.append((data["correctAnswer"] or "").strip() or None)
+        fields.append("correct_answer_source=?")
+        params.append("edited")
+
+    status = data.get("status")
+    if status and status not in _QUESTION_STATUSES:
+        return jsonify({"error": "Geçersiz durum."}), 400
+
+    if not fields and not status:
+        return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400
+
+    if fields:
+        fields.append("updated_at=?")
+        params.append(datetime.now().isoformat())
+        params.append(question_id)
+        db.execute(f"UPDATE question_bank SET {', '.join(fields)} WHERE id=?", params)
+
+    display_code = row["display_code"]
+    if status:
+        display_code = _apply_question_status(db, row, status, session["user_id"])
+
+    db.commit()
+    return jsonify({"ok": True, "displayCode": display_code})
+
+
+@app.route("/api/admin/question-bank/questions/bulk-update", methods=["PATCH"])
+@login_required(role="admin")
+def api_question_bank_bulk_update():
+    """Onay ekranındaki ızgara görünümünden birden çok soruyu tek istekte
+    onaylamak/hariç tutmak için - tek tek inceleme akışını değiştirmez,
+    ona bir kısayol ekler."""
+    data = request.get_json(silent=True) or {}
+    question_ids = data.get("questionIds") or []
+    status = data.get("status")
+    if status not in ("approved", "excluded"):
+        return jsonify({"error": "Geçersiz durum."}), 400
+    if not isinstance(question_ids, list) or not question_ids:
+        return jsonify({"error": "questionIds gerekli."}), 400
+
+    db = get_db()
+    org_id = _current_org_id(db)
+    user_id = session["user_id"]
+    updated = 0
+    for qid in question_ids:
+        row = _get_owned_question(db, qid, org_id)
+        if not row:
+            continue
+        _apply_question_status(db, row, status, user_id)
+        updated += 1
+    db.commit()
+    return jsonify({"updated": updated})
+
+
+@app.route("/api/admin/question-bank/topics")
+@login_required(role="admin")
+def api_question_bank_topics():
+    db = get_db()
+    subject_id = request.args.get("subject_id", type=int)
+    if not subject_id:
+        return jsonify({"error": "subject_id gerekli."}), 400
+    rows = db.execute(
+        "SELECT id, name FROM topics WHERE subject_id=? ORDER BY name", (subject_id,)
+    ).fetchall()
+    return jsonify({"topics": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/topics", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_create_topic():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    subject_id = data.get("subjectId")
+    name = (data.get("name") or "").strip()
+    if not subject_id or not name:
+        return jsonify({"error": "subjectId ve name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "INSERT OR IGNORE INTO topics (subject_id, name, created_at) VALUES (?,?,?)",
+        (subject_id, name, now),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT id, name FROM topics WHERE subject_id=? AND name=?", (subject_id, name)
+    ).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/admin/question-bank/learning-outcomes")
+@login_required(role="admin")
+def api_question_bank_learning_outcomes():
+    db = get_db()
+    topic_id = request.args.get("topic_id", type=int)
+    if not topic_id:
+        return jsonify({"error": "topic_id gerekli."}), 400
+    rows = db.execute(
+        "SELECT id, name FROM learning_outcomes WHERE topic_id=? ORDER BY name", (topic_id,)
+    ).fetchall()
+    return jsonify({"learningOutcomes": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/learning-outcomes", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_create_learning_outcome():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    topic_id = data.get("topicId")
+    name = (data.get("name") or "").strip()
+    if not topic_id or not name:
+        return jsonify({"error": "topicId ve name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "INSERT OR IGNORE INTO learning_outcomes (topic_id, name, created_at) VALUES (?,?,?)",
+        (topic_id, name, now),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT id, name FROM learning_outcomes WHERE topic_id=? AND name=?", (topic_id, name)
+    ).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/admin/question-bank/export")
+@login_required(role="admin")
+def api_question_bank_export():
+    """Onaylanmış soruları (status='approved') resim + manifest.csv olarak
+    tek bir ZIP'te indirir - havuza kesin girmiş sorular dışındakiler
+    (pending_review/reviewed/excluded) dahil edilmez."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    subject_code = (request.args.get("subject_code") or "").strip()
+    subject_id = None
+    if subject_code:
+        subject_row = db.execute("SELECT id FROM subjects WHERE code=?", (subject_code,)).fetchone()
+        if not subject_row:
+            return jsonify({"error": "Geçersiz ders."}), 400
+        subject_id = subject_row["id"]
+
+    query = (
+        "SELECT q.id, q.display_code, q.question_number, q.image_path, q.difficulty_level, "
+        "q.question_type, q.correct_answer, s.name AS subject_name, t.name AS topic_name, "
+        "lo.name AS learning_outcome_name, b.source_filename, b.id AS batch_id "
+        "FROM question_bank q "
+        "JOIN subjects s ON s.id = q.subject_id "
+        "LEFT JOIN topics t ON t.id = q.topic_id "
+        "LEFT JOIN learning_outcomes lo ON lo.id = q.learning_outcome_id "
+        "LEFT JOIN question_import_batches b ON b.id = q.batch_id "
+        "WHERE q.organization_id=? AND q.status='approved'"
+    )
+    params = [org_id]
+    if subject_id:
+        query += " AND q.subject_id=?"
+        params.append(subject_id)
+    query += " ORDER BY s.name, q.question_number, q.id"
+    rows = db.execute(query, params).fetchall()
+
+    if not rows:
+        return jsonify({"error": "Dışa aktarılacak onaylanmış soru bulunamadı."}), 404
+
+    manifest_buf = io.StringIO()
+    writer = csv.writer(manifest_buf)
+    writer.writerow([
+        "display_code", "question_number", "subject", "topic", "learning_outcome",
+        "difficulty_level", "question_type", "correct_answer", "source_filename", "batch_id",
+    ])
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in rows:
+            src_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(r["image_path"]))
+            if not os.path.isfile(src_path):
+                continue
+            arcname = f"images/{r['display_code'] or r['id']}.png"
+            zf.write(src_path, arcname)
+            writer.writerow([
+                r["display_code"] or "", r["question_number"] or "", r["subject_name"] or "",
+                r["topic_name"] or "", r["learning_outcome_name"] or "", r["difficulty_level"] or "",
+                r["question_type"] or "", r["correct_answer"] or "", r["source_filename"] or "",
+                r["batch_id"] or "",
+            ])
+        zf.writestr("manifest.csv", manifest_buf.getvalue())
+
+    resp = Response(zip_buf.getvalue(), mimetype="application/zip")
+    resp.headers["Content-Disposition"] = "attachment; filename=soru-havuzu-export.zip"
+    return resp
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers")
+@login_required(role="admin")
+def api_question_bank_get_booklet_numbers(question_id):
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+    native_booklet = None
+    if row["batch_id"]:
+        batch = db.execute(
+            "SELECT booklet_code FROM question_import_batches WHERE id=?", (row["batch_id"],)
+        ).fetchone()
+        native_booklet = batch["booklet_code"] if batch else None
+    rows = db.execute(
+        "SELECT booklet_code, question_number FROM question_booklet_numbers "
+        "WHERE question_id=? ORDER BY booklet_code",
+        (question_id,),
+    ).fetchall()
+    return jsonify({
+        "nativeBookletCode": native_booklet,
+        "nativeQuestionNumber": row["question_number"],
+        "numbers": [{"bookletCode": r["booklet_code"], "questionNumber": r["question_number"]} for r in rows],
+    })
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers", methods=["PUT"])
+@login_required(role="admin")
+def api_question_bank_set_booklet_numbers(question_id):
+    """Bir sorunun DİĞER kitapçıklardaki numaralarını topluca değiştirir -
+    body: {numbers: {"B": 5, "C": 12}}. Sorunun kendi (native) kitapçık
+    kodu question_import_batches.booklet_code'da zaten var, question_number
+    de question_bank'te - burada tekrar edilmez/kabul edilmez."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    row = _get_owned_question(db, question_id, org_id)
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    native_booklet = None
+    if row["batch_id"]:
+        batch = db.execute(
+            "SELECT booklet_code FROM question_import_batches WHERE id=?", (row["batch_id"],)
+        ).fetchone()
+        native_booklet = batch["booklet_code"] if batch else None
+
+    data = request.get_json(silent=True) or {}
+    numbers = data.get("numbers") or {}
+    if not isinstance(numbers, dict):
+        return jsonify({"error": "Geçersiz eşleme verisi."}), 400
+
+    now = datetime.now().isoformat()
+    db.execute("DELETE FROM question_booklet_numbers WHERE question_id=?", (question_id,))
+    for booklet_code, number in numbers.items():
+        code = (booklet_code or "").strip().upper()[:1]
+        if not code or code == native_booklet:
+            continue
+        try:
+            num = int(number)
+        except (TypeError, ValueError):
+            continue
+        db.execute(
+            "INSERT INTO question_booklet_numbers (question_id, booklet_code, question_number, created_at) "
+            "VALUES (?,?,?,?)",
+            (question_id, code, num, now),
+        )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+def _parse_booklet_map_rows(file):
+    """CSV VEYA JSON yükler (dosya uzantısına göre ayırt edilir), her satırı
+    {KİTAPÇIK_KODU: numara} sözlüğüne normalize eder - böylece çağıran taraf
+    kaynak formatla ilgilenmeden aynı eşleme mantığını uygulayabilir.
+
+    CSV: başlık satırı kitapçık kodları (örn. A,B,C,D).
+    JSON: {"mappings": [{"A": 1, "B": 5, ...}, ...]} veya doğrudan
+    [{"A": 1, "B": 5, ...}, ...] - "question_id"/"exam_id" gibi tek harfli
+    olmayan alanlar kitapçık kodu olarak yorumlanmaz, otomatik yok sayılır.
+    """
+    filename = (file.filename or "").lower()
+    raw = file.read()
+
+    if filename.endswith(".json"):
+        try:
+            payload = json.loads(raw.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"JSON ayrıştırılamadı: {exc}")
+        entries = payload.get("mappings", []) if isinstance(payload, dict) else payload
+        if not isinstance(entries, list):
+            raise ValueError("JSON bir eşleme listesi ya da {'mappings': [...]} içermeli.")
+        rows = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            rows.append({
+                str(k).strip().upper(): v for k, v in entry.items()
+                if len(str(k).strip()) == 1 and str(k).strip().isalpha()
+            })
+        return rows
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ValueError("CSV UTF-8 kodlamasında olmalı.")
+    reader = csv.reader(io.StringIO(text))
+    try:
+        header = [h.strip().upper() for h in next(reader)]
+    except StopIteration:
+        raise ValueError("CSV boş.")
+    rows = []
+    for raw_row in reader:
+        if not raw_row or all(not c.strip() for c in raw_row):
+            continue
+        rows.append({header[i]: raw_row[i].strip() for i in range(min(len(header), len(raw_row)))})
+    return rows
+
+
+@app.route("/api/admin/question-bank/batches/<int:batch_id>/import-booklet-map", methods=["POST"])
+@login_required(role="admin")
+def api_question_bank_import_booklet_map(batch_id):
+    """CSV veya JSON yükler: her satır/kayıt bir mantıksal sorunun kitapçık
+    başına numarası (bkz. _parse_booklet_map_rows). Bu batch'in kendi
+    kitapçık kodu ÇAPA kabul edilir - o değer bu batch içindeki
+    question_bank.question_number ile eşleştirilip question_id bulunur,
+    satırdaki diğer kitapçık kodları o soru için question_booklet_numbers'a
+    yazılır. Çapa numarası bu batch'te bulunamayan satırlar atlanır."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    batch = db.execute(
+        "SELECT id, booklet_code FROM question_import_batches WHERE id=? AND organization_id=?",
+        (batch_id, org_id),
+    ).fetchone()
+    if not batch:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "CSV veya JSON dosyası gerekli."}), 400
+    try:
+        rows = _parse_booklet_map_rows(file)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    anchor_code = batch["booklet_code"]
+    if not any(anchor_code in row for row in rows):
+        return jsonify({"error": f"Dosyada bu batch'in kitapçık kodu ({anchor_code}) hiçbir satırda yok."}), 400
+
+    question_by_number = {
+        r["question_number"]: r["id"]
+        for r in db.execute(
+            "SELECT id, question_number FROM question_bank WHERE batch_id=?", (batch_id,)
+        ).fetchall()
+    }
+
+    now = datetime.now().isoformat()
+    mapped, skipped = 0, 0
+    for row in rows:
+        try:
+            anchor_num = int(str(row.get(anchor_code, "")).strip())
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        question_id = question_by_number.get(anchor_num)
+        if not question_id:
+            skipped += 1
+            continue
+        for code, value in row.items():
+            if code == anchor_code:
+                continue
+            try:
+                num = int(str(value).strip())
+            except (TypeError, ValueError):
+                continue
+            db.execute(
+                "INSERT INTO question_booklet_numbers (question_id, booklet_code, question_number, created_at) "
+                "VALUES (?,?,?,?) "
+                "ON CONFLICT(question_id, booklet_code) DO UPDATE SET question_number=excluded.question_number",
+                (question_id, code, num, now),
+            )
+        mapped += 1
+    db.commit()
+    return jsonify({"mapped": mapped, "skipped": skipped})
 
 
 # ============================================================

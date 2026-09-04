@@ -129,6 +129,7 @@ const App = {
       'exam-detail': ['Deneme Detayı', ''],
       'class-detail': [data.className ? `${data.className} Sınıfı` : 'Sınıf Detayı', ''],
       import: ['Veri Girişi', 'Manuel & Dosya İle'],
+      'question-bank': ['Soru Girişi', 'PDF Yükle & Havuza Ekle'],
       reports: ['Raporlar', 'Dışa Aktarma & Paylaşım'],
       settings: ['Ayarlar', 'Veri Yönetimi'],
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
@@ -163,6 +164,9 @@ const App = {
         break;
       case 'import':
         await this.renderImport();
+        break;
+      case 'question-bank':
+        await this.renderQuestionBank();
         break;
       case 'reports':
         await this.renderReports();
@@ -2190,6 +2194,820 @@ const App = {
     const container = document.getElementById('page-import');
     container.innerHTML = ImportModule.render();
     ImportModule.init();
+  },
+
+  // ---- Soru Girişi (Soru Havuzu - PDF yükleme & otomatik kırpma tespiti) ----
+  // PDF -> /api/admin/question-bank/upload -> pdf_question_extractor otomatik
+  // sınırları tespit eder -> her soru question_bank'e "pending_review"
+  // durumuyla kırpılmış görüntüsüyle yazılır. Buradaki ızgaradan bir soruya
+  // tıklayınca _qbOpenReview açılır: tam boyut önizleme + elle kırpma
+  // düzeltme + konu/kazanım/zorluk girme + onayla/hariç tut.
+  async renderQuestionBank() {
+    const container = document.getElementById('page-question-bank');
+    const subjectOptionsHtml = Object.keys(SUBJECT_SETS).map(examType => {
+      const opts = SUBJECT_SETS[examType]
+        .map(s => `<option value="${s.key}">${s.name}</option>`).join('');
+      return `<optgroup label="${EXAM_TYPE_LABELS[examType] || examType}">${opts}</optgroup>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="card" style="margin-top:0">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">📝</span> Soru Havuzu — PDF'den Soru Girişi</h3>
+        </div>
+        <p class="text-muted" style="margin-bottom:16px">
+          Bir test PDF'i yükleyin; sistem soruları otomatik olarak sınırlarına göre keser
+          ve havuza "onay bekliyor" durumunda ekler. Yüklendikten sonra her soruya tıklayıp
+          tam boyutta inceleyebilir, gerekirse kırpma sınırını elle düzeltip konu/kazanım/
+          zorluk/doğru cevap girerek onaylayabilirsiniz.
+        </p>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+          <div class="form-group" style="max-width:320px;margin-bottom:0">
+            <label class="form-label">Ders</label>
+            <select class="form-select" id="qb-subject-select">${subjectOptionsHtml}</select>
+          </div>
+          <div class="form-group" style="max-width:140px;margin-bottom:0">
+            <label class="form-label">Kitapçık</label>
+            <select class="form-select" id="qb-booklet-select">
+              ${['A', 'B', 'C', 'D', 'E'].map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="drop-zone" id="qb-drop-zone">
+          <div class="drop-icon">📄</div>
+          <h3>Test PDF'ini sürükleyip bırakın</h3>
+          <p>veya dosya seçmek için tıklayın (.pdf)</p>
+          <input type="file" id="qb-file-input" accept=".pdf" style="display:none">
+        </div>
+        <div id="qb-status" style="margin-top:14px"></div>
+        <div id="qb-results"></div>
+      </div>
+      <div class="card mt-2">
+        <div class="card-header" style="justify-content:space-between">
+          <h3 class="card-title"><span class="card-icon">🗂️</span> Yüklenen Setler</h3>
+          <button class="btn btn-secondary btn-sm" onclick="App.exportApprovedQuestions()">⬇️ Onaylanmış Soruları İndir (ZIP)</button>
+        </div>
+        <div id="qb-batch-list"><p class="text-muted">Yükleniyor...</p></div>
+      </div>`;
+
+    ImportModule.setupDropZone('qb-drop-zone', 'qb-file-input', (file) => this.uploadQuestionBankPdf(file));
+    this.loadQuestionBankBatches();
+  },
+
+  exportApprovedQuestions() {
+    const subjectSelect = document.getElementById('qb-subject-select');
+    const subjectCode = subjectSelect ? subjectSelect.value : '';
+    const url = '/api/admin/question-bank/export' + (subjectCode ? `?subject_code=${encodeURIComponent(subjectCode)}` : '');
+    window.location.href = url;
+  },
+
+  async loadQuestionBankBatches() {
+    const listEl = document.getElementById('qb-batch-list');
+    if (!listEl) return;
+    try {
+      const res = await fetch('/api/admin/question-bank/batches');
+      const data = await res.json();
+      if (!data.batches || !data.batches.length) {
+        listEl.innerHTML = `<p class="text-muted">Henüz PDF yüklenmemiş.</p>`;
+        return;
+      }
+      listEl.innerHTML = data.batches.map(b => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
+            <div class="text-muted" style="font-size:12.5px">
+              ${b.question_count} soru • ${UI.formatDate(b.created_at)}
+              ${b.pending_count > 0 ? ` • <span style="color:var(--warning)">${b.pending_count} onay bekliyor</span>` : ' • tümü incelendi'}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin-bottom:0" title="Kitapçık eşleme CSV veya JSON dosyası yükle">
+              📎 Eşle (CSV/JSON)
+              <input type="file" accept=".csv,.json" style="display:none" onchange="App.importBookletMap(${b.id}, this.files[0]); this.value='';">
+            </label>
+            <button class="btn btn-secondary btn-sm" onclick="App._qbShowBatchGrid(${b.id})">🔍 İncele</button>
+            <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, ${b.question_count}, ${b.approved_count || 0})" title="Bu seti sil">🗑️</button>
+          </div>
+        </div>`).join('');
+    } catch (err) {
+      listEl.innerHTML = `<p style="color:var(--danger)">Set listesi yüklenemedi: ${err.message}</p>`;
+    }
+  },
+
+  async deleteQuestionBankBatch(batchId, questionCount, approvedCount) {
+    const message = approvedCount > 0
+      ? `Bu sette ${questionCount} soru var, ${approvedCount} tanesi zaten ONAYLANMIŞ ve havuzda kullanılıyor olabilir. Seti ve TÜM sorularını (onaylananlar dahil) kalıcı olarak silmek istediğinize emin misiniz?`
+      : `Bu seti ve içindeki ${questionCount} soruyu kalıcı olarak silmek istediğinize emin misiniz?`;
+    const ok = await UI.confirm(message, '🗑️ Seti Sil');
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Silinemedi.');
+      UI.toast('Set silindi.', 'success');
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async importBookletMap(batchId, file) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}/import-booklet-map`, {
+        method: 'POST', body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eşleme yüklenemedi.');
+      UI.toast(`Eşlendi: ${data.mapped}, atlandı: ${data.skipped}`, 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async uploadQuestionBankPdf(file) {
+    const statusEl = document.getElementById('qb-status');
+    const resultsEl = document.getElementById('qb-results');
+    resultsEl.innerHTML = '';
+
+    if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+      statusEl.innerHTML = `<p style="color:var(--danger)">Lütfen bir PDF dosyası seçin.</p>`;
+      return;
+    }
+    const subjectCode = document.getElementById('qb-subject-select').value;
+    const bookletCode = document.getElementById('qb-booklet-select').value;
+    statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (birkaç saniye sürebilir)</p>`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('subject_code', subjectCode);
+    formData.append('booklet_code', bookletCode);
+
+    try {
+      const res = await fetch('/api/admin/question-bank/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Yükleme başarısız.');
+
+      statusEl.innerHTML = `<p style="color:var(--success)">✅ ${data.questionCount} soru tespit edildi
+        (${data.pageCount} sayfa)${data.answerKeyFound ? ', cevap anahtarı da bulundu' : ''}.
+        Hepsi <b>onay bekliyor</b> durumunda havuza eklendi. Aşağıdan tıklayarak inceleyin.</p>`;
+
+      resultsEl.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:14px">
+          ${data.questions.map((q, i) => `
+            <div class="card qb-thumb" style="padding:8px;text-align:center;margin-top:0;cursor:pointer" onclick="App.openBatchReview(${data.batchId}, ${i})">
+              <div style="width:100%;height:150px;border-radius:8px;border:1px solid var(--bg-glass-border);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;overflow:hidden">
+                <img src="${q.imageUrl}" alt="Soru ${q.number}" loading="lazy" style="max-width:100%;max-height:100%;object-fit:contain">
+              </div>
+              <div style="margin-top:6px;font-weight:700;font-size:13px">Soru ${q.number}</div>
+              ${q.correctAnswer ? `<div style="font-size:11.5px;color:var(--text-muted)">Cevap: ${q.correctAnswer}</div>` : ''}
+            </div>`).join('')}
+        </div>`;
+
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
+    }
+  },
+
+  // ==== Toplu İnceleme Izgarası (bir sette birden çok soruyu tek tek
+  // modalı açmadan seçip onaylama/hariç tutma) ====
+  _qbGridState: null,
+
+  async _qbShowBatchGrid(batchId) {
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Set yüklenemedi.');
+      if (!data.questions.length) {
+        UI.toast('Bu sette soru bulunamadı.', 'warning');
+        return;
+      }
+      const prevSelected = (this._qbGridState && this._qbGridState.batchId === batchId) ? this._qbGridState.selected : new Set();
+      this._qbGridState = { batchId, questions: data.questions, selected: prevSelected };
+      this._qbMountGrid();
+    } catch (err) {
+      UI.toast('İnceleme açılamadı: ' + err.message, 'danger');
+    }
+  },
+
+  _qbMountGrid() {
+    const s = this._qbGridState;
+    if (!s) return;
+    let overlay = document.getElementById('qb-grid-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'qb-grid-overlay';
+      overlay.className = 'modal-overlay active';
+      overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) this._qbCloseGrid();
+      });
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+    }
+    const statusLabels = {
+      pending_review: ['⏳ Onay Bekliyor', 'var(--warning)'],
+      reviewed: ['👁️ İncelendi', 'var(--text-muted)'],
+      approved: ['✅ Onaylandı', 'var(--success)'],
+      excluded: ['🚫 Hariç Tutuldu', 'var(--danger)'],
+    };
+    overlay.innerHTML = `
+      <div class="modal modal-lg" style="max-width:1180px">
+        <div class="modal-header">
+          <h2>Soru Seti — Toplu İnceleme</h2>
+          <button class="modal-close" onclick="App._qbCloseGrid()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-secondary btn-sm" onclick="App._qbGridSelectAll()">Tümünü Seç</button>
+            <button class="btn btn-ghost btn-sm" onclick="App._qbGridSelectNone()">Seçimi Temizle</button>
+            <span class="text-muted" style="font-size:12.5px">${s.selected.size} seçili</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-primary btn-sm" onclick="App._qbGridBulk('approved')">✅ Seçilenleri Onayla</button>
+            <button class="btn btn-danger btn-sm" onclick="App._qbGridBulk('excluded')">🚫 Seçilenleri Hariç Tut</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:60vh;overflow:auto">
+            ${s.questions.map((q, i) => {
+              const [label, color] = statusLabels[q.status] || statusLabels.pending_review;
+              return `
+              <div class="card qb-thumb" style="padding:8px;text-align:center;margin-top:0;position:relative">
+                <input type="checkbox" ${s.selected.has(q.id) ? 'checked' : ''}
+                  onclick="event.stopPropagation();App._qbGridToggle(${q.id})"
+                  style="position:absolute;top:10px;left:10px;width:18px;height:18px;z-index:2">
+                <div style="width:100%;height:140px;border-radius:8px;border:1px solid var(--bg-glass-border);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer"
+                  onclick="App._qbCloseGrid();App.openBatchReview(${s.batchId}, ${i})">
+                  <img src="${q.imageUrl}" alt="Soru ${q.question_number ?? ''}" loading="lazy" style="max-width:100%;max-height:100%;object-fit:contain">
+                </div>
+                <div style="margin-top:6px;font-weight:700;font-size:13px">Soru ${q.question_number ?? ''}</div>
+                <div style="font-size:11px;color:${color}">${label}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+  },
+
+  _qbGridToggle(id) {
+    const s = this._qbGridState;
+    if (!s) return;
+    if (s.selected.has(id)) s.selected.delete(id); else s.selected.add(id);
+    this._qbMountGrid();
+  },
+
+  _qbGridSelectAll() {
+    const s = this._qbGridState;
+    if (!s) return;
+    s.questions.forEach(q => s.selected.add(q.id));
+    this._qbMountGrid();
+  },
+
+  _qbGridSelectNone() {
+    const s = this._qbGridState;
+    if (!s) return;
+    s.selected.clear();
+    this._qbMountGrid();
+  },
+
+  async _qbGridBulk(status) {
+    const s = this._qbGridState;
+    if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
+    try {
+      const res = await fetch('/api/admin/question-bank/questions/bulk-update', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionIds: Array.from(s.selected), status }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
+      UI.toast(`${data.updated} soru güncellendi.`, 'success');
+      s.selected.clear();
+      await this._qbShowBatchGrid(s.batchId);
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  _qbCloseGrid() {
+    const overlay = document.getElementById('qb-grid-overlay');
+    if (overlay) overlay.remove();
+    document.body.style.overflow = '';
+    this._qbGridState = null;
+  },
+
+  // ==== Soru İnceleme Modalı ====
+  // Tek bir global _qbState nesnesinde tutulur (aynı anda tek inceleme
+  // oturumu olur) - modal HTML'i her açılışta document.body'e eklenir,
+  // kapatılınca kaldırılır (bkz. UI.confirm ile aynı yaklaşım).
+  _qbState: null,
+
+  async openBatchReview(batchId, startIndex = 0) {
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Set yüklenemedi.');
+      if (!data.questions.length) {
+        UI.toast('Bu sette soru bulunamadı.', 'warning');
+        return;
+      }
+      this._qbState = {
+        batchId, questions: data.questions, index: Math.min(startIndex, data.questions.length - 1),
+        contextUrl: null, pageWidthPt: 0, pageHeightPt: 0, cropRect: null, cropDrag: null,
+        topicsCache: {}, outcomesCache: {}, bookletRows: [],
+      };
+      this._qbMount();
+      await this._qbShowCurrent();
+    } catch (err) {
+      UI.toast('İnceleme açılamadı: ' + err.message, 'danger');
+    }
+  },
+
+  _qbMount() {
+    if (document.getElementById('qb-review-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'qb-review-overlay';
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal modal-lg" style="max-width:1180px">
+        <div class="modal-header">
+          <h2 id="qbr-title">Soru İnceleme</h2>
+          <button class="modal-close" onclick="App._qbClose()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr);gap:20px">
+            <div>
+              <div id="qbr-image-wrap" style="position:relative;width:100%;background:#000;border-radius:10px;overflow:hidden;user-select:none">
+                <img id="qbr-page-img" style="display:block;width:100%;height:auto" draggable="false">
+                <div id="qbr-crop-box" style="position:absolute;border:2px solid #14b8a6;background:rgba(20,184,166,0.15);cursor:move">
+                  <div class="qbr-handle" data-mode="nw" style="position:absolute;left:-6px;top:-6px;width:14px;height:14px;background:#14b8a6;border-radius:3px;cursor:nwse-resize"></div>
+                  <div class="qbr-handle" data-mode="ne" style="position:absolute;right:-6px;top:-6px;width:14px;height:14px;background:#14b8a6;border-radius:3px;cursor:nesw-resize"></div>
+                  <div class="qbr-handle" data-mode="sw" style="position:absolute;left:-6px;bottom:-6px;width:14px;height:14px;background:#14b8a6;border-radius:3px;cursor:nesw-resize"></div>
+                  <div class="qbr-handle" data-mode="se" style="position:absolute;right:-6px;bottom:-6px;width:14px;height:14px;background:#14b8a6;border-radius:3px;cursor:nwse-resize"></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+                <button class="btn btn-secondary btn-sm" onclick="App._qbResetCrop()">↺ Kırpmayı Sıfırla</button>
+                <button class="btn btn-primary btn-sm" onclick="App._qbSaveCrop()">✂️ Kırpmayı Kaydet</button>
+                <span class="text-muted" style="font-size:12px;align-self:center">Köşelerden sürükleyip yeniden boyutlandırın, içinden sürükleyip taşıyın.</span>
+              </div>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span id="qbr-counter" class="text-muted" style="font-size:13px"></span>
+                <span id="qbr-status-badge"></span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Konu</label>
+                <div style="display:flex;gap:6px">
+                  <select class="form-select" id="qbr-topic-select" style="flex:1"></select>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbAddTopic()" title="Yeni konu ekle">➕</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Kazanım</label>
+                <div style="display:flex;gap:6px">
+                  <select class="form-select" id="qbr-outcome-select" style="flex:1"></select>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbAddOutcome()" title="Yeni kazanım ekle">➕</button>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="form-group">
+                  <label class="form-label">Zorluk</label>
+                  <select class="form-select" id="qbr-difficulty-select">
+                    <option value="">—</option>
+                    <option value="1">1 - Çok Kolay</option>
+                    <option value="2">2 - Kolay</option>
+                    <option value="3">3 - Orta</option>
+                    <option value="4">4 - Zor</option>
+                    <option value="5">5 - Çok Zor</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Doğru Cevap</label>
+                  <select class="form-select" id="qbr-answer-select">
+                    ${['', 'A', 'B', 'C', 'D', 'E'].map(a => `<option value="${a}">${a || '—'}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Soru Tipi</label>
+                <select class="form-select" id="qbr-type-select">
+                  <option value="">—</option>
+                  <option value="multiple_choice">Çoktan Seçmeli</option>
+                  <option value="true_false">Doğru / Yanlış</option>
+                  <option value="open_ended">Açık Uçlu</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Açıklama / Çözüm (opsiyonel)</label>
+                <textarea class="form-control" id="qbr-explanation" rows="3"></textarea>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Kitapçık Eşlemeleri <span class="text-muted" id="qbr-native-booklet" style="font-weight:400"></span></label>
+                <div id="qbr-booklet-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbAddBookletRow()">➕ Kitapçık ekle</button>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbSaveBookletNumbers()">💾 Eşlemeleri Kaydet</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between">
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-ghost btn-sm" onclick="App._qbNav(-1)">⟵ Önceki</button>
+            <button class="btn btn-ghost btn-sm" onclick="App._qbNav(1)">Sonraki ⟶</button>
+            <span class="text-muted" style="font-size:11.5px">A: onayla, X: hariç tut</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="App._qbSaveFields()">💾 Kaydet</button>
+            <button class="btn btn-danger" onclick="App._qbSaveFields('excluded')">🚫 Hariç Tut</button>
+            <button class="btn btn-primary" onclick="App._qbSaveFields('approved')">✅ Onayla</button>
+          </div>
+        </div>
+      </div>`;
+    overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) this._qbClose();
+    });
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    this._qbKeyHandler = this._qbKeyHandler.bind(this);
+    document.addEventListener('keydown', this._qbKeyHandler);
+    this._qbRenderCropOverlay = this._qbRenderCropOverlay.bind(this);
+    window.addEventListener('resize', this._qbRenderCropOverlay);
+
+    const box = document.getElementById('qbr-crop-box');
+    box.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.qbr-handle')) return;
+      this._qbStartDrag(e, 'move');
+    });
+    box.querySelectorAll('.qbr-handle').forEach(h => {
+      h.addEventListener('mousedown', (e) => this._qbStartDrag(e, h.dataset.mode));
+    });
+  },
+
+  _qbClose() {
+    const overlay = document.getElementById('qb-review-overlay');
+    if (overlay) overlay.remove();
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', this._qbKeyHandler);
+    window.removeEventListener('resize', this._qbRenderCropOverlay);
+    if (this._qbState && this._qbState.contextUrl) URL.revokeObjectURL(this._qbState.contextUrl);
+    this._qbState = null;
+    this.loadQuestionBankBatches();
+  },
+
+  _qbKeyHandler(e) {
+    if (!this._qbState) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+    if (e.key === 'Escape') this._qbClose();
+    else if (e.key === 'ArrowLeft') this._qbNav(-1);
+    else if (e.key === 'ArrowRight') this._qbNav(1);
+    else if (e.key === 'a' || e.key === 'A') this._qbSaveFields('approved');
+    else if (e.key === 'x' || e.key === 'X') this._qbSaveFields('excluded');
+  },
+
+  _qbNav(delta) {
+    const s = this._qbState;
+    if (!s) return;
+    const next = s.index + delta;
+    if (next < 0 || next >= s.questions.length) return;
+    s.index = next;
+    this._qbShowCurrent();
+  },
+
+  get _qbCurrentQuestion() {
+    const s = this._qbState;
+    return s ? s.questions[s.index] : null;
+  },
+
+  async _qbShowCurrent() {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+
+    document.getElementById('qbr-title').textContent = `Soru ${q.question_number ?? ''}`.trim() || 'Soru İnceleme';
+    document.getElementById('qbr-counter').textContent = `${s.index + 1} / ${s.questions.length}`;
+    const statusLabels = {
+      pending_review: ['⏳ Onay Bekliyor', 'var(--warning)'],
+      reviewed: ['👁️ İncelendi', 'var(--text-muted)'],
+      approved: ['✅ Onaylandı', 'var(--success)'],
+      excluded: ['🚫 Hariç Tutuldu', 'var(--danger)'],
+    };
+    const [label, color] = statusLabels[q.status] || statusLabels.pending_review;
+    document.getElementById('qbr-status-badge').innerHTML = `<span style="color:${color};font-weight:700;font-size:12.5px">${label}</span>`;
+
+    document.getElementById('qbr-difficulty-select').value = q.difficulty_level || '';
+    document.getElementById('qbr-answer-select').value = q.correct_answer || '';
+    document.getElementById('qbr-type-select').value = q.question_type || '';
+    document.getElementById('qbr-explanation').value = q.explanation || '';
+
+    await this._qbLoadTopics(q.subject_id, q.topic_id);
+    await this._qbLoadOutcomes(q.topic_id, q.learning_outcome_id);
+    document.getElementById('qbr-topic-select').onchange = (e) => {
+      this._qbLoadOutcomes(parseInt(e.target.value) || null, null);
+    };
+
+    s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
+    await this._qbLoadContextImage(q.id);
+    await this._qbLoadBookletNumbers(q.id);
+  },
+
+  // ---- Kitapçık Eşlemeleri (A kitapçığı 1.soru = B kitapçığı 5.soru gibi) ----
+  async _qbLoadBookletNumbers(questionId) {
+    const s = this._qbState;
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${questionId}/booklet-numbers`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kitapçık eşlemeleri yüklenemedi.');
+      s.bookletRows = (data.numbers || []).map(n => ({ code: n.bookletCode, number: n.questionNumber }));
+      const nativeEl = document.getElementById('qbr-native-booklet');
+      if (nativeEl) {
+        nativeEl.textContent = data.nativeBookletCode
+          ? `(bu set: kitapçık ${data.nativeBookletCode}, soru ${data.nativeQuestionNumber ?? '?'})`
+          : '';
+      }
+    } catch (err) {
+      s.bookletRows = [];
+      UI.toast(err.message, 'danger');
+    }
+    this._qbRenderBookletRows();
+  },
+
+  _qbRenderBookletRows() {
+    const s = this._qbState;
+    const wrap = document.getElementById('qbr-booklet-rows');
+    if (!s || !wrap) return;
+    if (!s.bookletRows.length) {
+      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Henüz başka kitapçık eşlemesi yok.</span>`;
+      return;
+    }
+    wrap.innerHTML = s.bookletRows.map((r, i) => `
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="form-control" style="width:60px;text-transform:uppercase" maxlength="1" value="${r.code}"
+          onchange="App._qbUpdateBookletRow(${i}, 'code', this.value)" placeholder="B">
+        <input class="form-control" type="number" style="width:90px" value="${r.number}"
+          onchange="App._qbUpdateBookletRow(${i}, 'number', this.value)" placeholder="Soru no">
+        <button class="btn btn-ghost btn-sm" onclick="App._qbRemoveBookletRow(${i})" title="Kaldır">🗑️</button>
+      </div>`).join('');
+  },
+
+  _qbAddBookletRow() {
+    const s = this._qbState;
+    if (!s) return;
+    s.bookletRows.push({ code: '', number: '' });
+    this._qbRenderBookletRows();
+  },
+
+  _qbUpdateBookletRow(index, field, value) {
+    const s = this._qbState;
+    if (!s || !s.bookletRows[index]) return;
+    s.bookletRows[index][field] = field === 'code' ? value.trim().toUpperCase().slice(0, 1) : value;
+  },
+
+  _qbRemoveBookletRow(index) {
+    const s = this._qbState;
+    if (!s) return;
+    s.bookletRows.splice(index, 1);
+    this._qbRenderBookletRows();
+  },
+
+  async _qbSaveBookletNumbers() {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+    const numbers = {};
+    for (const r of s.bookletRows) {
+      if (r.code && r.number !== '' && r.number != null) numbers[r.code] = parseInt(r.number);
+    }
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/booklet-numbers`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ numbers }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+      UI.toast('Kitapçık eşlemeleri kaydedildi.', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async _qbLoadContextImage(questionId) {
+    const s = this._qbState;
+    const img = document.getElementById('qbr-page-img');
+    if (s.contextUrl) URL.revokeObjectURL(s.contextUrl);
+    img.style.opacity = '0.3';
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${questionId}/context-image`);
+      if (!res.ok) throw new Error((await res.json()).error || 'Sayfa görüntüsü yüklenemedi.');
+      s.pageWidthPt = parseFloat(res.headers.get('X-Page-Width-Pt'));
+      s.pageHeightPt = parseFloat(res.headers.get('X-Page-Height-Pt'));
+      const blob = await res.blob();
+      s.contextUrl = URL.createObjectURL(blob);
+      img.onload = () => { img.style.opacity = '1'; this._qbRenderCropOverlay(); };
+      img.src = s.contextUrl;
+    } catch (err) {
+      img.style.opacity = '1';
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  _qbRenderCropOverlay() {
+    const s = this._qbState;
+    const img = document.getElementById('qbr-page-img');
+    const box = document.getElementById('qbr-crop-box');
+    if (!s || !s.cropRect || !img.clientWidth || !s.pageWidthPt) return;
+    const scale = img.clientWidth / s.pageWidthPt;
+    box.style.left = (s.cropRect.x * scale) + 'px';
+    box.style.top = (s.cropRect.y * scale) + 'px';
+    box.style.width = (s.cropRect.width * scale) + 'px';
+    box.style.height = (s.cropRect.height * scale) + 'px';
+  },
+
+  _qbStartDrag(e, mode) {
+    e.preventDefault();
+    const s = this._qbState;
+    if (!s) return;
+    s.cropDrag = { mode, startClientX: e.clientX, startClientY: e.clientY, startRect: { ...s.cropRect } };
+    this._qbOnDrag = this._qbOnDrag.bind(this);
+    this._qbEndDrag = this._qbEndDrag.bind(this);
+    document.addEventListener('mousemove', this._qbOnDrag);
+    document.addEventListener('mouseup', this._qbEndDrag);
+  },
+
+  _qbOnDrag(e) {
+    const s = this._qbState;
+    const drag = s && s.cropDrag;
+    if (!drag) return;
+    const img = document.getElementById('qbr-page-img');
+    const scale = img.clientWidth / s.pageWidthPt;
+    const dx = (e.clientX - drag.startClientX) / scale;
+    const dy = (e.clientY - drag.startClientY) / scale;
+    let { x, y, width, height } = drag.startRect;
+
+    if (drag.mode === 'move') {
+      x += dx; y += dy;
+    } else {
+      if (drag.mode.includes('w')) { x += dx; width -= dx; }
+      if (drag.mode.includes('e')) { width += dx; }
+      if (drag.mode.includes('n')) { y += dy; height -= dy; }
+      if (drag.mode.includes('s')) { height += dy; }
+    }
+    width = Math.max(15, width);
+    height = Math.max(15, height);
+    x = Math.max(0, Math.min(x, s.pageWidthPt - width));
+    y = Math.max(0, Math.min(y, s.pageHeightPt - height));
+
+    s.cropRect = { x, y, width, height };
+    this._qbRenderCropOverlay();
+  },
+
+  _qbEndDrag() {
+    document.removeEventListener('mousemove', this._qbOnDrag);
+    document.removeEventListener('mouseup', this._qbEndDrag);
+    if (this._qbState) this._qbState.cropDrag = null;
+  },
+
+  _qbResetCrop() {
+    const q = this._qbCurrentQuestion;
+    if (!q || !this._qbState) return;
+    this._qbState.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
+    this._qbRenderCropOverlay();
+  },
+
+  async _qbSaveCrop() {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/recrop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(s.cropRect),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kırpma kaydedilemedi.');
+      q.crop_x = data.cropX; q.crop_y = data.cropY; q.crop_width = data.cropWidth; q.crop_height = data.cropHeight;
+      UI.toast('Kırpma güncellendi.', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async _qbLoadTopics(subjectId, selectedId) {
+    const s = this._qbState;
+    const select = document.getElementById('qbr-topic-select');
+    if (!s.topicsCache[subjectId]) {
+      const res = await fetch(`/api/admin/question-bank/topics?subject_id=${subjectId}`);
+      const data = await res.json();
+      s.topicsCache[subjectId] = data.topics || [];
+    }
+    const topics = s.topicsCache[subjectId];
+    select.innerHTML = `<option value="">— Konu seçilmedi —</option>` +
+      topics.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+    select.value = selectedId || '';
+  },
+
+  async _qbAddTopic() {
+    const q = this._qbCurrentQuestion;
+    const s = this._qbState;
+    if (!q) return;
+    const name = prompt('Yeni konu adı:');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch('/api/admin/question-bank/topics', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subjectId: q.subject_id, name: name.trim() }),
+      });
+      const topic = await res.json();
+      if (!res.ok) throw new Error(topic.error || 'Konu eklenemedi.');
+      delete s.topicsCache[q.subject_id];
+      await this._qbLoadTopics(q.subject_id, topic.id);
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async _qbLoadOutcomes(topicId, selectedId) {
+    const s = this._qbState;
+    const select = document.getElementById('qbr-outcome-select');
+    if (!topicId) {
+      select.innerHTML = `<option value="">— Önce konu seçin —</option>`;
+      return;
+    }
+    if (!s.outcomesCache[topicId]) {
+      const res = await fetch(`/api/admin/question-bank/learning-outcomes?topic_id=${topicId}`);
+      const data = await res.json();
+      s.outcomesCache[topicId] = data.learningOutcomes || [];
+    }
+    const outcomes = s.outcomesCache[topicId];
+    select.innerHTML = `<option value="">— Kazanım seçilmedi —</option>` +
+      outcomes.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+    select.value = selectedId || '';
+  },
+
+  async _qbAddOutcome() {
+    const s = this._qbState;
+    const topicId = parseInt(document.getElementById('qbr-topic-select').value);
+    if (!topicId) { UI.toast('Önce bir konu seçin.', 'warning'); return; }
+    const name = prompt('Yeni kazanım adı:');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch('/api/admin/question-bank/learning-outcomes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topicId, name: name.trim() }),
+      });
+      const outcome = await res.json();
+      if (!res.ok) throw new Error(outcome.error || 'Kazanım eklenemedi.');
+      delete s.outcomesCache[topicId];
+      await this._qbLoadOutcomes(topicId, outcome.id);
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async _qbSaveFields(status) {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+
+    const payload = {
+      topicId: parseInt(document.getElementById('qbr-topic-select').value) || null,
+      learningOutcomeId: parseInt(document.getElementById('qbr-outcome-select').value) || null,
+      difficultyLevel: parseInt(document.getElementById('qbr-difficulty-select').value) || null,
+      questionType: document.getElementById('qbr-type-select').value || null,
+      correctAnswer: document.getElementById('qbr-answer-select').value || null,
+      explanation: document.getElementById('qbr-explanation').value || null,
+    };
+    if (status) payload.status = status;
+
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+
+      Object.assign(q, {
+        topic_id: payload.topicId, learning_outcome_id: payload.learningOutcomeId,
+        difficulty_level: payload.difficultyLevel, question_type: payload.questionType,
+        correct_answer: payload.correctAnswer, explanation: payload.explanation,
+      });
+      if (status) q.status = status;
+
+      UI.toast(status === 'approved' ? 'Soru onaylandı ✅' : status === 'excluded' ? 'Soru hariç tutuldu' : 'Kaydedildi 💾', 'success');
+
+      if (status && s.index < s.questions.length - 1) {
+        this._qbNav(1);
+      } else if (status) {
+        this._qbShowCurrent();
+      }
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   // ---- Reports Page ----

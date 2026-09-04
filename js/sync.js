@@ -3,6 +3,20 @@
 // Realtime Cross-Device Synchronization (Firebase / Cloud Storage)
 // ============================================
 
+// Varsayilan bulut baglantisi: hicbir cihazda elle giris yapilmadan
+// otomatik baglanmak icin kullanilir. Ayarlar sayfasindan farkli bir
+// config/oda adi girilirse, o cihazda bu varsayilanlarin yerini alir.
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCPg07Os47RyCd-5-hU0b2VnVnxNSliKek",
+  authDomain: "takipedupusula.firebaseapp.com",
+  projectId: "takipedupusula",
+  storageBucket: "takipedupusula.firebasestorage.app",
+  messagingSenderId: "506109702358",
+  appId: "1:506109702358:web:77a457adad5bc7169b1977",
+  measurementId: "G-MYP7HXEL9S"
+};
+const DEFAULT_SYNC_KEY = 'mskrknedupusula';
+
 const SyncModule = {
   status: 'disconnected', // 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'error'
   lastSyncTime: null,
@@ -14,18 +28,17 @@ const SyncModule = {
 
   // Initialize on app startup
   async init() {
-    this.syncKey = localStorage.getItem('lgs_sync_key') || '';
-    this.autoSync = localStorage.getItem('lgs_auto_sync') === 'true';
+    this.syncKey = localStorage.getItem('lgs_sync_key') || DEFAULT_SYNC_KEY;
+    const autoSyncStored = localStorage.getItem('lgs_auto_sync');
+    this.autoSync = autoSyncStored === null ? true : autoSyncStored === 'true';
     this.lastSyncTime = localStorage.getItem('lgs_last_sync_time') || null;
 
     const savedConfig = localStorage.getItem('lgs_firebase_config');
-    if (savedConfig) {
-      try {
-        const config = JSON.parse(savedConfig);
-        await this.connectFirebase(config, false);
-      } catch (e) {
-        console.warn('Firebase auto-connect failed:', e);
-      }
+    try {
+      const config = savedConfig ? JSON.parse(savedConfig) : DEFAULT_FIREBASE_CONFIG;
+      await this.connectFirebase(config, false);
+    } catch (e) {
+      console.warn('Firebase auto-connect failed:', e);
     }
 
     // Listen for online/offline events
@@ -67,7 +80,7 @@ const SyncModule = {
       // Save config
       localStorage.setItem('lgs_firebase_config', JSON.stringify(config));
       if (!this.syncKey) {
-        this.syncKey = 'varsayilan-okul';
+        this.syncKey = DEFAULT_SYNC_KEY;
         localStorage.setItem('lgs_sync_key', this.syncKey);
       }
 

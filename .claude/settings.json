@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/git-sync.sh\"",
+            "shell": "bash",
+            "timeout": 20,
+            "statusMessage": "Diger bilgisayardaki degisiklikler kontrol ediliyor..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/git-autopush.sh\"",
+            "shell": "bash",
+            "if": "Bash(git commit*)",
+            "timeout": 20,
+            "statusMessage": "Commit GitHub'a push ediliyor..."
+          }
+        ]
+      }
+    ]
+  }
+}

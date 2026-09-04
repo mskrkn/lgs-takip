@@ -135,6 +135,26 @@
             </div>
           </div>
 
+          <!-- PUSİ — AI ASISTAN (bugünkü görevin hemen yanı, "ne yapmalıyım" sorusuna en yakın yer) -->
+          <div class="ep-pusi anim-fade-up anim-fade-up-d5">
+            <div class="ep-pusi-avatar">🧭</div>
+            <div style="flex:1">
+              <span class="ep-pusi-label">🤖 Pusula AI — Pusi</span>
+              <p class="ep-pusi-text" id="pusi-message">Yükleniyor...</p>
+              <div class="ep-pusi-actions">
+                <button class="ep-pusi-btn" onclick="askPusi('performance')">📊 Performansımı Açıkla</button>
+                <button class="ep-pusi-btn" onclick="askPusi('plan')">📅 Bana Plan Hazırla</button>
+                <button class="ep-pusi-btn" onclick="askPusi('focus')">📚 Ne Çalışmalıyım?</button>
+                <button class="ep-pusi-btn" onclick="askPusi('rank')">🏆 Sınıfa Göre Durumum</button>
+                <button class="ep-pusi-btn" onclick="askPusi('motivate')">⚡ Motive Et</button>
+              </div>
+              <div class="ep-pusi-answer" id="pusi-answer" style="display:none"></div>
+            </div>
+          </div>
+
+          <!-- ============ ZONE: HEDEFİN ============ -->
+          <div class="ep-zone-header"><span>🎯 Hedefin</span></div>
+
           <!-- HEDEFİM NEREDE — ROADMAP -->
           <div class="ep-card anim-fade-up anim-fade-up-d2">
             <div class="ep-section-hd">
@@ -169,6 +189,9 @@
               <!-- JS tarafından doldurulur -->
             </div>
           </div>
+
+          <!-- ============ ZONE: DERS ANALİZİ ============ -->
+          <div class="ep-zone-header"><span>📚 Ders Analizi</span></div>
 
           <!-- DERSLERİM (Enerji Kartları) -->
           <div class="ep-card anim-fade-up anim-fade-up-d2">
@@ -205,28 +228,15 @@
             <div class="ep-strengths-grid" id="strength-summary"></div>
           </div>
 
+          <!-- ============ ZONE: BAŞARILAR ============ -->
+          <div class="ep-zone-header"><span>🏆 Başarıların</span></div>
+
           <!-- SON BAŞARILAR -->
           <div class="ep-card anim-fade-up anim-fade-up-d4">
             <div class="ep-section-hd">
               <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
             </div>
             <div class="ep-achievements-grid" id="achievements"></div>
-          </div>
-
-          <!-- PUSİ — AI ASISTAN -->
-          <div class="ep-pusi anim-fade-up anim-fade-up-d5">
-            <div class="ep-pusi-avatar">🧭</div>
-            <div style="flex:1">
-              <span class="ep-pusi-label">🤖 Pusula AI — Pusi</span>
-              <p class="ep-pusi-text" id="pusi-message">Yükleniyor...</p>
-              <div class="ep-pusi-actions">
-                <button class="ep-pusi-btn" onclick="askPusi('performance')">📊 Performansımı Açıkla</button>
-                <button class="ep-pusi-btn" onclick="askPusi('plan')">📅 Bana Plan Hazırla</button>
-                <button class="ep-pusi-btn" onclick="askPusi('focus')">📚 Ne Çalışmalıyım?</button>
-                <button class="ep-pusi-btn" onclick="askPusi('motivate')">⚡ Motive Et</button>
-              </div>
-              <div class="ep-pusi-answer" id="pusi-answer" style="display:none"></div>
-            </div>
           </div>
 
           <!-- HAFTALİK EĞİTİM ROTASI -->
