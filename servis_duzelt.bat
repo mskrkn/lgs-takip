@@ -1,11 +1,24 @@
 @echo off
 REM ============================================================
+REM  ARTIK KULLANILMIYOR - CALISTIRMAYIN
+REM  Sistem Google Cloud'daki "edupusula-sunucu" VM'sine tasindi
+REM  (bkz. eski_sunucuyu_durdur.bat). Bu script bu bilgisayarda
+REM  edupusula.com tuneline IKINCI bir baglanti kurar; bu da
+REM  Cloudflare'in trafigi bu PC ile VM arasinda rastgele
+REM  paylastirmasina ve iki ayri SQLite veritabaninin olusmasina
+REM  yol acar. Canliya yeni kod gondermek icin deploy_vm.bat kullanin.
+REM ============================================================
+REM
+REM --- Asagisi eski duzeltme adimlaridir, referans icin birakildi ---
 REM  Cloudflare Tunnel servis DUZELTME script'i
 REM  BU DOSYAYI SAG TIK > "Yonetici olarak calistir" ILE ACIN.
 REM  Onceki kurulumda "Cloudflared" servisi yanlis (parametresiz)
 REM  kurulmustu ve surekli cokuyordu. Bu script onu kaldirip
 REM  NSSM ile dogru parametrelerle yeniden kurar.
 REM ============================================================
+echo UYARI: Bu script artik kullanilmiyor, sistem VM'e tasindi.
+echo Devam etmek istediginize EMIN misiniz? Degilseniz Ctrl+C ile kapatin.
+pause
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (

@@ -1,11 +1,25 @@
 @echo off
 REM ============================================================
+REM  ARTIK KULLANILMIYOR - CALISTIRMAYIN
+REM  Sistem Google Cloud'daki "edupusula-sunucu" VM'sine tasindi
+REM  (bkz. eski_sunucuyu_durdur.bat). Bu script bu bilgisayarda
+REM  edupusula.com tuneline IKINCI bir baglanti + yerel sunucu
+REM  kurar; bu durum Cloudflare'in trafigi bu PC ile VM arasinda
+REM  rastgele paylastirmasina ve iki ayri (birbirinden habersiz)
+REM  SQLite veritabaninin olusmasina yol acar. Canliya yeni kod
+REM  gondermek icin deploy_vm.bat kullanin.
+REM ============================================================
+REM
+REM --- Asagisi eski kurulum adimlaridir, referans icin birakildi ---
 REM  Deneme Takip Sistemi - Arka Plan Servisi Kurulumu
 REM  BU DOSYAYI SAG TIK > "Yonetici olarak calistir" ILE ACIN.
 REM  Tek seferlik bir kurulumdur; kurulduktan sonra bilgisayar
 REM  her acildiginda sunucu ve tunel otomatik, pencere acmadan
 REM  arka planda baslar.
 REM ============================================================
+echo UYARI: Bu script artik kullanilmiyor, sistem VM'e tasindi.
+echo Devam etmek istediginize EMIN misiniz? Degilseniz Ctrl+C ile kapatin.
+pause
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (
