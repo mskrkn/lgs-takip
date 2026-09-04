@@ -1,4 +1,7 @@
 @echo off
+REM ARTIK KULLANILMIYOR: sistem VM'e tasindi, "DenemeTakipSunucu"
+REM servisi bu bilgisayarda devre disi. Canliyi yeniden baslatmak
+REM icin deploy_vm.bat kullanin (o zaten VM'deki servisi restart eder).
 REM SAG TIK > "Yonetici olarak calistir" ile acin.
 net session >nul 2>&1
 if %errorlevel% neq 0 (

@@ -1,49 +1,75 @@
-# 📱 LGS Deneme Takip Sistemi - Mobil, Çoklu PC ve Canlıya Alma Rehberi
+# 📱 LGS Deneme Takip Sistemi - Kullanım ve Yayınlama Rehberi
 
-Bu sistem artık **PWA (Progressive Web App)**, **Mobil Uyumlu Arayüz**, **Yerel Ağda Paylaşım** ve **Bulut Senkronizasyonu** ile donatılmıştır.
+## 🌐 Canlı Sistem Mimarisi (Güncel)
 
----
+`edupusula.com` şu anda **Google Cloud VM**'de (`edupusula-sunucu`, proje: `takipedupusula`,
+zone: `us-central1-a`) çalışıyor. Trafik oraya **Cloudflare Tunnel** (`denemetakip` tüneli)
+üzerinden yönlendiriliyor. Akış:
 
-## 🚀 1. YÖNTEM: Aynı Wi-Fi Ağında (Evde / Okulda) Anında Çalıştırma
+```
+Kullanıcı -> edupusula.com -> Cloudflare -> Tunnel (denemetakip)
+                                             -> VM: cloudflared.service (systemd)
+                                             -> VM: localhost:8080
+                                             -> VM: edupusula.service (systemd) = python server.py
+                                             -> VM: /home/mskrk/edupusula (git checkout, main dalı)
+```
 
-Bilgisayarınız açıkken aynı internete (Wi-Fi) bağlı telefon veya diğer bilgisayarlardan girmek için:
+VM'de veritabanı (`yetki_veritabani.db`), gizli anahtar (`.flask_secret_key`) ve
+`uploads/` klasörü git deposunun **dışında** durur (`.gitignore`) — bir deploy asla
+gerçek veriye dokunmaz.
 
-1. Klasördeki **`baslat.bat`** dosyasına çift tıklayın.
-2. Açılan siyah pencerede size özel bir bağlantı linki görünecektir (Örn: `http://192.168.1.35:8080`).
-3. **Cep telefonunuzun tarayıcısını (Chrome / Safari)** açıp bu adresi yazın.
-4. Telefonunuzda **"Ana Ekrana Ekle"** veya **"Uygulamayı Yükle"** butonuna basarak doğrudan mobil uygulama gibi kullanmaya başlayın!
+⚠️ **ÖNEMLİ:** Bu bilgisayarda (veya başka bir bilgisayarda) `cloudflared tunnel run
+denemetakip` çalıştırmayın. Aynı tünele ikinci bir bağlantı Cloudflare'in trafiği bu PC
+ile VM arasında rastgele paylaştırmasına ve iki farklı SQLite veritabanının birbirinden
+habersiz ilerlemesine yol açar (bir teşhis ve düzeltme süreciyle bu tam olarak yaşandı,
+bkz. proje geçmişi). `baslat.bat` artık tüneli başlatmıyor, sadece yerel test içindir.
 
----
+## 🚀 Yeni Kodu Canlıya Almak (Deploy)
 
-## 🌐 2. YÖNTEM: İnternete Ücretsiz Yükleme (Her Yerden ve Her Cihazdan Erişim)
+1. Değişikliği bu depoda `main` dalına push edin (feature dalındaysanız önce merge edin).
+2. Bu bilgisayarda **`deploy_vm.bat`**'a çift tıklayın. Bu script VM'e SSH ile bağlanıp
+   `git pull --ff-only` yapar ve `edupusula.service`'i yeniden başlatır.
+3. Birkaç saniye içinde `https://edupusula.com` yeni kodu servis eder.
 
-Uygulamanızı **GitHub Pages** veya **Vercel** ile 1 dakikada tamamen ücretsiz olarak internete açabilirsiniz.
+Elle yapmak isterseniz (gcloud CLI kurulu olmalı):
 
-### Seçenek A: GitHub Pages İle (Önerilen)
-1. [GitHub](https://github.com)'a giriş yapın ve yeni bir repository (depo) oluşturun (Örn: `lgs-takip`).
-2. Bu klasördeki tüm dosyaları GitHub deposuna yükleyin.
-3. Depo ayarlarından **Settings > Pages** sekmesine gidin.
-4. **Source:** `Deploy from a branch` -> **Branch:** `main` seçip **Save** butonuna tıklayın.
-5. 1 dakika içinde size özel linkiniz hazır olur: `https://kullaniciadiniz.github.io/lgs-takip/`
+```
+gcloud compute ssh edupusula-sunucu --zone us-central1-a --command "cd /home/mskrk/edupusula && git pull --ff-only && sudo systemctl restart edupusula"
+```
 
-### Seçenek B: Vercel / Netlify İle (Sürükle-Bırak)
-1. [vercel.com](https://vercel.com) veya [netlify.com](https://netlify.com) adresine ücretsiz üye olun.
-2. Bu proje klasörünü siteye sürükleyip bırakın.
-3. Anında size özel `https://lgs-takip-xxx.vercel.app` şeklinde kalıcı bir adres verilir.
+## 🖥️ Yerel/LAN'da Test Etme
 
----
+Canlıya almadan önce bilgisayarınızda denemek için:
 
-## ☁️ 3. YÖNTEM: Cihazlar Arası Otomatik Veri Eşitleme (Bulut Senkronizasyonu)
+1. **`baslat.bat`**'a çift tıklayın (artık sadece `python server.py` çalıştırır, tünel
+   AÇMAZ).
+2. Aynı bilgisayardan `http://localhost:8080` adresini açın.
+3. Aynı Wi-Fi'daki telefon/bilgisayardan test etmek için bilgisayarınızın yerel IP'sini
+   kullanın (Örn: `http://192.168.1.35:8080`) — `ipconfig` ile bulabilirsiniz.
 
-Farklı bilgisayarlarda veya telefonunuzda yaptığınız değişikliklerin otomatik olarak birbirine eşitlenmesi için:
+Bu mod tamamen izole — `edupusula.com`'u veya oradaki gerçek veriyi etkilemez.
 
-1. Uygulamanın sol menüsünden **Ayarlar & Bulut** sayfasına gidin.
-2. **Ortak Senkronizasyon Anahtarınızı** belirleyin (Örn: `okulum-lgs-2026`).
-3. **Google Firebase (Ücretsiz)** üzerinden aldığınız yapılandırmayı kaydedin.
-4. Artık bilgisayarda eklediğiniz bir deneme veya öğrenci, telefonunuzda da anında güncellenecektir!
+## ☁️ VM Yönetimi (Sorun Giderme)
 
----
+VM'ye bağlanmak: `gcloud compute ssh edupusula-sunucu --zone us-central1-a`
 
-## 📲 Cep Telefonunda Uygulama Olarak Kurulum:
-* **iOS (iPhone):** Safari'de sayfayı açın -> Alttaki **Paylaş** simgesine dokunun -> **"Ana Ekrana Ekle"** seçeneğini seçin.
-* **Android:** Chrome'da sayfayı açın -> Sağ üstteki 3 noktaya veya ekrandaki **"Uygulamayı Yükle"** butonuna dokunun -> **"Yükle"** deyin.
+Servis durumları:
+```
+sudo systemctl status edupusula      # Flask uygulaması
+sudo systemctl status cloudflared    # Cloudflare Tunnel bağlayıcısı
+sudo journalctl -u edupusula -f      # canlı loglar
+```
+
+İkisi de `enabled` + `Restart=on-failure` ile kurulu; VM yeniden başlarsa otomatik ayağa
+kalkarlar.
+
+## 📲 Cep Telefonunda Uygulama Olarak Kurulum (PWA)
+
+* **iOS (iPhone):** Safari'de `edupusula.com`'u açın -> Alttaki **Paylaş** simgesine
+  dokunun -> **"Ana Ekrana Ekle"** seçeneğini seçin.
+* **Android:** Chrome'da `edupusula.com`'u açın -> Sağ üstteki 3 noktaya veya ekrandaki
+  **"Uygulamayı Yükle"** butonuna dokunun -> **"Yükle"** deyin.
+
+Not: Uygulamanın bir Service Worker'ı (`sw.js`) var; sayfayı network'ten çekemediğinde
+son başarılı yüklemeyi önbellekten gösterir. Tünel/servis kısa süreliğine kesilirse
+kullanıcılar bunu fark etmeyebilir (eski bir görünüm yerine hata sayfası yerine).
