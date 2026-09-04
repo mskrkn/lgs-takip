@@ -100,7 +100,7 @@
       }
       // last one = active
       if (dots.length) dots[dots.length-1].state = riseStreak > 0 ? 'active' : 'empty';
-      dotsEl.innerHTML = dots.map(d => `<div class="ep-streak-dot ${d.state}" title="${d.label}">${d.label}</div>`).join('');
+      dotsEl.innerHTML = dots.map(d => `<div class="ep-streak-dot ${d.state}" title="${escapeHtml(d.label)}">${escapeHtml(d.label)}</div>`).join('');
     }
 
     // ----- KPI ŞERIDI -----
@@ -164,8 +164,8 @@
       card.classList.add('prio-' + t.priority);
       el.innerHTML = `
         <span class="ep-task-card-tag">${p.label}</span>
-        <div class="ep-task-title">${t.title}</div>
-        <p class="ep-task-detail">${t.detail}</p>
+        <div class="ep-task-title">${escapeHtml(t.title)}</div>
+        <p class="ep-task-detail">${escapeHtml(t.detail)}</p>
         <div class="ep-task-meta">
           ${t.questions ? `<span>📝 ${t.questions} Soru</span>` : ''}
           <span>⏱️ Tahmini ${t.questions ? '30' : '20'} dk</span>
@@ -203,13 +203,29 @@
           ${hedef >= 90 ? '🎉 Harika! Hedefe çok yakınsın, son adımları da at!' :
             hedef >= 60 ? '🚀 Güzel gidiyorsun, devam et!' :
             '💪 Hâlâ yolun var — birlikte çalışarak ulaşabiliriz!'}
-        </p>`;
+        </p>
+        <div class="ep-compass-footer">
+          <div class="ep-compass-readout">Sıradaki adım: <b class="up">Bugünkü Görevin</b> — az yukarıda seni bekliyor</div>
+          <button class="ep-compass-cta" onclick="askPusi('plan'); document.getElementById('pusi-answer').scrollIntoView({behavior:'smooth',block:'center'})">🤖 Plan İste</button>
+        </div>`;
     }
 
     // ----- PUSİ YORUMU -----
-    function renderPusi(errorMemory, netTrend) {
+    // errorMemory.aiComment varsa (optik/konu bazlı analiz) en özgül kaynak odur.
+    // Yoksa sırayla: aktif yükseliş serisi > pusuladaki öncelikli konu > genel net trendi.
+    function renderPusi(errorMemory, netTrend, compass, riseStreak) {
       const el = document.getElementById('pusi-message');
       if (errorMemory && errorMemory.aiComment) { el.textContent = errorMemory.aiComment; return; }
+
+      if (riseStreak >= 2) {
+        el.textContent = `Üst üste ${riseStreak} denemedir net'in yükseliyor — bu ciddi bir istikrar işareti! Bu tempoyu bozmadan devam edersen hedefine çok daha hızlı ulaşırsın. 🔥`;
+        return;
+      }
+      const topPriority = compass && compass.priority && compass.priority[0];
+      if (topPriority) {
+        el.innerHTML = `Şu an dikkatini en çok <b>${subjectName(topPriority.subjectKey)} - ${escapeHtml(topPriority.kazanim)}</b> konusuna vermelisin (başarı oranın %${topPriority.successRate}) — burayı toparlarsan genel skorun belirgin şekilde yükselir. 🎯`;
+        return;
+      }
       if (!netTrend || netTrend.length < 2) {
         el.textContent = 'Şu an sana özel bir yorum yapabilmem için yeterli deneme verin yok — ilk deneme sonuçların geldiğinde burada seni bekliyor olacağım. 🧭';
         return;
@@ -257,7 +273,7 @@
         const fromTopics = d.latestExamTopicStats && d.latestExamTopicStats[0];
         const t = fromCompass || fromTopics;
         html = t
-          ? `Şu an en çok <b>${subjectName(t.subjectKey)} - ${t.kazanim}</b> konusuna odaklanmalısın (başarı oranın %${t.successRate}).`
+          ? `Şu an en çok <b>${subjectName(t.subjectKey)} - ${escapeHtml(t.kazanim)}</b> konusuna odaklanmalısın (başarı oranın %${t.successRate}).`
           : (d.weakestSubject
             ? `Konu bazlı bir öneri için cevap anahtarlı deneme gerekiyor, ama genel olarak <b>${subjectName(d.weakestSubject)}</b> dersine biraz daha zaman ayırman iyi olur.`
             : 'Şu an acil bir öncelik görünmüyor — harika gidiyorsun, genel tekrar yapabilirsin! 🎉');
@@ -272,6 +288,24 @@
             : `Şu an bir düşüş dönemindesin ama her deneme yeni bir fırsat. Küçük, düzenli adımlarla toparlanabilirsin. 🧭`;
         } else {
           html = 'Yolculuğun daha yeni başlıyor! İlk deneme sonucun geldiğinde burada seni bekleyen bir başarı hikayesi olacak. 🌱';
+        }
+      } else if (type === 'rank') {
+        const cr = d.classRank;
+        if (!cr) {
+          html = 'Sınıf sıralamanı gösterebilmem için en az bir deneme sonucun ve sınıf arkadaşlarının sonuçları gerekiyor.';
+        } else {
+          const top = cr.rank === 1;
+          const topQuarter = cr.rank <= Math.ceil(cr.classSize * 0.25);
+          const posTxt = top
+            ? 'Sınıfının <b>zirvesindesin</b> 🏆'
+            : topQuarter
+              ? 'Sınıfının <b>ilk çeyreğindesin</b> — zirveye çok yakınsın'
+              : `Sınıfında <b>${cr.rank}. sıradasın</b> (${cr.classSize} kişi arasında)`;
+          const hedef = d.scoreBreakdown && d.scoreBreakdown.axes ? d.scoreBreakdown.axes.hedef : null;
+          const hedefTxt = (hedef != null && hedef < 100)
+            ? ` Sınıfının en yüksek netine göre şu an <b>%${hedef}</b> yakınlıktasın — üzerine gitmeye devam et.`
+            : '';
+          html = `${posTxt}.${hedefTxt}`;
         }
       }
 
@@ -421,7 +455,7 @@
       const strongHtml = strongList.length
         ? strongList.map((s,i) => `
             <li class="ep-strength-item">
-              <span>${medals[i]||'⭐'} ${s.kazanim}</span>
+              <span>${medals[i]||'⭐'} ${escapeHtml(s.kazanim)}</span>
               <b>%${s.successRate}</b>
             </li>`).join('')
         : `<li class="ep-strength-item" style="color:var(--text-muted)">${strongestSubject ? `En güçlü dersin: ${subjectName(strongestSubject)}` : 'Henüz yeterli veri yok'}</li>`;
@@ -429,7 +463,7 @@
       const workHtml = workList.length
         ? workList.map(s => `
             <li class="ep-strength-item">
-              <span>🎯 ${s.kazanim}</span>
+              <span>🎯 ${escapeHtml(s.kazanim)}</span>
               <b>%${s.successRate}</b>
             </li>`).join('')
         : `<li class="ep-strength-item" style="color:var(--text-muted)">Şu an acil bir öncelik yok — harika gidiyorsun!</li>`;
@@ -446,12 +480,24 @@
     }
 
     // ----- BAŞARI PUSULASI (4 KADRAN) -----
-    function renderCompass(compass) {
+    function compassDirectionReadout(netTrend) {
+      if (!netTrend || netTrend.length < 2) {
+        return { cls: 'flat', label: 'Henüz belirsiz →', sub: 'birkaç deneme sonucu birikince netleşecek' };
+      }
+      const win = netTrend.slice(-3);
+      const delta = Math.round((win[win.length-1].totalNet - win[0].totalNet)*100)/100;
+      if (delta > 0.5)  return { cls: 'up',   label: 'Yükseliş ↗', sub: `son ${win.length} denemede ${delta>0?'+':''}${delta} net` };
+      if (delta < -0.5) return { cls: 'down', label: 'Düşüş ↘',    sub: `son ${win.length} denemede ${delta} net` };
+      return { cls: 'flat', label: 'Stabil →', sub: `son ${win.length} denemede net dengede` };
+    }
+
+    function renderCompass(compass, netTrend) {
       const el = document.getElementById('compass');
       if (!compass) { el.innerHTML = '<p style="color:var(--text-muted)">Henüz yeterli veri yok.</p>'; return; }
       const list = (items, emptyText, mapFn) => items.length
         ? `<ul class="ep-q-list">${items.map(mapFn).join('')}</ul>`
         : `<p style="font-size:12px;color:var(--text-muted);margin-top:auto">${emptyText}</p>`;
+      const dir = compassDirectionReadout(netTrend);
       el.innerHTML = `
         <div class="ep-compass-grid" style="position:relative">
           <div class="ep-quadrant" style="--q-clr:#3b82f6;border-top-left-radius:18px">
@@ -462,17 +508,17 @@
           <div class="ep-quadrant" style="--q-clr:#10b981;border-top-right-radius:18px">
             <span class="ep-q-dir">Güçlü Yönlerin</span>
             <h4 class="ep-q-head">🏆 En İyi Konular</h4>
-            ${list(compass.strong,'Optik okuma sonucu gelince görünür', s=>`<li>${s.kazanim}<b>%${s.successRate}</b></li>`)}
+            ${list(compass.strong,'Optik okuma sonucu gelince görünür', s=>`<li>${escapeHtml(s.kazanim)}<b>%${s.successRate}</b></li>`)}
           </div>
           <div class="ep-quadrant" style="--q-clr:#ef4444;border-bottom-left-radius:18px">
             <span class="ep-q-dir">Öncelikli Çalışma</span>
             <h4 class="ep-q-head">🎯 Odaklanılacaklar</h4>
-            ${list(compass.priority,'Acil öncelik yok', p=>`<li>${p.kazanim}<b>%${p.successRate}</b></li>`)}
+            ${list(compass.priority,'Acil öncelik yok', p=>`<li>${escapeHtml(p.kazanim)}<b>%${p.successRate}</b></li>`)}
           </div>
           <div class="ep-quadrant" style="--q-clr:#f59e0b;border-bottom-right-radius:18px;background:color-mix(in srgb,#f59e0b 12%,rgba(255,255,255,0.025))">
             <span class="ep-q-dir">Dikkat Gerektiren</span>
             <h4 class="ep-q-head">👀 Gözden Geçir</h4>
-            ${list(compass.attention,'Dikkat gereken konu yok', a=>`<li>${a.kazanim}<b>%${a.successRate}</b></li>`)}
+            ${list(compass.attention,'Dikkat gereken konu yok', a=>`<li>${escapeHtml(a.kazanim)}<b>%${a.successRate}</b></li>`)}
           </div>
           <div class="ep-compass-center" aria-hidden="true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -480,6 +526,10 @@
               <path d="M12 4 L14 12 L12 20 L10 12 Z" fill="#14B8A6"/>
             </svg>
           </div>
+        </div>
+        <div class="ep-compass-footer">
+          <div class="ep-compass-readout">Genel yön: <b class="${dir.cls}">${dir.label}</b> — ${dir.sub}</div>
+          <button class="ep-compass-cta" onclick="askPusi('focus'); document.getElementById('pusi-answer').scrollIntoView({behavior:'smooth',block:'center'})">🤖 Pusi'ye Sor</button>
         </div>`;
     }
 
@@ -575,7 +625,7 @@
       el.innerHTML = `
         <div style="overflow-x:auto"><table class="ep-exams-table">
           <tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>
-          ${netTrend.map(t => `<tr><td>${t.examName}</td><td>${t.examDate||'—'}</td><td class="ep-net-badge">${t.totalNet}</td></tr>`).join('')}
+          ${netTrend.map(t => `<tr><td>${escapeHtml(t.examName)}</td><td>${escapeHtml(t.examDate)||'—'}</td><td class="ep-net-badge">${t.totalNet}</td></tr>`).join('')}
         </table></div>`;
     }
 
@@ -654,7 +704,7 @@
           <div class="ep-plan-day-icon">${p.icon}</div>
           <div>
             <div class="ep-plan-day-name">${p.day}</div>
-            <div class="ep-plan-day-text">${p.text}</div>
+            <div class="ep-plan-day-text">${escapeHtml(p.text)}</div>
           </div>
         </div>`).join('');
     }
@@ -746,10 +796,10 @@
       renderScoreRadar(data.scoreBreakdown);
       renderSubjectEnergy(last, prev);
       renderSubjectRadar(last, data.classSubjectAverages);
-      renderCompass(data.compass);
+      renderCompass(data.compass, data.netTrend);
       renderStrengthSummary(data.compass, data.strongestSubject);
       renderAchievements(data.badges);
-      renderPusi(data.errorMemory, data.netTrend);
+      renderPusi(data.errorMemory, data.netTrend, data.compass, riseStreak);
       renderErrorMemory(data.errorMemory);
       renderStudyPlanCard(data.latestExamTopicStats);
 
@@ -762,7 +812,7 @@
         document.getElementById('exam-results').innerHTML = `
           <div style="overflow-x:auto"><table class="ep-exams-table">
             <tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>
-            ${data.results.map(r => `<tr><td>${r.examName}</td><td>${r.examDate||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
+            ${data.results.map(r => `<tr><td>${escapeHtml(r.examName)}</td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
           </table></div>`;
       }
 
@@ -776,7 +826,7 @@
           const clr = colorMap[cls];
           return `
             <div class="ep-topic-item">
-              <span class="ep-topic-name">${t.kazanim}</span>
+              <span class="ep-topic-name">${escapeHtml(t.kazanim)}</span>
               <div class="ep-topic-bar-wrap"><div class="ep-topic-bar" style="width:${t.successRate}%;background:${clr}"></div></div>
               <span class="ep-topic-pct" style="color:${clr}">${t.successRate}%</span>
               <span style="font-size:12px;color:var(--text-muted)">${t.correct}D/${t.wrong}Y/${t.blank}B</span>
@@ -787,7 +837,7 @@
       // ----- SINIF ORTALAMALARI -----
       document.getElementById('class-averages').innerHTML = data.classAverages.map(c => `
         <div class="ep-class-row">
-          <span class="ep-class-name">${c.className} ${c.className===s.className?'<span class="ep-class-mine">Benim Sınıfım</span>':''}</span>
+          <span class="ep-class-name">${escapeHtml(c.className)} ${c.className===s.className?'<span class="ep-class-mine">Benim Sınıfım</span>':''}</span>
           <span style="font-size:12.5px;color:var(--text-muted)">${c.studentCount} öğrenci</span>
           <span class="ep-class-avg">${c.avgNet}</span>
         </div>`).join('');
