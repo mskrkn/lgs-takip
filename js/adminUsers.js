@@ -42,7 +42,15 @@ const AdminUsers = {
     const classNames = [...new Set(students.map(s => s.class_name).filter(Boolean))].sort();
     this._classGroups = this._groupClassesByGrade(classNames);
 
+    // Gercek admin mi, yoksa hesap ekleme/listeleme yetkisi devredilmis bir
+    // ogretmen mi (bkz. /api/admin/users/<id>/delegate)? Senkron (/api/admin/sync)
+    // ve hesap silme/pasiflestirme/sifre sifirlama SADECE gercek admin'e acik -
+    // delege bu butonlari hic gormez (arka planda zaten 403 doner ama once
+    // arayuzde gostermemek daha temiz).
+    const isRealAdmin = App.currentUser?.role === 'admin';
+
     container.innerHTML = `
+      ${isRealAdmin ? `
       <div class="card" style="border:1px solid rgba(20,184,166,0.3)">
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">☁️</span> Sunucuya Veri Gönder</h3>
@@ -53,7 +61,7 @@ const AdminUsers = {
         </p>
         <button class="btn btn-primary" onclick="AdminUsers.syncToServer()">📤 Şimdi Gönder</button>
         <div id="sync-server-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
-      </div>
+      </div>` : ''}
 
       <div class="card mt-2">
         <div class="card-header">
@@ -128,7 +136,7 @@ const AdminUsers = {
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
-        <div id="users-list">${this._renderUsersTable(users)}</div>
+        <div id="users-list">${this._renderUsersTable(users, isRealAdmin)}</div>
       </div>
 
       <div class="card mt-2">
@@ -156,7 +164,7 @@ const AdminUsers = {
     return { teacher: '👨‍🏫 Öğretmen', parent: '👪 Veli', student: '🎓 Öğrenci' }[role] || role;
   },
 
-  _renderUsersTable(users) {
+  _renderUsersTable(users, isRealAdmin) {
     if (!users.length) return '<p class="text-muted">Henüz öğretmen/veli/öğrenci hesabı oluşturulmadı.</p>';
     let html = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
       <tr style="text-align:left;color:var(--text-muted);font-size:13px">
@@ -165,17 +173,24 @@ const AdminUsers = {
       </tr>`;
     users.forEach(u => {
       const scope = u.role === 'teacher' ? (u.className || '-') : (u.studentName || '-');
+      // Silme/pasiflestirme/sifre sifirlama SADECE gercek admin'e gorunur -
+      // yetki devredilmis bir ogretmen bu butonlari hic gormez (arka planda
+      // zaten 403 doner, ama arayuzde hic gostermemek daha net).
+      const adminOnlyActions = isRealAdmin ? `
+          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.resetPassword(${u.id})">🔑 Şifre Sıfırla</button>
+          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.toggleActive(${u.id})">${u.active ? '⏸️ Pasifleştir' : '▶️ Aktifleştir'}</button>
+          <button class="btn btn-danger btn-sm" onclick="AdminUsers.deleteUser(${u.id})">🗑️</button>` : '';
+      const delegateBtn = (isRealAdmin && u.role === 'teacher')
+        ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setDelegate(${u.id}, ${!u.isDelegate})">
+            ${u.isDelegate ? '⬇️ Yönetici Yardımcılığını Kaldır' : '⬆️ Yönetici Yardımcısı Yap'}
+          </button>` : '';
       html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
-        <td style="padding:8px">${this._roleLabel(u.role)}</td>
+        <td style="padding:8px">${this._roleLabel(u.role)}${u.isDelegate ? ' <span style="color:#2DD4BF;font-size:11px">(Yönetici Yrd.)</span>' : ''}</td>
         <td style="padding:8px">${u.displayName || '-'}</td>
         <td style="padding:8px">${u.username}</td>
         <td style="padding:8px">${scope}</td>
         <td style="padding:8px">${u.active ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
-        <td style="padding:8px;text-align:right;white-space:nowrap">
-          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.resetPassword(${u.id})">🔑 Şifre Sıfırla</button>
-          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.toggleActive(${u.id})">${u.active ? '⏸️ Pasifleştir' : '▶️ Aktifleştir'}</button>
-          <button class="btn btn-danger btn-sm" onclick="AdminUsers.deleteUser(${u.id})">🗑️</button>
-        </td>
+        <td style="padding:8px;text-align:right;white-space:nowrap">${delegateBtn}${adminOnlyActions}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -353,6 +368,19 @@ const AdminUsers = {
     const result = await res.json();
     if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast(result.active ? 'Hesap aktifleştirildi.' : 'Hesap pasifleştirildi.', 'info');
+    this.render();
+  },
+
+  async setDelegate(id, grant) {
+    if (grant && !confirm('Bu öğretmen artık kendi okulunuz için öğretmen/öğrenci hesabı ekleyebilecek ve mevcut hesapları listeleyebilecek (silme/pasifleştirme yetkisi olmayacak). Onaylıyor musunuz?')) return;
+    const res = await fetch(`/api/admin/users/${id}/delegate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant }),
+    });
+    const result = await res.json();
+    if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
+    UI.toast(grant ? 'Yönetici yardımcısı yapıldı.' : 'Yönetici yardımcılığı kaldırıldı.', 'success');
     this.render();
   },
 
