@@ -58,6 +58,25 @@ const App = {
 
     this.setupNavigation();
     this.setupSidebar();
+
+    // Süper admin sadece "Okullar" sayfasını yönetir - hiçbir okulun kendi
+    // verisine (Öğrenciler/Denemeler/Kullanıcılar/...) erişimi yok, bu
+    // yüzden diğer tüm nav öğeleri gizlenip doğrudan Okullar açılır.
+    if (this.currentUser?.role === 'super_admin') {
+      document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+        item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+      });
+      const schoolsNav = document.getElementById('nav-schools');
+      if (schoolsNav) schoolsNav.style.display = '';
+      await this.navigateTo('schools');
+      return;
+    }
+
+    // "Demo Talepleri" artık platform geneli (potansiyel okul adayları) bir
+    // liste - okul adminlerinin işi değil, sadece süper admine görünür.
+    const demoNav = document.getElementById('nav-demo-talepleri');
+    if (demoNav) demoNav.style.display = 'none';
+
     await this.navigateTo('dashboard');
   },
 
@@ -134,6 +153,7 @@ const App = {
       settings: ['Ayarlar', 'Veri Yönetimi'],
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
       'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
+      schools: ['Okullar', 'Okul Yönetimi'],
     };
 
     const [title, subtitle] = titles[page] || [page, ''];
@@ -179,6 +199,9 @@ const App = {
         break;
       case 'demo-talepleri':
         await DemoRequests.render();
+        break;
+      case 'schools':
+        await Schools.render();
         break;
     }
 

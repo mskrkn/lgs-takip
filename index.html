@@ -95,11 +95,15 @@
         </div>
 
         <div class="nav-section-title">Yönetim</div>
+        <div class="nav-item" data-page="schools" id="nav-schools" style="display:none">
+          <span class="nav-icon">🏫</span>
+          <span>Okullar</span>
+        </div>
         <div class="nav-item" data-page="users">
           <span class="nav-icon">🔐</span>
           <span>Kullanıcılar (Öğretmen/Veli)</span>
         </div>
-        <div class="nav-item" data-page="demo-talepleri">
+        <div class="nav-item" data-page="demo-talepleri" id="nav-demo-talepleri">
           <span class="nav-icon">🧭</span>
           <span>Demo Talepleri</span>
         </div>
@@ -188,6 +192,9 @@
         <!-- Soru Girişi (PDF Yükle & Havuza Ekle) -->
         <section class="page-section" id="page-question-bank"></section>
 
+        <!-- Okullar (sadece süper admin) -->
+        <section class="page-section" id="page-schools"></section>
+
         <!-- Reports -->
         <section class="page-section" id="page-reports"></section>
 
@@ -242,6 +249,7 @@
   <script src="js/import.js"></script>
   <script src="js/export.js"></script>
   <script src="js/adminUsers.js"></script>
+  <script src="js/schools.js"></script>
   <script src="js/demoRequests.js"></script>
   <script src="js/app.js"></script>
 
