@@ -150,6 +150,30 @@ const AdminUsers = {
 
       <div class="card mt-2">
         <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">🔗</span> Öğretmen Davet Linki</h3>
+        </div>
+        <p class="text-muted mb-2">
+          Bu linki öğretmenlerinizle paylaşın — kendi kullanıcı adı/şifresini seçip
+          okulunuza öğretmen olarak kaydolabilirler.
+        </p>
+        <div id="teacher-invite-box" class="text-muted">Yükleniyor...</div>
+        ${isRealAdmin ? '<button class="btn btn-secondary mt-2" onclick="AdminUsers.regenerateTeacherInvite()">🔄 Linki Yeniden Oluştur (eskisi geçersiz olur)</button>' : ''}
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">👨‍👩‍👧</span> Öğrenci Davet Linkleri (Veli/Öğrenci)</h3>
+        </div>
+        <p class="text-muted mb-2">
+          Her öğrenci için ayrı bir davet linki alıp aileye gönderebilirsiniz — okul
+          numarası gibi tahmin edilebilir bir bilgi yerine, sadece o bağlantıyı
+          bilenler o öğrenci için kayıt olabilir.
+        </p>
+        <div id="student-invite-list">${this._renderStudentInviteList(students)}</div>
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
         <div id="users-list">${this._renderUsersTable(users, isRealAdmin)}</div>
@@ -174,6 +198,7 @@ const AdminUsers = {
     `;
 
     this.onRoleChange();
+    this._loadTeacherInvite();
   },
 
   _roleLabel(role) {
@@ -211,6 +236,66 @@ const AdminUsers = {
     });
     html += '</table></div>';
     return html;
+  },
+
+  _renderStudentInviteList(students) {
+    if (!students.length) return '<p class="text-muted">Henüz öğrenci kaydı yok.</p>';
+    let html = `<div class="table-wrapper" style="max-height:320px;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse">
+      <tr style="text-align:left;color:var(--text-muted);font-size:13px">
+        <th style="padding:6px">Öğrenci</th><th style="padding:6px">Sınıf</th><th style="padding:6px"></th>
+      </tr>`;
+    students.forEach(s => {
+      html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
+        <td style="padding:6px">${s.first_name} ${s.last_name}</td>
+        <td style="padding:6px">${s.class_name || '-'}</td>
+        <td style="padding:6px;text-align:right">
+          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.getStudentInvite(${s.id})">🔗 Davet Linki Al</button>
+        </td>
+      </tr>`;
+    });
+    html += '</table></div>';
+    return html;
+  },
+
+  async _loadTeacherInvite() {
+    const box = document.getElementById('teacher-invite-box');
+    if (!box) return;
+    try {
+      const res = await fetch('/api/admin/teacher-invite');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Davet linki alınamadı.');
+      box.innerHTML = `<code style="word-break:break-all;background:rgba(255,255,255,0.05);padding:6px 8px;border-radius:8px;display:inline-block">${data.url}</code>
+        <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="AdminUsers._copyText('${data.url}')">📋 Kopyala</button>`;
+    } catch (err) {
+      box.textContent = '❌ ' + err.message;
+    }
+  },
+
+  async regenerateTeacherInvite() {
+    if (!confirm('Yeni bir link oluşturulacak, eski link artık çalışmayacak. Emin misiniz?')) return;
+    const res = await fetch('/api/admin/teacher-invite/regenerate', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { UI.toast(data.error || 'İşlem başarısız.', 'danger'); return; }
+    UI.toast('Yeni davet linki oluşturuldu.', 'success');
+    this._loadTeacherInvite();
+  },
+
+  async getStudentInvite(studentId) {
+    const res = await fetch(`/api/admin/students/${studentId}/invite`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { UI.toast(data.error || 'Davet linki alınamadı.', 'danger'); return; }
+    this._copyText(data.url);
+    prompt('Bu linki kopyaladık (panoya da kopyalandı) - ailesine iletebilirsiniz:', data.url);
+  },
+
+  _copyText(text) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        () => UI.toast('Panoya kopyalandı.', 'success'),
+        () => {}
+      );
+    }
   },
 
   onRoleChange() {

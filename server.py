@@ -584,6 +584,39 @@ def _create_v2_tables(conn):
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         if "organization_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id INTEGER REFERENCES organizations(id)")
+    org_cols = [r[1] for r in conn.execute("PRAGMA table_info(organizations)").fetchall()]
+    if "teacher_invite_code" not in org_cols:
+        # SQLite "ALTER TABLE ... ADD COLUMN" bir UNIQUE kisitiyla dogrudan
+        # calismiyor ("Cannot add a UNIQUE column") - once duz sutunu ekleyip
+        # ayri bir UNIQUE INDEX ile benzersizligi sagliyoruz (NULL degerler
+        # bu index'te birbirinden farkli sayilir, yani kod atanmamis okullar
+        # cakismaz).
+        conn.execute("ALTER TABLE organizations ADD COLUMN teacher_invite_code TEXT")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_org_teacher_invite_code "
+            "ON organizations(teacher_invite_code)"
+        )
+    conn.commit()
+
+
+def _create_invite_tables(conn):
+    """Veli/ogrenci kendi kendine kayit icin ogrenciye ozel davet token'lari.
+    Ogretmen daveti (okul geneli tek kod) organizations.teacher_invite_code'da
+    tutulur (yukarida _create_v2_tables) - ogretmen belirli bir students
+    satirina bagli olmadigi icin ayri bir tabloya gerek yok."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS student_invite_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            token TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            revoked_at TEXT
+        );
+        """
+    )
     conn.commit()
 
 
@@ -987,6 +1020,7 @@ def run_v2_migration(conn):
     conn.row_factory = sqlite3.Row
     _create_v2_tables(conn)
     _create_question_bank_tables(conn)
+    _create_invite_tables(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -1185,6 +1219,29 @@ def build_topic_stats(question_stats):
         out.append(t)
     out.sort(key=lambda x: x["successRate"])
     return out
+
+
+# ============================================================
+# Basit kotuye kullanim korumasi (public /api/register/* icin)
+# ============================================================
+# Kod tabaninda hic emsali yok (login/demo-talebi de dahil hicbir ucta hiz
+# sinirlama yoktur) - bellek-ici, surec omru boyunca yeterli, kucuk olcekli
+# bir uygulama icin bagimsizliksiz minimum bir katman. Token/kodlarin
+# kendisi zaten (secrets.token_urlsafe) kaba kuvvetle tahmin edilemez.
+_REGISTER_ATTEMPTS = {}
+_REGISTER_WINDOW_SECONDS = 60
+_REGISTER_MAX_ATTEMPTS = 10
+
+
+def _register_rate_limited(ip):
+    now = datetime.now().timestamp()
+    attempts = [t for t in _REGISTER_ATTEMPTS.get(ip, []) if now - t < _REGISTER_WINDOW_SECONDS]
+    _REGISTER_ATTEMPTS[ip] = attempts
+    return len(attempts) >= _REGISTER_MAX_ATTEMPTS
+
+
+def _register_record_attempt(ip):
+    _REGISTER_ATTEMPTS.setdefault(ip, []).append(datetime.now().timestamp())
 
 
 # ============================================================
@@ -1542,6 +1599,233 @@ def api_superadmin_create_organization():
         "organization": {"id": org_id, "name": name, "slug": slug},
         "admin": {"id": admin_cur.lastrowid, "username": admin_username},
     })
+
+
+# ============================================================
+# API: Okul kodu / davet linkiyle kendi kendine kayıt
+# ============================================================
+# Iki ayri mekanizma: ogretmen okul-geneli TEK koda (organizations.
+# teacher_invite_code) baglanir - belirli bir ogrenci kaydina bagli
+# olmadigi icin. Veli/ogrenci ise MUTLAKA var olan bir students satirina
+# baglanmali - school_number guvenilir bir kanit alani olmadigi icin
+# (UNIQUE/NOT NULL degil), bunun yerine ogrenciye ozel, tahmin edilemez
+# bir token (student_invite_tokens) kullanilir.
+
+@app.route("/api/admin/teacher-invite", methods=["GET"])
+@login_required(role=("admin", "teacher"), permission="users.manage")
+def api_admin_get_teacher_invite():
+    db = get_db()
+    org_id = _current_org_id(db)
+    org = db.execute("SELECT teacher_invite_code FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    code = org["teacher_invite_code"] if org else None
+    if not code:
+        code = secrets.token_urlsafe(9)
+        db.execute("UPDATE organizations SET teacher_invite_code = ? WHERE id = ?", (code, org_id))
+        db.commit()
+    url = f"{request.host_url.rstrip('/')}/kayit-ogretmen.html?kod={code}"
+    return jsonify({"code": code, "url": url})
+
+
+@app.route("/api/admin/teacher-invite/regenerate", methods=["POST"])
+@login_required(role="admin")
+def api_admin_regenerate_teacher_invite():
+    db = get_db()
+    org_id = _current_org_id(db)
+    code = secrets.token_urlsafe(9)
+    db.execute("UPDATE organizations SET teacher_invite_code = ? WHERE id = ?", (code, org_id))
+    db.commit()
+    log_audit(db, "TEACHER_INVITE_REGENERATED", resource_type="organization", resource_id=org_id)
+    url = f"{request.host_url.rstrip('/')}/kayit-ogretmen.html?kod={code}"
+    return jsonify({"code": code, "url": url})
+
+
+@app.route("/api/register/teacher/<code>")
+def api_register_teacher_lookup(code):
+    if _register_rate_limited(request.remote_addr):
+        return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
+    db = get_db()
+    org = db.execute(
+        "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+    ).fetchone()
+    if not org:
+        _register_record_attempt(request.remote_addr)
+        return jsonify({"error": "Geçersiz veya süresi dolmuş davet kodu."}), 404
+    class_names = [r["class_name"] for r in db.execute(
+        "SELECT DISTINCT class_name FROM students WHERE organization_id = ? "
+        "AND class_name IS NOT NULL AND class_name != '' ORDER BY class_name",
+        (org["id"],),
+    ).fetchall()]
+    return jsonify({"organizationName": org["name"], "classNames": class_names})
+
+
+@app.route("/api/register/teacher", methods=["POST"])
+def api_register_teacher():
+    if _register_rate_limited(request.remote_addr):
+        return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    display_name = (data.get("displayName") or "").strip() or username
+    class_name = (data.get("className") or "").strip()
+
+    db = get_db()
+    org = db.execute(
+        "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+    ).fetchone()
+    if not org:
+        _register_record_attempt(request.remote_addr)
+        return jsonify({"error": "Geçersiz veya süresi dolmuş davet kodu."}), 404
+    if not username or not password or not class_name:
+        return jsonify({"error": "Kullanıcı adı, şifre ve sınıf gerekli."}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
+    if db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
+        return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
+
+    cur = db.execute(
+        "INSERT INTO users (username, password_hash, role, display_name, class_name, "
+        "organization_id, created_at) VALUES (?,?,?,?,?,?,?)",
+        (username, hash_password(password), "teacher", display_name, class_name,
+         org["id"], datetime.now().isoformat()),
+    )
+    db.commit()
+    run_v2_migration(db)
+    log_audit(db, "TEACHER_SELF_REGISTERED", resource_type="user", resource_id=cur.lastrowid)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/students/<int:student_id>/invite", methods=["POST"])
+@login_required(role=("admin", "teacher"), permission="users.manage")
+def api_admin_get_student_invite(student_id):
+    db = get_db()
+    org_id = _current_org_id(db)
+    student = db.execute(
+        "SELECT id FROM students WHERE id = ? AND organization_id = ?", (student_id, org_id)
+    ).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    existing = db.execute(
+        "SELECT token FROM student_invite_tokens WHERE student_id = ? AND organization_id = ? "
+        "AND revoked_at IS NULL ORDER BY id DESC LIMIT 1",
+        (student_id, org_id),
+    ).fetchone()
+    if existing:
+        token = existing["token"]
+    else:
+        token = secrets.token_urlsafe(16)
+        db.execute(
+            "INSERT INTO student_invite_tokens (student_id, organization_id, token, created_at, created_by) "
+            "VALUES (?,?,?,?,?)",
+            (student_id, org_id, token, datetime.now().isoformat(), session.get("user_id")),
+        )
+        db.commit()
+    url = f"{request.host_url.rstrip('/')}/kayit-ogrenci.html?token={token}"
+    return jsonify({"token": token, "url": url})
+
+
+@app.route("/api/admin/students/<int:student_id>/invite/revoke", methods=["POST"])
+@login_required(role="admin")
+def api_admin_revoke_student_invite(student_id):
+    db = get_db()
+    org_id = _current_org_id(db)
+    db.execute(
+        "UPDATE student_invite_tokens SET revoked_at = ? "
+        "WHERE student_id = ? AND organization_id = ? AND revoked_at IS NULL",
+        (datetime.now().isoformat(), student_id, org_id),
+    )
+    db.commit()
+    log_audit(db, "STUDENT_INVITE_REVOKED", resource_type="student", resource_id=student_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/register/student/<token>")
+def api_register_student_lookup(token):
+    if _register_rate_limited(request.remote_addr):
+        return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
+    db = get_db()
+    row = db.execute(
+        "SELECT sit.student_id, o.name AS org_name, s.first_name, s.last_name "
+        "FROM student_invite_tokens sit "
+        "JOIN organizations o ON o.id = sit.organization_id "
+        "JOIN students s ON s.id = sit.student_id "
+        "WHERE sit.token = ? AND sit.revoked_at IS NULL",
+        (token,),
+    ).fetchone()
+    if not row:
+        _register_record_attempt(request.remote_addr)
+        return jsonify({"error": "Geçersiz veya iptal edilmiş davet linki."}), 404
+    last_initial = (row["last_name"] or "").strip()[:1]
+    masked_name = f"{row['first_name']} {last_initial}." if last_initial else row["first_name"]
+    has_student_account = bool(db.execute(
+        "SELECT 1 FROM users WHERE role = 'student' AND student_id = ?", (row["student_id"],)
+    ).fetchone())
+    return jsonify({
+        "organizationName": row["org_name"],
+        "studentName": masked_name,
+        "studentAccountTaken": has_student_account,
+    })
+
+
+@app.route("/api/register/student", methods=["POST"])
+def api_register_student():
+    if _register_rate_limited(request.remote_addr):
+        return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
+    data = request.get_json(silent=True) or {}
+    token = (data.get("token") or "").strip()
+    role = data.get("role")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    display_name = (data.get("displayName") or "").strip() or username
+
+    if role not in ("parent", "student"):
+        return jsonify({"error": "Geçersiz rol."}), 400
+    db = get_db()
+    row = db.execute(
+        "SELECT sit.student_id, sit.organization_id FROM student_invite_tokens sit "
+        "WHERE sit.token = ? AND sit.revoked_at IS NULL",
+        (token,),
+    ).fetchone()
+    if not row:
+        _register_record_attempt(request.remote_addr)
+        return jsonify({"error": "Geçersiz veya iptal edilmiş davet linki."}), 404
+    if not username or not password:
+        return jsonify({"error": "Kullanıcı adı ve şifre gerekli."}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
+    if db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
+        return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
+
+    student_id, org_id = row["student_id"], row["organization_id"]
+    if role == "student":
+        existing_student_acc = db.execute(
+            "SELECT 1 FROM users WHERE role = 'student' AND student_id = ?", (student_id,)
+        ).fetchone()
+        if existing_student_acc:
+            return jsonify({"error": "Bu öğrenci için zaten bir hesap var."}), 400
+        cur = db.execute(
+            "INSERT INTO users (username, password_hash, role, student_id, display_name, "
+            "organization_id, created_at) VALUES (?,?,?,?,?,?,?)",
+            (username, hash_password(password), "student", student_id, display_name,
+             org_id, datetime.now().isoformat()),
+        )
+    else:
+        cur = db.execute(
+            "INSERT INTO users (username, password_hash, role, display_name, "
+            "organization_id, created_at) VALUES (?,?,?,?,?,?)",
+            (username, hash_password(password), "parent", display_name,
+             org_id, datetime.now().isoformat()),
+        )
+        db.execute(
+            "INSERT OR IGNORE INTO parent_students (parent_user_id, student_id) VALUES (?,?)",
+            (cur.lastrowid, student_id),
+        )
+    db.commit()
+    run_v2_migration(db)
+    log_audit(db, "STUDENT_SELF_REGISTERED" if role == "student" else "PARENT_SELF_REGISTERED",
+              resource_type="user", resource_id=cur.lastrowid)
+    return jsonify({"ok": True})
 
 
 # ============================================================
