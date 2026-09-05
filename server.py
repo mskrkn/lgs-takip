@@ -20,6 +20,7 @@ değiştirebilir ve öğretmen / veli hesapları oluşturabilirsiniz.
 """
 
 import os
+import re
 import sys
 import io
 import csv
@@ -76,9 +77,50 @@ DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))
+
+# development / staging / production - her checkout kendi ortamini
+# EDUPUSULA_ENV ortam degiskeniyle bildirir (systemd servis dosyasinda
+# Environment= ile ayarlanir). production disindaki ortamlarda karisikligi
+# onlemek icin sayfalarin basina goze carpan bir seritli banner enjekte
+# edilir - kodda dallanma yok, sadece gorsel isaret.
+APP_ENV = os.environ.get("EDUPUSULA_ENV", "production")
 
 app = Flask(__name__, static_folder=None)
+
+
+@app.after_request
+def _inject_env_banner(resp):
+    if APP_ENV == "production":
+        return resp
+    if resp.content_type and resp.content_type.startswith("text/html"):
+        banner = (
+            f'<div style="position:fixed;top:0;left:0;right:0;z-index:999999;'
+            f'background:#f59e0b;color:#1a1a1a;font:700 13px system-ui;'
+            f'text-align:center;padding:4px 0;letter-spacing:.05em">'
+            f'⚠️ {APP_ENV.upper()} ORTAMI — gercek veri degil</div>'
+        )
+        resp.direct_passthrough = False
+        body = resp.get_data(as_text=True)
+        if "<body" in body:
+            resp.set_data(_insert_after_body_open(body, banner))
+    return resp
+
+
+def _insert_after_body_open(html, banner):
+    idx = html.find("<body")
+    if idx == -1:
+        return html
+    close_idx = html.find(">", idx)
+    if close_idx == -1:
+        return html
+    insert_at = close_idx + 1
+    return html[:insert_at] + banner + html[insert_at:]
+
+
+@app.route("/api/meta")
+def api_meta():
+    return jsonify({"env": APP_ENV})
 
 
 # ============================================================
@@ -183,6 +225,55 @@ def _migrate_users_table(conn):
         )
     conn.commit()
 
+    # 'super_admin' rolu icin CHECK genisletmesi - coklu okul (organizations)
+    # ozelliginin bir parcasi. organization_id sutunu bu noktada zaten var
+    # olabilir (bu fonksiyon var olan bir kurulumda IKINCI kez, v2 migration
+    # organization_id'yi ekledikten SONRAKI bir surumde calisirsa) - hardcoded
+    # sutun listesi kullanirsak organization_id'yi SESSIZCE kaybederiz, bu
+    # yuzden PRAGMA table_info ile var olup olmadigini kontrol edip koruyoruz.
+    #
+    # ONEMLI: "ALTER TABLE users RENAME TO users_old" KULLANMIYORUZ - bu
+    # noktada user_roles/teacher_profiles/parent_profiles gibi v2 tablolari
+    # zaten "REFERENCES users(id)" ile var olabilir, ve SQLite bir tabloyu
+    # yeniden adlandirinca ona referans veren BASKA tablolarin FK metnini
+    # otomatik olarak yeni isme (users_old) gunceller; DROP TABLE users_old
+    # sonrasi bu tablolar kalici olarak kirik bir referansta ("no such
+    # table: users_old") kalir - _fix_parent_students_fk'nin duzelttigi
+    # sorunun ta kendisi, farkli bir tabloda. Bunun yerine "users" adini
+    # HIC yeniden adlandirmadan (yeni tabloyu gecici bir adla olusturup,
+    # eskisini SILIP, sonra gecici olani "users"a yeniden adlandirarak)
+    # bu tuzaktan tamamen kaciniyoruz.
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+    ).fetchone()
+    if row and "'super_admin'" not in row[0]:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        has_org = "organization_id" in cols
+        org_col_def = ",\n                organization_id INTEGER REFERENCES organizations(id)" if has_org else ""
+        org_col_name = ", organization_id" if has_org else ""
+        conn.executescript(
+            f"""
+            CREATE TABLE users_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('super_admin','admin','teacher','parent','student')),
+                display_name TEXT,
+                class_name TEXT,
+                student_id INTEGER,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT{org_col_def}
+            );
+            INSERT INTO users_new (id, username, password_hash, role, display_name,
+                                    class_name, student_id, active, created_at{org_col_name})
+                SELECT id, username, password_hash, role, display_name,
+                       class_name, student_id, active, created_at{org_col_name} FROM users;
+            DROP TABLE users;
+            ALTER TABLE users_new RENAME TO users;
+            """
+        )
+        conn.commit()
+
 
 def _fix_parent_students_fk(conn):
     """Yukarıdaki users yeniden-adlandırma adımı geçmişte parent_students
@@ -272,6 +363,7 @@ ROLE_PERMISSIONS_SEED = {
 }
 
 LEGACY_ROLE_TO_NEW_ROLE = {
+    "super_admin": "SUPER_ADMIN",
     "admin": "INSTITUTION_ADMIN", "teacher": "TEACHER", "parent": "PARENT", "student": "STUDENT",
 }
 
@@ -481,7 +573,7 @@ def _create_v2_tables(conn):
         );
         """
     )
-    for table in ("users", "students"):
+    for table in ("users", "students", "exams", "results"):
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         if "organization_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id INTEGER REFERENCES organizations(id)")
@@ -613,14 +705,52 @@ def _current_org_id(db):
         or _get_default_org_id(db)
 
 
+# ============================================================
+# Coklu okul: client (tarayici IndexedDB) tarafinda uretilen
+# students/exams/results id'lerinin okullar arasi CAKISMAMASI
+# ============================================================
+# students.id/exams.id/results.id sunucuda degil, adminin tarayicisindaki
+# Dexie/IndexedDB otomatik-artan sayaclarindan gelir (bkz. api_admin_sync).
+# Her okulun kendi tarayicisi 1'den baslar - ikinci bir okul senkron olunca
+# "ogrenci #1"i ilk okulun "ogrenci #1"iyle ayni PRIMARY KEY'e carpar.
+#
+# Bunu, PRIMARY KEY'i bilesik (organization_id, id) yapip her foreign key'i
+# (ozellikle parent_students.student_id REFERENCES students(id), tekil
+# sutunun UNIQUE olmasina dayanir) yeniden kurmak yerine, her okula devasa
+# bir id "bloku" ayirarak cozuyoruz: id'ler artik sunucuda
+# `client_id + (organization_id-1) * ORG_ID_BLOCK_SIZE` olarak saklanir.
+# Bu sayede id GERCEKTEN global olarak benzersiz olur, mevcut tekil-sutunlu
+# PRIMARY KEY/FOREIGN KEY tanimlarinin HICBIRINE dokunmaya gerek kalmaz.
+# 1. okul (mevcut gercek veri) icin offset SIFIRDIR - id'ler bugunku gibi
+# aynen kalir, hicbir gocun/veri donusumunun gerekmedigi anlamina gelir.
+ORG_ID_BLOCK_SIZE = 10_000_000
+
+
+def _org_scoped_id(org_id, client_id):
+    """Bir okulun tarayicisindan gelen ham id'yi (client_id) o okula ayrilmis
+    global-benzersiz id blogu icine tasir. client_id None/0 ise (beklenmez
+    ama savunmaci) oldugu gibi dondurur."""
+    if not client_id:
+        return client_id
+    return int(client_id) + (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
+
+
 def _seed_reference_data(conn):
     """Statik referans veriler: kurum, roller, izinler, dersler, eğitim yılı.
     Hepsi INSERT OR IGNORE ile idempotent - tekrar tekrar çağrılması güvenli."""
     now = datetime.now().isoformat()
     org_id = _get_default_org_id(conn)
 
-    conn.execute("UPDATE users SET organization_id = ? WHERE organization_id IS NULL", (org_id,))
+    # super_admin hicbir okula ait degildir (organization_id = NULL kalmali) -
+    # aksi halde her sunucu yeniden baslatmasinda yanlislikla varsayilan
+    # okula atanir ve _current_org_id o okula sabitlenmis gibi davranir.
+    conn.execute(
+        "UPDATE users SET organization_id = ? WHERE organization_id IS NULL AND role != 'super_admin'",
+        (org_id,),
+    )
     conn.execute("UPDATE students SET organization_id = ? WHERE organization_id IS NULL", (org_id,))
+    conn.execute("UPDATE exams SET organization_id = ? WHERE organization_id IS NULL", (org_id,))
+    conn.execute("UPDATE results SET organization_id = ? WHERE organization_id IS NULL", (org_id,))
 
     for role_name in ROLE_SEED:
         conn.execute("INSERT OR IGNORE INTO roles (name) VALUES (?)", (role_name,))
@@ -860,11 +990,18 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
     """Kritik işlemleri denetim kaydına yazar. Asla asıl işlemi bozmamalıdır -
     bu yüzden herhangi bir hata sessizce yutulur (audit logging best-effort)."""
     try:
-        org_id = _get_default_org_id(db)
+        acting_user_id = user_id or session.get("user_id")
+        org_row = db.execute(
+            "SELECT organization_id FROM users WHERE id=?", (acting_user_id,)
+        ).fetchone() if acting_user_id else None
+        # super_admin'in organization_id'si NULL'dur - bu dogru/beklenen bir
+        # deger (bir okula ait olmayan islem), varsayilan okula duselerek
+        # gizlenmemeli.
+        org_id = org_row["organization_id"] if org_row else None
         db.execute(
             "INSERT INTO audit_logs (organization_id, user_id, action, resource_type, resource_id, ip_address, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
-            (org_id, user_id or session.get("user_id"), action, resource_type, resource_id,
+            (org_id, acting_user_id, action, resource_type, resource_id,
              request.remote_addr, datetime.now().isoformat()),
         )
         db.commit()
@@ -884,7 +1021,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('admin','teacher','parent','student')),
+            role TEXT NOT NULL CHECK(role IN ('super_admin','admin','teacher','parent','student')),
             display_name TEXT,
             class_name TEXT,
             student_id INTEGER,
@@ -1113,12 +1250,16 @@ def get_allowed_student_ids(db):
     if role == "admin":
         return None
     if role == "teacher":
+        org_id = _current_org_id(db)
         classes = teacher_class_list(session.get("class_name"))
         if classes is None:
-            rows = db.execute("SELECT id FROM students").fetchall()
+            rows = db.execute("SELECT id FROM students WHERE organization_id = ?", (org_id,)).fetchall()
         elif classes:
             placeholders = ",".join("?" * len(classes))
-            rows = db.execute(f"SELECT id FROM students WHERE class_name IN ({placeholders})", classes).fetchall()
+            rows = db.execute(
+                f"SELECT id FROM students WHERE organization_id = ? AND class_name IN ({placeholders})",
+                (org_id, *classes),
+            ).fetchall()
         else:
             rows = []
         return {r["id"] for r in rows}
@@ -1200,7 +1341,7 @@ def _safe_send(filename):
 @app.route("/")
 def root():
     role = session.get("role")
-    if role == "admin":
+    if role in ("admin", "super_admin"):
         return _safe_send("index.html")
     if role == "teacher":
         return redirect("/ogretmen.html")
@@ -1213,7 +1354,7 @@ def root():
 
 @app.route("/index.html")
 def index_html():
-    if session.get("role") != "admin":
+    if session.get("role") not in ("admin", "super_admin"):
         return redirect("/login.html")
     return _safe_send("index.html")
 
@@ -1283,6 +1424,95 @@ def api_me():
 
 
 # ============================================================
+# API: Süper admin - okul (organization) yönetimi
+# ============================================================
+# Faz 1 kapsami: sadece okul listeleme/olusturma. Super admin'in baska
+# hicbir role="admin" ucuna erisimi YOK - bir okulun verisine "girip
+# bakma" bilincli olarak bu fazda yok (bkz. proje plani).
+
+_TR_SLUG_MAP = str.maketrans({
+    "ş": "s", "Ş": "s", "ç": "c", "Ç": "c", "ğ": "g", "Ğ": "g",
+    "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ı": "i", "İ": "i",
+})
+
+
+def _slugify(text):
+    text = (text or "").translate(_TR_SLUG_MAP).lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    return text or "okul"
+
+
+@app.route("/api/superadmin/organizations", methods=["GET"])
+@login_required(role="super_admin", permission="organization.manage")
+def api_superadmin_list_organizations():
+    db = get_db()
+    rows = db.execute(
+        "SELECT o.id, o.name, o.slug, o.email, o.phone, o.address, o.status, o.created_at, "
+        "(SELECT COUNT(*) FROM users WHERE organization_id=o.id AND role='admin') AS admin_count, "
+        "(SELECT COUNT(*) FROM students WHERE organization_id=o.id) AS student_count "
+        "FROM organizations o ORDER BY o.created_at DESC"
+    ).fetchall()
+    return jsonify([{
+        "id": r["id"], "name": r["name"], "slug": r["slug"], "email": r["email"],
+        "phone": r["phone"], "address": r["address"], "status": r["status"],
+        "createdAt": r["created_at"], "adminCount": r["admin_count"], "studentCount": r["student_count"],
+    } for r in rows])
+
+
+@app.route("/api/superadmin/organizations", methods=["POST"])
+@login_required(role="super_admin", permission="organization.manage")
+def api_superadmin_create_organization():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    admin_username = (data.get("adminUsername") or "").strip()
+    admin_password = data.get("adminPassword") or ""
+    admin_display_name = (data.get("adminDisplayName") or "").strip() or admin_username
+    email = (data.get("email") or "").strip() or None
+    phone = (data.get("phone") or "").strip() or None
+    address = (data.get("address") or "").strip() or None
+
+    if not name or not admin_username or not admin_password:
+        return jsonify({"error": "Okul adı, yönetici kullanıcı adı ve şifresi gerekli."}), 400
+    if len(admin_password) < 4:
+        return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
+
+    db = get_db()
+    if db.execute("SELECT id FROM users WHERE username = ?", (admin_username,)).fetchone():
+        return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
+
+    base_slug = _slugify(name)
+    slug = base_slug
+    suffix = 2
+    while db.execute("SELECT id FROM organizations WHERE slug = ?", (slug,)).fetchone():
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO organizations (name, slug, email, phone, address, status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (name, slug, email, phone, address, "active", now, now),
+    )
+    org_id = cur.lastrowid
+    admin_cur = db.execute(
+        "INSERT INTO users (username, password_hash, role, display_name, organization_id, created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (admin_username, hash_password(admin_password), "admin", admin_display_name, org_id, now),
+    )
+    db.commit()
+    # Yeni admin'in user_roles (INSTITUTION_ADMIN) kaydini almasi icin -
+    # aksi halde has_permission() kontrolleri (login_required(permission=...))
+    # bu yeni hesap icin hep basarisiz olurdu.
+    run_v2_migration(db)
+    log_audit(db, "ORGANIZATION_CREATED", resource_type="organization", resource_id=org_id)
+    return jsonify({
+        "ok": True,
+        "organization": {"id": org_id, "name": name, "slug": slug},
+        "admin": {"id": admin_cur.lastrowid, "username": admin_username},
+    })
+
+
+# ============================================================
 # API: Admin - veri senkronizasyonu (tarayıcıdaki IndexedDB -> sunucu)
 # ============================================================
 
@@ -1296,21 +1526,27 @@ def api_admin_sync():
     force = bool(payload.get("force"))
 
     db = get_db()
+    org_id = _current_org_id(db)
 
-    # GUVENLIK KILIDI: bu uc nokta gonderilen veriyle SUNUCUDAKI HER SEYIN
-    # (students/exams/results) yerini alir - bu, hicbir yerel verisi olmayan
-    # (or: ilk kez acilan bir telefon/tarayici) bir cihazdan yanlislikla
-    # gelen BOS bir senkronun, gercek veriyle dolu sunucuyu sessizce
-    # sifirlamasina yol acabilir (2026-09-04'te tam olarak bu yasandi - bir
-    # telefonda ilk kez acilan bos admin paneli otomatik senkronla tum
-    # ogrenci/deneme/sonuc verisini sildi). Gelen veri, var olan veriye kiyasla
-    # anlamli sekilde daha azsa (ve var olan veri bossa degil) islemi reddet;
-    # admin bilerek/istemli bosaltmak isterse client "force" gonderebilir.
+    # GUVENLIK KILIDI: bu uc nokta gonderilen veriyle BU OKULUN sunucudaki
+    # verisinin (students/exams/results) yerini alir - bu, hicbir yerel
+    # verisi olmayan (or: ilk kez acilan bir telefon/tarayici) bir cihazdan
+    # yanlislikla gelen BOS bir senkronun, gercek veriyle dolu sunucuyu
+    # sessizce sifirlamasina yol acabilir (2026-09-04'te tam olarak bu
+    # yasandi - bir telefonda ilk kez acilan bos admin paneli otomatik
+    # senkronla tum ogrenci/deneme/sonuc verisini sildi). Gelen veri, var
+    # olan veriye kiyasla anlamli sekilde daha azsa (ve var olan veri bossa
+    # degil) islemi reddet; admin bilerek/istemli bosaltmak isterse client
+    # "force" gonderebilir. Sayimlar SADECE bu okula ait - baska bir okulun
+    # veri hacmi bu okulun senkronunu asla etkilemez.
     if not force:
         current_counts = {
-            "students": db.execute("SELECT COUNT(*) FROM students").fetchone()[0],
-            "exams": db.execute("SELECT COUNT(*) FROM exams").fetchone()[0],
-            "results": db.execute("SELECT COUNT(*) FROM results").fetchone()[0],
+            "students": db.execute(
+                "SELECT COUNT(*) FROM students WHERE organization_id=?", (org_id,)).fetchone()[0],
+            "exams": db.execute(
+                "SELECT COUNT(*) FROM exams WHERE organization_id=?", (org_id,)).fetchone()[0],
+            "results": db.execute(
+                "SELECT COUNT(*) FROM results WHERE organization_id=?", (org_id,)).fetchone()[0],
         }
         incoming_counts = {"students": len(students), "exams": len(exams), "results": len(results)}
         for key, current in current_counts.items():
@@ -1329,37 +1565,48 @@ def api_admin_sync():
                     "incomingCounts": incoming_counts,
                 }), 409
 
+    # students/exams/results.id istemcinin (tarayici IndexedDB) kendi
+    # sayacindan gelir - farkli okullarin ayni id'yi kullanmasi olasi/
+    # kacinilmaz. Sunucuda gercekten benzersiz olsun diye her okula ayrilmis
+    # id blogu icine tasiriz (bkz. _org_scoped_id) - 1. okul icin bu bir
+    # NO-OP'tur (offset 0), yani mevcut gercek veri hicbir sekilde degismez.
+    def sid(client_id):
+        return _org_scoped_id(org_id, client_id)
+
     # parent_students.student_id -> students(id) ON DELETE CASCADE tanimli;
-    # asagidaki DELETE FROM students bu yuzden tum veli-ogrenci baglantilarini
-    # da siler. Ayni id'yle geri gelen ogrenciler icin bu baglantilari geri
-    # kurabilmek icin once yedekliyoruz (bkz. asagidaki geri yukleme).
+    # asagidaki DELETE FROM students bu yuzden BU OKULUN veli-ogrenci
+    # baglantilarini da siler. Ayni id'yle geri gelen ogrenciler icin bu
+    # baglantilari geri kurabilmek icin once yedekliyoruz (bkz. asagidaki
+    # geri yukleme) - sadece bu okulun ogrencilerine ait baglantilar.
     existing_parent_links = db.execute(
-        "SELECT parent_user_id, student_id FROM parent_students"
+        "SELECT ps.parent_user_id, ps.student_id FROM parent_students ps "
+        "JOIN students s ON s.id = ps.student_id WHERE s.organization_id = ?",
+        (org_id,),
     ).fetchall()
 
-    db.execute("DELETE FROM students")
-    db.execute("DELETE FROM exams")
-    db.execute("DELETE FROM results")
+    db.execute("DELETE FROM students WHERE organization_id=?", (org_id,))
+    db.execute("DELETE FROM exams WHERE organization_id=?", (org_id,))
+    db.execute("DELETE FROM results WHERE organization_id=?", (org_id,))
 
     for s in students:
         db.execute(
-            "INSERT INTO students (id, school_number, first_name, last_name, class_name) "
-            "VALUES (?,?,?,?,?)",
-            (s.get("id"), s.get("schoolNumber"), s.get("firstName"), s.get("lastName"),
+            "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name) "
+            "VALUES (?,?,?,?,?,?)",
+            (sid(s.get("id")), org_id, s.get("schoolNumber"), s.get("firstName"), s.get("lastName"),
              s.get("className")),
         )
     for e in exams:
         db.execute(
-            "INSERT INTO exams (id, name, date, exam_type, data_json) VALUES (?,?,?,?,?)",
-            (e.get("id"), e.get("name"), e.get("date"), e.get("examType"), json.dumps(e)),
+            "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json) VALUES (?,?,?,?,?,?)",
+            (sid(e.get("id")), org_id, e.get("name"), e.get("date"), e.get("examType"), json.dumps(e)),
         )
     for r in results:
         db.execute(
-            "INSERT INTO results (id, student_id, exam_id, data_json) VALUES (?,?,?,?)",
-            (r.get("id"), r.get("studentId"), r.get("examId"), json.dumps(r)),
+            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json) VALUES (?,?,?,?,?)",
+            (sid(r.get("id")), org_id, sid(r.get("studentId")), sid(r.get("examId")), json.dumps(r)),
         )
 
-    new_student_ids = {s.get("id") for s in students}
+    new_student_ids = {sid(s.get("id")) for s in students}
     for link in existing_parent_links:
         if link["student_id"] in new_student_ids:
             db.execute(
@@ -1370,7 +1617,7 @@ def api_admin_sync():
 
     # v2: normalize edilmiş tabloları (sınıflar, kayıtlar, sınav sonuçları,
     # Başarı Pusulası içgörüleri) yeni veriyle eşitle.
-    org_id = run_v2_migration(db)
+    run_v2_migration(db)
     db.execute(
         "INSERT INTO imports (organization_id, uploaded_by, file_type, status, total_records, "
         "success_records, failed_records, created_at, completed_at) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -1395,9 +1642,11 @@ def api_admin_sync():
 @login_required(role="admin", permission="users.manage")
 def api_admin_list_users():
     db = get_db()
+    org_id = _current_org_id(db)
     rows = db.execute(
         "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
-        "WHERE role != 'admin' ORDER BY role, username"
+        "WHERE role != 'admin' AND organization_id = ? ORDER BY role, username",
+        (org_id,),
     ).fetchall()
     out = []
     for r in rows:
@@ -1429,8 +1678,11 @@ def api_admin_list_users():
 @login_required(role="admin", permission="students.view")
 def api_admin_students_list():
     db = get_db()
+    org_id = _current_org_id(db)
     rows = db.execute(
-        "SELECT id, first_name, last_name, class_name FROM students ORDER BY class_name, last_name"
+        "SELECT id, first_name, last_name, class_name FROM students "
+        "WHERE organization_id = ? ORDER BY class_name, last_name",
+        (org_id,),
     ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -1457,15 +1709,29 @@ def api_admin_create_user():
         return jsonify({"error": "Öğrenci hesabı için bir öğrenci kaydı seçilmeli."}), 400
 
     db = get_db()
+    org_id = _current_org_id(db)
     existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     if existing:
         return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
 
+    # IDOR koruması: secilen ogrenci kayitlarinin gercekten bu okula ait
+    # oldugunu dogrula - aksi halde bir admin (id'yi tahmin ederek) baska
+    # bir okulun ogrencisine veli/ogrenci hesabi baglayabilirdi.
+    ids_to_check = list(student_ids) + ([student_id] if student_id else [])
+    if ids_to_check:
+        placeholders = ",".join("?" * len(ids_to_check))
+        owned_count = db.execute(
+            f"SELECT COUNT(*) FROM students WHERE id IN ({placeholders}) AND organization_id = ?",
+            (*ids_to_check, org_id),
+        ).fetchone()[0]
+        if owned_count != len(set(ids_to_check)):
+            return jsonify({"error": "Seçilen öğrenci kaydı bulunamadı."}), 400
+
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
-        "student_id, created_at) VALUES (?,?,?,?,?,?,?)",
+        "student_id, organization_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
         (username, hash_password(password), role, display_name,
-         class_name, student_id if role == "student" else None, datetime.now().isoformat()),
+         class_name, student_id if role == "student" else None, org_id, datetime.now().isoformat()),
     )
     if role == "parent":
         new_user_id = cur.lastrowid
@@ -1486,7 +1752,11 @@ def api_admin_create_user():
 @login_required(role="admin", permission="users.manage")
 def api_admin_delete_user(user_id):
     db = get_db()
-    db.execute("DELETE FROM users WHERE id = ? AND role != 'admin'", (user_id,))
+    org_id = _current_org_id(db)
+    db.execute(
+        "DELETE FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        (user_id, org_id),
+    )
     db.commit()
     log_audit(db, "USER_DELETED", resource_type="user", resource_id=user_id)
     return jsonify({"ok": True})
@@ -1496,8 +1766,11 @@ def api_admin_delete_user(user_id):
 @login_required(role="admin", permission="users.manage")
 def api_admin_toggle_active(user_id):
     db = get_db()
-    user = db.execute("SELECT active FROM users WHERE id = ? AND role != 'admin'",
-                       (user_id,)).fetchone()
+    org_id = _current_org_id(db)
+    user = db.execute(
+        "SELECT active FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        (user_id, org_id),
+    ).fetchone()
     if not user:
         return jsonify({"error": "Kullanıcı bulunamadı."}), 404
     new_active = 0 if user["active"] else 1
@@ -1515,8 +1788,11 @@ def api_admin_reset_password(user_id):
     if len(new_password) < 4:
         return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
     db = get_db()
-    db.execute("UPDATE users SET password_hash = ? WHERE id = ? AND role != 'admin'",
-               (hash_password(new_password), user_id))
+    org_id = _current_org_id(db)
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        (hash_password(new_password), user_id, org_id),
+    )
     db.commit()
     return jsonify({"ok": True})
 
@@ -1543,13 +1819,17 @@ def api_change_own_password():
 # API: Öğretmen - yalnızca kendi sınıfı + genel istatistikler
 # ============================================================
 
-def _all_class_averages(db, exam_id=None):
-    """Tüm sınıfların (isim vermeden) ortalama net karşılaştırması."""
-    exam_filter = "WHERE exam_id = ?" if exam_id else ""
-    params = (exam_id,) if exam_id else ()
+def _all_class_averages(db, org_id, exam_id=None):
+    """Tüm sınıfların (isim vermeden) ortalama net karşılaştırması - SADECE
+    verilen okula ait. class_name tek başına okul-güvenli değil (iki okul
+    aynı "8/A" adını paylaşabilir), bu yüzden organization_id filtresi
+    zorunlu - yoksa iki okulun aynı isimli sınıfları tek grupta karışır."""
+    exam_filter = "AND r.exam_id = ?" if exam_id else ""
+    params = (org_id, exam_id) if exam_id else (org_id,)
     rows = db.execute(
         f"SELECT r.data_json, r.student_id, s.class_name FROM results r "
-        f"JOIN students s ON s.id = r.student_id {exam_filter}", params
+        f"JOIN students s ON s.id = r.student_id "
+        f"WHERE s.organization_id = ? {exam_filter}", params
     ).fetchall()
     by_class = {}
     students_by_class = {}
@@ -1819,7 +2099,7 @@ def api_teacher_overview():
         "className": my_class,
         "students": student_list,
         "exams": [dict(e) for e in exams],
-        "classAverages": _all_class_averages(db),
+        "classAverages": _all_class_averages(db, _current_org_id(db)),
     })
 
 
@@ -1827,10 +2107,13 @@ def api_teacher_overview():
 @login_required(role="teacher", permission="students.view")
 def api_teacher_exam_detail(exam_id):
     db = get_db()
+    org_id = _current_org_id(db)
     classes = teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
-    exam_row = db.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
+    exam_row = db.execute(
+        "SELECT * FROM exams WHERE id = ? AND organization_id = ?", (exam_id, org_id)
+    ).fetchone()
     if not exam_row:
         return jsonify({"error": "Deneme bulunamadı."}), 404
     exam_data = json.loads(exam_row["data_json"])
@@ -1848,7 +2131,8 @@ def api_teacher_exam_detail(exam_id):
     # Okul sıralaması için bu denemeye ait TÜM okulun sonuçları gerekiyor,
     # sınıf sıralaması için ise yalnızca kendi sınıfının sonuçları.
     all_result_rows = db.execute(
-        "SELECT r.student_id, r.data_json FROM results r WHERE r.exam_id = ?", (exam_id,)
+        "SELECT r.student_id, r.data_json FROM results r WHERE r.exam_id = ? AND r.organization_id = ?",
+        (exam_id, org_id),
     ).fetchall()
 
     all_totals = []
@@ -1881,9 +2165,10 @@ def api_teacher_exam_detail(exam_id):
         prev_rows = db.execute(
             f"SELECT r.student_id, r.data_json FROM results r "
             f"JOIN exams e ON e.id = r.exam_id "
-            f"WHERE r.student_id IN ({placeholders}) AND e.date < ? AND e.id != ? "
+            f"WHERE r.student_id IN ({placeholders}) AND r.organization_id = ? "
+            f"AND e.date < ? AND e.id != ? "
             f"ORDER BY e.date DESC",
-            (*my_student_ids, exam_row["date"], exam_id),
+            (*my_student_ids, org_id, exam_row["date"], exam_id),
         ).fetchall()
         for r in prev_rows:
             if r["student_id"] in prev_net_by_student:
@@ -1909,7 +2194,7 @@ def api_teacher_exam_detail(exam_id):
         "exam": {"id": exam_row["id"], "name": exam_row["name"], "date": exam_row["date"],
                  "examType": exam_row["exam_type"]},
         "myClassResults": sorted(my_results, key=lambda x: -x["totalNet"]),
-        "otherClassAverages": [c for c in _all_class_averages(db, exam_id)
+        "otherClassAverages": [c for c in _all_class_averages(db, _current_org_id(db), exam_id)
                                 if classes is not None and c["className"] not in classes],
         "topicStats": topic_stats,
     })
@@ -2119,10 +2404,13 @@ def _build_student_report(db, student_id):
     class_subject_averages, class_rank = None, None
     if results:
         latest_exam_id = results[-1]["examId"]
+        # s.class_name tek basina okul-guvenli degil (iki okul ayni "8/A"
+        # adini paylasabilir) - organization_id filtresi olmadan iki okulun
+        # sinif ortalamasi/sirasi birbirine karisir.
         classmates = db.execute(
             "SELECT r.data_json FROM results r JOIN students s ON s.id = r.student_id "
-            "WHERE r.exam_id = ? AND s.class_name = ?",
-            (latest_exam_id, student["class_name"]),
+            "WHERE r.exam_id = ? AND s.class_name = ? AND s.organization_id = ?",
+            (latest_exam_id, student["class_name"], student["organization_id"]),
         ).fetchall()
         subject_sums, subject_counts, class_totals = {}, {}, []
         for cr in classmates:
@@ -2280,7 +2568,7 @@ def api_parent_overview():
         "className": r["class_name"], "schoolNumber": r["school_number"],
     } for r in rows]
 
-    return jsonify({"children": children, "classAverages": _all_class_averages(db)})
+    return jsonify({"children": children, "classAverages": _all_class_averages(db, _current_org_id(db))})
 
 
 @app.route("/api/parent/child/<int:student_id>")
@@ -2292,7 +2580,7 @@ def api_parent_child_detail(student_id):
     report = _build_student_report(db, student_id)
     if not report:
         return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
-    report["classAverages"] = _all_class_averages(db)
+    report["classAverages"] = _all_class_averages(db, _current_org_id(db))
     return jsonify(report)
 
 
@@ -2308,7 +2596,7 @@ def api_student_overview():
     report = _build_student_report(db, student_id) if student_id else None
     if not report:
         return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı. Lütfen okulunuzla iletişime geçin."}), 404
-    report["classAverages"] = _all_class_averages(db)
+    report["classAverages"] = _all_class_averages(db, _current_org_id(db))
     message_rows = db.execute(
         "SELECT m.id, m.message, m.created_at, m.read_at, u.display_name FROM teacher_messages m "
         "JOIN users u ON u.id = m.teacher_user_id "
@@ -2375,7 +2663,7 @@ def api_demo_talebi():
 
 
 @app.route("/api/admin/demo-talepleri")
-@login_required(role="admin")
+@login_required(role="super_admin")
 def api_admin_demo_talepleri():
     db = get_db()
     rows = db.execute(
