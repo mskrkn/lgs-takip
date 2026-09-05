@@ -1478,10 +1478,16 @@ def api_login():
 
     log_audit(db, "LOGIN_SUCCESS", resource_type="user", resource_id=user["id"], user_id=user["id"])
 
+    # Yetki devredilmis (delege) bir ogretmen mi? login.html bu bayrağa göre
+    # admin SPA'sina mi yoksa normal /ogretmen.html'e mi yonlendirecegine
+    # karar veriyor - /api/me'deki ayni mantik (bkz. orada).
+    is_delegate = user["role"] == "teacher" and has_permission(db, user["id"], "users.manage")
+
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
         "className": teacher_class_display(user["class_name"]) if user["role"] == "teacher" else user["class_name"],
         "studentId": user["student_id"],
+        "isDelegateAdmin": is_delegate,
     })
 
 
