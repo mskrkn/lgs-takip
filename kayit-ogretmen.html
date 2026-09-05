@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Öğretmen Kaydı - EduPusula</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 20% 20%, #1a1f3d 0%, #070913 55%);
+      font-family: 'Plus Jakarta Sans', sans-serif; color: #f8fafc; padding: 20px;
+    }
+    .card {
+      width: 100%; max-width: 420px; background: rgba(17,24,48,0.75); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.09); border-radius: 20px; padding: 36px 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .logo { text-align: center; margin-bottom: 22px; }
+    .logo-icon { font-size: 40px; }
+    .logo h1 { font-size: 19px; margin: 8px 0 2px; }
+    .logo p { font-size: 13px; color: #94a3b8; margin: 0; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; color: #cbd5e1; }
+    input, select {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(13,18,38,0.85); color: #f8fafc; font-size: 15px; outline: none;
+    }
+    input:focus, select:focus { border-color: #6366f1; }
+    button {
+      width: 100%; margin-top: 22px; padding: 13px; border: none; border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+      color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-box, .success-box {
+      display: none; margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+    }
+    .error-box { background: rgba(244,63,94,0.15); border: 1px solid rgba(244,63,94,0.4); color: #fb7185; }
+    .success-box { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.4); color: #4ade80; }
+    .hint { text-align: center; margin-top: 18px; font-size: 12px; color: #64748b; }
+    a { color: #a5b4fc; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="logo">
+      <div class="logo-icon">🧭</div>
+      <h1>Öğretmen Kaydı</h1>
+      <p id="org-name-line">Kontrol ediliyor...</p>
+    </div>
+
+    <form id="register-form" style="display:none">
+      <label for="displayName">Görünen İsim</label>
+      <input type="text" id="displayName" required>
+
+      <label for="className">Sınıfınız</label>
+      <select id="className" required></select>
+
+      <label for="username">Kullanıcı Adı</label>
+      <input type="text" id="username" autocomplete="username" required>
+
+      <label for="password">Şifre</label>
+      <input type="password" id="password" autocomplete="new-password" required minlength="4">
+
+      <button type="submit" id="submit-btn">Hesabımı Oluştur</button>
+    </form>
+    <div class="error-box" id="error-box"></div>
+    <div class="success-box" id="success-box">✅ Hesabınız oluşturuldu! <a href="/login.html">Giriş yapmak için tıklayın</a>.</div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('kod') || '';
+    const card = document.getElementById('card');
+    const orgLine = document.getElementById('org-name-line');
+    const form = document.getElementById('register-form');
+    const errorBox = document.getElementById('error-box');
+    const successBox = document.getElementById('success-box');
+
+    async function init() {
+      if (!code) {
+        orgLine.textContent = 'Davet linki geçersiz (kod eksik).';
+        return;
+      }
+      try {
+        const res = await fetch(`/api/register/teacher/${encodeURIComponent(code)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Davet kodu geçersiz.');
+        orgLine.textContent = `${data.organizationName} okuluna öğretmen olarak katılıyorsunuz`;
+        const classSelect = document.getElementById('className');
+        classSelect.innerHTML = '<option value="">Sınıf seçin...</option>' +
+          (data.classNames || []).map(c => `<option value="${c}">${c}</option>`).join('') +
+          '<option value="__other__">Diğer / listede yok</option>';
+        classSelect.addEventListener('change', () => {
+          if (classSelect.value === '__other__') {
+            const custom = prompt('Sınıfınızı yazın (örn: 8/A):');
+            if (custom) {
+              const opt = document.createElement('option');
+              opt.value = custom; opt.textContent = custom; opt.selected = true;
+              classSelect.insertBefore(opt, classSelect.firstChild.nextSibling);
+            } else {
+              classSelect.value = '';
+            }
+          }
+        });
+        form.style.display = 'block';
+      } catch (err) {
+        orgLine.textContent = err.message;
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorBox.style.display = 'none';
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Oluşturuluyor...';
+      try {
+        const res = await fetch('/api/register/teacher', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value,
+            displayName: document.getElementById('displayName').value.trim(),
+            className: document.getElementById('className').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Kayıt başarısız.');
+        form.style.display = 'none';
+        successBox.style.display = 'block';
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Hesabımı Oluştur';
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
