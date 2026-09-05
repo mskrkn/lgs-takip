@@ -72,6 +72,18 @@ const App = {
       return;
     }
 
+    // Yetki devredilmiş (delege) bir öğretmen: sadece hesap ekleme/listeleme
+    // için buraya (admin SPA) yönlendirildi - okulun diğer verilerine
+    // (Öğrenciler/Denemeler/Soru Havuzu/Ayarlar) erişimi yok, o yüzden
+    // sadece "Kullanıcılar" sayfası gösterilir.
+    if (this.currentUser?.isDelegateAdmin) {
+      document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+        item.style.display = item.dataset.page === 'users' ? '' : 'none';
+      });
+      await this.navigateTo('users');
+      return;
+    }
+
     // "Demo Talepleri" artık platform geneli (potansiyel okul adayları) bir
     // liste - okul adminlerinin işi değil, sadece süper admine görünür.
     const demoNav = document.getElementById('nav-demo-talepleri');
