@@ -267,7 +267,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Giriş başarısız.');
 
-        if (data.role === 'admin') window.location.href = '/';
+        if (data.role === 'admin' || data.role === 'super_admin') window.location.href = '/';
+        else if (data.role === 'teacher' && data.isDelegateAdmin) window.location.href = '/';
         else if (data.role === 'teacher') window.location.href = '/ogretmen.html';
         else if (data.role === 'parent') window.location.href = '/veli.html';
         else if (data.role === 'student') window.location.href = '/ogrenci.html';
