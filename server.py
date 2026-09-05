@@ -1531,6 +1531,16 @@ def _slugify(text):
     return text or "okul"
 
 
+def _external_base_url():
+    """request.host_url, Cloudflare Tunnel arkasinda HER ZAMAN http:// doner
+    (TLS Cloudflare'de sonlanir, cloudflared'a duz HTTP ile gelir) - davet
+    linkleri bu yuzden yanlislikla http:// ile uretilirdi. Cloudflare/cogu
+    ters proxy X-Forwarded-Proto basligini gercek semayla dolduruyor;
+    yoksa (yerel gelistirme) request.scheme'e (http) duser."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+    return f"{scheme}://{request.host}"
+
+
 @app.route("/api/superadmin/organizations", methods=["GET"])
 @login_required(role="super_admin", permission="organization.manage")
 def api_superadmin_list_organizations():
@@ -1622,7 +1632,7 @@ def api_admin_get_teacher_invite():
         code = secrets.token_urlsafe(9)
         db.execute("UPDATE organizations SET teacher_invite_code = ? WHERE id = ?", (code, org_id))
         db.commit()
-    url = f"{request.host_url.rstrip('/')}/kayit-ogretmen.html?kod={code}"
+    url = f"{_external_base_url()}/kayit-ogretmen.html?kod={code}"
     return jsonify({"code": code, "url": url})
 
 
@@ -1635,7 +1645,7 @@ def api_admin_regenerate_teacher_invite():
     db.execute("UPDATE organizations SET teacher_invite_code = ? WHERE id = ?", (code, org_id))
     db.commit()
     log_audit(db, "TEACHER_INVITE_REGENERATED", resource_type="organization", resource_id=org_id)
-    url = f"{request.host_url.rstrip('/')}/kayit-ogretmen.html?kod={code}"
+    url = f"{_external_base_url()}/kayit-ogretmen.html?kod={code}"
     return jsonify({"code": code, "url": url})
 
 
@@ -1721,7 +1731,7 @@ def api_admin_get_student_invite(student_id):
             (student_id, org_id, token, datetime.now().isoformat(), session.get("user_id")),
         )
         db.commit()
-    url = f"{request.host_url.rstrip('/')}/kayit-ogrenci.html?token={token}"
+    url = f"{_external_base_url()}/kayit-ogrenci.html?token={token}"
     return jsonify({"token": token, "url": url})
 
 
