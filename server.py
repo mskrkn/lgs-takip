@@ -1717,7 +1717,7 @@ def api_admin_students_list():
     db = get_db()
     org_id = _current_org_id(db)
     rows = db.execute(
-        "SELECT id, first_name, last_name, class_name FROM students "
+        "SELECT id, first_name, last_name, class_name, school_number FROM students "
         "WHERE organization_id = ? ORDER BY class_name, last_name",
         (org_id,),
     ).fetchall()
