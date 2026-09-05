@@ -344,7 +344,8 @@ SUBJECT_SEED = [
     ("ayt_cografya2", "Coğrafya-2"), ("ayt_felsefe", "Felsefe Grubu"), ("ayt_din", "Din Kültürü (Seçmeli)"),
 ]
 
-ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "TEACHER", "PARENT", "STUDENT"]
+ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "SCHOOL_ADMIN_DELEGATE",
+             "TEACHER", "PARENT", "STUDENT"]
 
 PERMISSION_SEED = [
     "students.view", "students.create", "students.update", "students.delete",
@@ -360,6 +361,12 @@ ROLE_PERMISSIONS_SEED = {
     "TEACHER": ["students.view", "classes.view", "exams.view", "results.view", "analytics.view"],
     "PARENT": ["results.view", "analytics.view"],
     "STUDENT": ["results.view", "analytics.view"],
+    # Okul admini kendi ogretmenlerinden birine "hesap ekleme" yetkisi
+    # devredebilir - bkz. /api/admin/users/<id>/delegate. Legacy role hala
+    # 'teacher' kalir (ogretmen paneli/oturumu degismez), bu SADECE ek bir
+    # v2 rol atamasidir (LEGACY_ROLE_TO_NEW_ROLE'a EKLENMEZ - otomatik
+    # atanmaz, sadece admin'in acikca verdigi bir yetki).
+    "SCHOOL_ADMIN_DELEGATE": ["users.manage", "students.create", "students.view"],
 }
 
 LEGACY_ROLE_TO_NEW_ROLE = {
@@ -1199,12 +1206,20 @@ def has_permission(db, user_id, permission_name):
 
 
 def login_required(role=None, permission=None):
+    # role: tek bir rol stringi ("admin") ya da izin verilen birden fazla rolun
+    # tuple/list'i (("admin","teacher")) olabilir - okul bazli yetki devrinde
+    # bir ucun hem gercek admin'e hem yetki devredilmis bir ogretmene acik
+    # olmasi gerekiyor (bkz. permission= ile ek kisitlama, asagida).
+    allowed_roles = None
+    if role:
+        allowed_roles = tuple(role) if isinstance(role, (list, tuple, set)) else (role,)
+
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             if "user_id" not in session:
                 return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
-            if role and session.get("role") != role:
+            if allowed_roles and session.get("role") not in allowed_roles:
                 return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
             if permission and not has_permission(get_db(), session["user_id"], permission):
                 return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
@@ -1344,6 +1359,11 @@ def root():
     if role in ("admin", "super_admin"):
         return _safe_send("index.html")
     if role == "teacher":
+        # Yetki devredilmis (delege) bir ogretmense hesap ekleme/listeleme
+        # icin admin SPA'sina yonlendirilir; kendi ders panelini gormek
+        # isterse /ogretmen.html'i dogrudan ziyaret edebilir.
+        if has_permission(get_db(), session["user_id"], "users.manage"):
+            return _safe_send("index.html")
         return redirect("/ogretmen.html")
     if role == "parent":
         return redirect("/veli.html")
@@ -1354,9 +1374,12 @@ def root():
 
 @app.route("/index.html")
 def index_html():
-    if session.get("role") not in ("admin", "super_admin"):
-        return redirect("/login.html")
-    return _safe_send("index.html")
+    role = session.get("role")
+    if role in ("admin", "super_admin"):
+        return _safe_send("index.html")
+    if role == "teacher" and has_permission(get_db(), session.get("user_id"), "users.manage"):
+        return _safe_send("index.html")
+    return redirect("/login.html")
 
 
 @app.route("/<path:filename>")
@@ -1415,11 +1438,20 @@ def api_logout():
 def api_me():
     if "user_id" not in session:
         return jsonify({"authenticated": False})
+    # Yetki devredilmis bir ogretmen mi? (legacy role hala 'teacher' -
+    # bkz. /api/admin/users/<id>/delegate) - frontend'in "Kullanicilar"
+    # sayfasinda hangi butonlari (sil/pasiflestir/sifre sifirla DEGIL,
+    # sadece ekleme/listeleme) gosterecegine karar vermesi icin.
+    is_delegate = (
+        session.get("role") == "teacher"
+        and has_permission(get_db(), session["user_id"], "users.manage")
+    )
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
         "className": teacher_class_display(session.get("class_name")) if session.get("role") == "teacher" else session.get("class_name"),
         "studentId": session.get("student_id"),
+        "isDelegateAdmin": is_delegate,
     })
 
 
@@ -1639,7 +1671,7 @@ def api_admin_sync():
 # ============================================================
 
 @app.route("/api/admin/users", methods=["GET"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "teacher"), permission="users.manage")
 def api_admin_list_users():
     db = get_db()
     org_id = _current_org_id(db)
@@ -1670,12 +1702,17 @@ def api_admin_list_users():
             "className": teacher_class_display(r["class_name"]) if r["role"] == "teacher" else r["class_name"],
             "studentId": r["student_id"], "studentName": ", ".join(student_names) or None,
             "active": bool(r["active"]),
+            "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
         })
     return jsonify(out)
 
 
 @app.route("/api/admin/students", methods=["GET"])
-@login_required(role="admin", permission="students.view")
+# İzin bilerek "students.view" değil "users.manage" - TEACHER v2 rolünde
+# zaten students.view var (kendi paneli için), o izni burada da kabul
+# etseydik yetki devri olmayan HER öğretmen bu admin listesine erişirdi.
+# Bu uç sadece js/adminUsers.js'in hesap-oluşturma dropdown'ı için var.
+@login_required(role=("admin", "teacher"), permission="users.manage")
 def api_admin_students_list():
     db = get_db()
     org_id = _current_org_id(db)
@@ -1688,7 +1725,7 @@ def api_admin_students_list():
 
 
 @app.route("/api/admin/users", methods=["POST"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "teacher"), permission="users.manage")
 def api_admin_create_user():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -1795,6 +1832,47 @@ def api_admin_reset_password(user_id):
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/api/admin/users/<int:user_id>/delegate", methods=["POST"])
+@login_required(role="admin", permission="users.manage")
+def api_admin_set_delegate(user_id):
+    """Okul admini kendi ogretmenlerinden birine hesap ekleme/listeleme
+    yetkisi verir/geri alir - SADECE gercek admin cagirabilir (bir delege
+    kendini/baskasini yetkilendiremez, role="admin" sabit tutulur)."""
+    data = request.get_json(silent=True) or {}
+    grant = bool(data.get("grant"))
+
+    db = get_db()
+    org_id = _current_org_id(db)
+    target = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role = 'teacher' AND organization_id = ?",
+        (user_id, org_id),
+    ).fetchone()
+    if not target:
+        return jsonify({"error": "Öğretmen bulunamadı."}), 404
+
+    role_row = db.execute("SELECT id FROM roles WHERE name = 'SCHOOL_ADMIN_DELEGATE'").fetchone()
+    if not role_row:
+        # run_v2_migration henuz hic calismamis olabilir (cok erken bir
+        # cagiri) - once onu calistirip rolun var oldugundan emin ol.
+        run_v2_migration(db)
+        role_row = db.execute("SELECT id FROM roles WHERE name = 'SCHOOL_ADMIN_DELEGATE'").fetchone()
+
+    if grant:
+        db.execute(
+            "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)",
+            (user_id, role_row["id"]),
+        )
+    else:
+        db.execute(
+            "DELETE FROM user_roles WHERE user_id = ? AND role_id = ?",
+            (user_id, role_row["id"]),
+        )
+    db.commit()
+    log_audit(db, "DELEGATE_GRANTED" if grant else "DELEGATE_REVOKED",
+              resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "isDelegate": grant})
 
 
 @app.route("/api/me/password", methods=["POST"])
