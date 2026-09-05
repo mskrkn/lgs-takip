@@ -134,6 +134,22 @@ const AdminUsers = {
 
       <div class="card mt-2">
         <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">📑</span> Toplu Hesap Oluştur (Excel/CSV)</h3>
+        </div>
+        <p class="text-muted mb-2">
+          Sütunlar: <b>rol</b> (öğretmen/veli/öğrenci), <b>kullanıcı_adı</b>, <b>şifre</b>,
+          <b>görünen_isim</b>, <b>sınıf_veya_öğrenci</b> (öğretmen için sınıf adı — örn. 8/A;
+          veli/öğrenci için okul numarası veya tam ad-soyad). Her satır ayrı işlenir, biri
+          başarısız olursa diğerleri etkilenmez.
+        </p>
+        <input type="file" id="bulk-user-file" accept=".xlsx,.xls,.csv" class="form-control">
+        <button class="btn btn-primary mt-2" onclick="AdminUsers.bulkImportUsers()">Dosyayı İçe Aktar</button>
+        <div id="bulk-user-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
+        <div id="bulk-user-results" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
         <div id="users-list">${this._renderUsersTable(users, isRealAdmin)}</div>
@@ -419,5 +435,159 @@ const AdminUsers = {
   async logout() {
     await fetch('/api/logout', { method: 'POST' });
     window.location.href = '/login.html';
+  },
+
+  // ---- Toplu Hesap Oluşturma (Excel/CSV) ----
+  // js/importExcel.js'teki processExcelFile ile aynı okuma deseni (SheetJS +
+  // basit CSV ayrıştırıcı) - ama bu tamamen ayrı bir akış: deneme SONUCU
+  // değil, LOGIN HESABI (kullanıcı adı/şifre) satırları içe aktarıyor.
+  _bulkNormalizeText(s) {
+    return String(s == null ? '' : s).trim().toLowerCase()
+      .replace(/ş/g, 's').replace(/ç/g, 'c').replace(/ğ/g, 'g')
+      .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ı/g, 'i')
+      .replace(/\s+/g, ' ');
+  },
+
+  _bulkHeaderKey(h) {
+    const norm = this._bulkNormalizeText(h).replace(/[^a-z0-9]/g, '');
+    const map = {
+      rol: 'role', role: 'role',
+      kullaniciadi: 'username', kullaniciadı: 'username', username: 'username', kullanici: 'username',
+      sifre: 'password', şifre: 'password', parola: 'password', password: 'password',
+      gorunenisim: 'displayName', görünenisim: 'displayName', adsoyad: 'displayName',
+      isim: 'displayName', ad: 'displayName', displayname: 'displayName',
+      sinifveyaogrenci: 'target', sınıfveyaöğrenci: 'target', sinif: 'target',
+      ogrenci: 'target', öğrenci: 'target', okulno: 'target', okulnumarasi: 'target',
+    };
+    return map[norm] || null;
+  },
+
+  _bulkNormalizeRole(v) {
+    const n = this._bulkNormalizeText(v);
+    if (['ogretmen', 'öğretmen', 'teacher'].includes(n)) return 'teacher';
+    if (['veli', 'parent'].includes(n)) return 'parent';
+    if (['ogrenci', 'öğrenci', 'student'].includes(n)) return 'student';
+    return null;
+  },
+
+  // Okul numarasına, yoksa normalize edilmiş ad-soyada göre TEK bir eşleşme
+  // arar - AdminUsers._students zaten /api/admin/students'tan çekilmiş listedir.
+  _matchStudent(text) {
+    const raw = String(text == null ? '' : text).trim();
+    if (!raw) return null;
+    const byNumber = (this._students || []).filter(
+      s => s.school_number && String(s.school_number).trim() === raw
+    );
+    if (byNumber.length === 1) return byNumber[0];
+    const target = this._bulkNormalizeText(raw);
+    const byName = (this._students || []).filter(
+      s => this._bulkNormalizeText(`${s.first_name} ${s.last_name}`) === target
+    );
+    if (byName.length === 1) return byName[0];
+    return null;
+  },
+
+  async _bulkParseFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    let rows2d;
+    if (ext === 'csv') {
+      const text = await file.text();
+      rows2d = text.split(/\r?\n/).filter(l => l.trim()).map(
+        line => line.split(/[,;]/).map(c => c.trim().replace(/^"|"$/g, ''))
+      );
+    } else {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      rows2d = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    }
+    if (!rows2d || rows2d.length < 2) return { headerMap: {}, rows: [] };
+    const headerRow = rows2d[0];
+    const headerMap = {};
+    headerRow.forEach((h, i) => {
+      const key = this._bulkHeaderKey(h);
+      if (key) headerMap[key] = i;
+    });
+    const rows = rows2d.slice(1).filter(r => r.some(c => String(c || '').trim()));
+    return { headerMap, rows };
+  },
+
+  async bulkImportUsers() {
+    const fileInput = document.getElementById('bulk-user-file');
+    const statusEl = document.getElementById('bulk-user-status');
+    const resultsEl = document.getElementById('bulk-user-results');
+    const file = fileInput.files[0];
+    if (!file) { UI.toast('Önce bir dosya seçin.', 'warning'); return; }
+
+    let headerMap, rows;
+    try {
+      ({ headerMap, rows } = await this._bulkParseFile(file));
+    } catch (err) {
+      UI.toast('Dosya okunamadı: ' + err.message, 'danger');
+      return;
+    }
+    if (headerMap.role == null || headerMap.username == null || headerMap.password == null) {
+      UI.toast('Dosyada "rol", "kullanıcı_adı" ve "şifre" sütunları bulunamalı.', 'danger');
+      return;
+    }
+    if (!rows.length) { UI.toast('Dosyada veri satırı bulunamadı.', 'warning'); return; }
+
+    const results = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNo = i + 2; // 1. satır başlık
+      const role = this._bulkNormalizeRole(row[headerMap.role]);
+      const username = String(row[headerMap.username] || '').trim();
+      const password = String(row[headerMap.password] || '').trim();
+      const displayName = headerMap.displayName != null ? String(row[headerMap.displayName] || '').trim() : '';
+      const target = headerMap.target != null ? String(row[headerMap.target] || '').trim() : '';
+
+      if (!role) { results.push({ rowNo, username, ok: false, error: 'Geçersiz rol (öğretmen/veli/öğrenci olmalı)' }); continue; }
+      if (!username || !password) { results.push({ rowNo, username, ok: false, error: 'Kullanıcı adı/şifre eksik' }); continue; }
+
+      const payload = { username, password, displayName, role };
+      if (role === 'teacher') {
+        if (!target) { results.push({ rowNo, username, ok: false, error: 'Sınıf adı eksik' }); continue; }
+        payload.className = target;
+      } else {
+        const student = this._matchStudent(target);
+        if (!student) { results.push({ rowNo, username, ok: false, error: `Öğrenci eşleşmedi: "${target}"` }); continue; }
+        if (role === 'student') payload.studentId = student.id;
+        else payload.studentIds = [student.id];
+      }
+
+      statusEl.textContent = `İşleniyor: satır ${rowNo}/${rows.length + 1}...`;
+      try {
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        results.push(res.ok ? { rowNo, username, ok: true } : { rowNo, username, ok: false, error: result.error || 'Bilinmeyen hata' });
+      } catch (err) {
+        results.push({ rowNo, username, ok: false, error: err.message });
+      }
+    }
+
+    const successCount = results.filter(r => r.ok).length;
+    statusEl.textContent = `Tamamlandı: ${successCount}/${results.length} başarılı.`;
+    resultsEl.innerHTML = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
+      <tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Satır</th><th style="padding:6px">Kullanıcı Adı</th><th style="padding:6px">Sonuç</th></tr>
+      ${results.map(r => `<tr style="border-top:1px solid var(--bg-glass-border)">
+        <td style="padding:6px">${r.rowNo}</td><td style="padding:6px">${r.username || '-'}</td>
+        <td style="padding:6px">${r.ok ? '<span style="color:#4ade80">✅ Oluşturuldu</span>' : `<span style="color:#fb7185">❌ ${r.error}</span>`}</td>
+      </tr>`).join('')}
+    </table></div>`;
+    // Tam sayfa render() cagirmiyoruz - yukarida gosterdigimiz sonuc
+    // tablosu hemen silinirdi. Sadece "Mevcut Hesaplar" tablosunu tazeliyoruz.
+    if (successCount > 0) {
+      const usersListEl = document.getElementById('users-list');
+      if (usersListEl) {
+        const freshUsers = await fetch('/api/admin/users').then(r => r.json());
+        const isRealAdmin = App.currentUser?.role === 'admin';
+        usersListEl.innerHTML = this._renderUsersTable(freshUsers, isRealAdmin);
+      }
+    }
   },
 };
