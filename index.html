@@ -157,6 +157,9 @@
           </div>
           <button class="menu-toggle" onclick="UI.toast('Bildirimler çok yakında burada olacak! 🚀','info')" title="Bildirimler">🔔</button>
           <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
+          <!-- Hesap Turu Rozeti: hangi yetki seviyesinde oturum acildigini
+               her zaman gorunur kilar (bkz. App.init() -> App.renderRoleBadge) -->
+          <div id="role-badge" class="sync-status-pill" style="display:none"></div>
           <!-- Cloud Sync Status Badge -->
           <div id="sync-status-badge" class="sync-status-pill sync-offline" title="Bulut Senkronizasyonu" onclick="App.navigateTo('settings')">
             <span class="sync-dot"></span>
