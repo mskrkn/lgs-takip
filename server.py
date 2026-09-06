@@ -352,19 +352,30 @@ PERMISSION_SEED = [
     "classes.view", "classes.create", "classes.update", "classes.delete",
     "exams.view", "exams.create", "exams.update", "exams.delete",
     "results.view", "analytics.view", "organization.manage", "users.manage",
+    "organizations.view", "organizations.create", "organizations.edit",
+]
+
+# Platform (okul-ustu) duzeyi izinler - hicbir okul admininin KENDI okuluyla
+# ilgisi yok, ROLE_PERMISSIONS_SEED'de INSTITUTION_ADMIN'den bilerek
+# cikarilir (bkz. asagisi). organization.manage = "baska bir okulun
+# VERISINI goruntule/yonet" (_effective_org_id'nin ?school_id= override
+# gate'i). organizations.* = "organizations TABLOSUNUN kendisini (ad/
+# iletisim/durum) yonet" - kavramsal olarak ayri ama ikisi de sadece
+# SUPER_ADMIN/PLATFORM_ADMIN'de.
+PLATFORM_ONLY_PERMISSIONS = [
+    "organization.manage", "organizations.view", "organizations.create", "organizations.edit",
 ]
 
 ROLE_PERMISSIONS_SEED = {
     "SUPER_ADMIN": PERMISSION_SEED,
     "PLATFORM_ADMIN": PERMISSION_SEED,
-    # "organization.manage" PLATFORM duzeyi bir izindir (baska okullari
-    # listeleme/olusturma, ?school_id= ile okul degistirme) - okul admininin
-    # KENDI okuluyla ilgisi yok, PERMISSION_SEED'den cikarilir. Aksi halde
-    # her okul admini bir digerinin school_id'sini enjekte edip o okulun
-    # verisine erisebilirdi (IDOR). Platform sahibi bir admin'e bu yetki
-    # ozel olarak PLATFORM_ADMIN v2 rolu EK OLARAK atanarak verilir (bkz.
-    # scripts/grant_platform_admin.py) - legacy role='admin' degismez.
-    "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p != "organization.manage"],
+    # Platform sahibi bir admin'e PLATFORM_ONLY_PERMISSIONS ozel olarak
+    # PLATFORM_ADMIN v2 rolu EK OLARAK atanarak verilir (bkz.
+    # grant_platform_admin.py) - legacy role='admin' degismez. Aksi halde
+    # (bu liste PERMISSION_SEED'in tamami olsaydi) her okul admini bir
+    # digerinin school_id'sini enjekte edip/organizations ucuna erisip
+    # baska okulun verisine ulasabilirdi (IDOR).
+    "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p not in PLATFORM_ONLY_PERMISSIONS],
     "TEACHER": ["students.view", "classes.view", "exams.view", "results.view", "analytics.view"],
     "PARENT": ["results.view", "analytics.view"],
     "STUDENT": ["results.view", "analytics.view"],
@@ -1522,6 +1533,15 @@ def api_login():
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
     if not user["active"]:
         return jsonify({"error": "Bu hesap pasifleştirilmiş. Yöneticinizle iletişime geçin."}), 403
+    # Okulun kendisi pasiflestirilmisse (bkz. api_superadmin_toggle_organization_status)
+    # o okula bagli KIMSE giris yapamaz - platform sahibinin organization_id'si
+    # NULL oldugu icin bu kontrolden hic etkilenmez.
+    if user["organization_id"]:
+        org = db.execute(
+            "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        if org and org["status"] != "active":
+            return jsonify({"error": "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin."}), 403
     if needs_rehash:
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), user["id"]))
         db.commit()
@@ -1623,7 +1643,7 @@ def _external_base_url():
 
 
 @app.route("/api/superadmin/organizations", methods=["GET"])
-@login_required(role=("admin", "super_admin"), permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_list_organizations():
     db = get_db()
     rows = db.execute(
@@ -1640,7 +1660,7 @@ def api_superadmin_list_organizations():
 
 
 @app.route("/api/superadmin/organizations", methods=["POST"])
-@login_required(role=("admin", "super_admin"), permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organizations.create")
 def api_superadmin_create_organization():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -1690,6 +1710,69 @@ def api_superadmin_create_organization():
         "organization": {"id": org_id, "name": name, "slug": slug},
         "admin": {"id": admin_cur.lastrowid, "username": admin_username},
     })
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>", methods=["PATCH"])
+@login_required(role=("admin", "super_admin"), permission="organizations.edit")
+def api_superadmin_update_organization(org_id):
+    """Bir okulun ad/iletisim bilgilerini kismi gunceller - status (aktif/
+    pasif) BURADAN degil, ayri toggle-status ucundan degistirilir (bkz.
+    asagisi) - iki farkli niyet (metadata duzenleme vs. erisimi kesme)
+    tek bir PATCH gövdesinde karışmasın."""
+    db = get_db()
+    org = db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, values = [], []
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Okul adı boş olamaz."}), 400
+        fields.append("name = ?")
+        values.append(name)
+    if "email" in data:
+        fields.append("email = ?")
+        values.append((data.get("email") or "").strip() or None)
+    if "phone" in data:
+        fields.append("phone = ?")
+        values.append((data.get("phone") or "").strip() or None)
+    if "address" in data:
+        fields.append("address = ?")
+        values.append((data.get("address") or "").strip() or None)
+
+    if not fields:
+        return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
+
+    fields.append("updated_at = ?")
+    values.append(datetime.now().isoformat())
+    values.append(org_id)
+    db.execute(f"UPDATE organizations SET {', '.join(fields)} WHERE id = ?", values)
+    db.commit()
+    log_audit(db, "ORGANIZATION_UPDATED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>/toggle-status", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.edit")
+def api_superadmin_toggle_organization_status(org_id):
+    """Bir okulu aktif/pasif yapar (soft archive - hard delete YOK, bkz. plan
+    context). Pasif bir okulun kullanicilari giris yapamaz (bkz. api_login),
+    ama platform sahibi ?school_id= ile o okulu goruntulemeye/yeniden aktive
+    etmeye devam edebilir - _effective_org_id'ye kasitli olarak dokunulmadi."""
+    db = get_db()
+    org = db.execute("SELECT status FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+    new_status = "inactive" if org["status"] == "active" else "active"
+    db.execute(
+        "UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?",
+        (new_status, datetime.now().isoformat(), org_id),
+    )
+    db.commit()
+    log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "status": new_status})
 
 
 # ============================================================
