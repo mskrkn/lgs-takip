@@ -104,6 +104,13 @@ const App = {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
       });
+      // Mobil alt navigasyon çubuğu (Anasayfa/Öğrenciler/Denemeler/Giriş/
+      // Ayarlar) yukarıdaki .nav-item filtresine dahil değil - hiçbiri bu
+      // hesap için geçerli değil (Okullar/Sistem Logları alt çubukta hiç
+      // yok), gizlenmezse dar ekranda eski (kendi okulu olan) admin gibi
+      // bu sayfalara erişilebiliyordu.
+      const mobileBar = document.getElementById('mobile-bottom-nav');
+      if (mobileBar) mobileBar.style.display = 'none';
       await this.navigateTo('schools');
       return;
     }
@@ -116,6 +123,11 @@ const App = {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.style.display = item.dataset.page === 'users' ? '' : 'none';
       });
+      // "Kullanıcılar" mobil alt çubukta hiç yok - aynı sızıntıyı burada da
+      // engellemek için tüm çubuğu gizle (yukarıdaki isPurePlatformAccount
+      // ile aynı gerekçe).
+      const mobileBar = document.getElementById('mobile-bottom-nav');
+      if (mobileBar) mobileBar.style.display = 'none';
       await this.navigateTo('users');
       return;
     }
