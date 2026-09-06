@@ -7,6 +7,10 @@ const App = {
   currentStudentId: null,
   deferredPwaPrompt: null,
   currentUser: null,
+  // super_admin "Okullar" sayfasindan bir okula "girdiginde" {id,name} olur
+  // (bkz. js/schools.js manageSchoolUsers / js/adminUsers.js _schoolQuery) -
+  // Kullanicilar sayfasinin hangi okulun hesaplarini yonetecegini belirler.
+  actingSchool: null,
   _currentPageData: {},
   _navHistory: [], // { page, data } yığını - bkz. navigateTo/goBack
 

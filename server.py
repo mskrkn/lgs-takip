@@ -745,6 +745,32 @@ def _current_org_id(db):
         or _get_default_org_id(db)
 
 
+def _effective_org_id(db):
+    """Bir Kullanicilar-sayfasi ucunun ISLEM YAPACAGI okulu cozer.
+
+    - super_admin: kendi organization_id'si YOK (NULL) - hangi okulu
+      yonettigini ?school_id= query param'i ile ACIKCA belirtmek ZORUNDA.
+      Bu, "Okullar" sayfasindan bir okula "girip" Kullanicilar sayfasini
+      o okul icin acmayi saglar (bkz. js/schools.js "Kullanicilarini Yonet").
+    - herhangi baska bir rol (admin/teacher-delege): query param'i TAMAMEN
+      YOK SAYILIR - kendi organization_id'sine sabittir. Aksi halde bir
+      okul admini/delegesi URL'e baska bir school_id yapistirip baska
+      okulun hesaplarini yonetebilirdi (ciddi bir okul-arasi IDOR acigi).
+    Super_admin gecerli olmayan/var olmayan bir school_id verirse (None, str,int)
+    None doner - cagiran taraf bunu 400/404 olarak islemeli."""
+    if session.get("role") == "super_admin":
+        raw = request.args.get("school_id")
+        if not raw:
+            return None
+        try:
+            org_id = int(raw)
+        except (TypeError, ValueError):
+            return None
+        exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
+        return org_id if exists else None
+    return _current_org_id(db)
+
+
 # ============================================================
 # Coklu okul: client (tarayici IndexedDB) tarafinda uretilen
 # students/exams/results id'lerinin okullar arasi CAKISMAMASI
@@ -1628,10 +1654,12 @@ def api_superadmin_create_organization():
 # bir token (student_invite_tokens) kullanilir.
 
 @app.route("/api/admin/teacher-invite", methods=["GET"])
-@login_required(role=("admin", "teacher"), permission="users.manage")
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_get_teacher_invite():
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     org = db.execute("SELECT teacher_invite_code FROM organizations WHERE id = ?", (org_id,)).fetchone()
     code = org["teacher_invite_code"] if org else None
     if not code:
@@ -1643,10 +1671,12 @@ def api_admin_get_teacher_invite():
 
 
 @app.route("/api/admin/teacher-invite/regenerate", methods=["POST"])
-@login_required(role="admin")
+@login_required(role=("admin", "super_admin"))
 def api_admin_regenerate_teacher_invite():
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     code = secrets.token_urlsafe(9)
     db.execute("UPDATE organizations SET teacher_invite_code = ? WHERE id = ?", (code, org_id))
     db.commit()
@@ -1712,10 +1742,12 @@ def api_register_teacher():
 
 
 @app.route("/api/admin/students/<int:student_id>/invite", methods=["POST"])
-@login_required(role=("admin", "teacher"), permission="users.manage")
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_get_student_invite(student_id):
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     student = db.execute(
         "SELECT id FROM students WHERE id = ? AND organization_id = ?", (student_id, org_id)
     ).fetchone()
@@ -1742,10 +1774,12 @@ def api_admin_get_student_invite(student_id):
 
 
 @app.route("/api/admin/students/<int:student_id>/invite/revoke", methods=["POST"])
-@login_required(role="admin")
+@login_required(role=("admin", "super_admin"))
 def api_admin_revoke_student_invite(student_id):
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
         "UPDATE student_invite_tokens SET revoked_at = ? "
         "WHERE student_id = ? AND organization_id = ? AND revoked_at IS NULL",
@@ -1971,10 +2005,12 @@ def api_admin_sync():
 # ============================================================
 
 @app.route("/api/admin/users", methods=["GET"])
-@login_required(role=("admin", "teacher"), permission="users.manage")
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_list_users():
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
         "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
         "WHERE role != 'admin' AND organization_id = ? ORDER BY role, username",
@@ -2012,10 +2048,12 @@ def api_admin_list_users():
 # zaten students.view var (kendi paneli için), o izni burada da kabul
 # etseydik yetki devri olmayan HER öğretmen bu admin listesine erişirdi.
 # Bu uç sadece js/adminUsers.js'in hesap-oluşturma dropdown'ı için var.
-@login_required(role=("admin", "teacher"), permission="users.manage")
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_students_list():
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
         "SELECT id, first_name, last_name, class_name, school_number FROM students "
         "WHERE organization_id = ? ORDER BY class_name, last_name",
@@ -2025,7 +2063,7 @@ def api_admin_students_list():
 
 
 @app.route("/api/admin/users", methods=["POST"])
-@login_required(role=("admin", "teacher"), permission="users.manage")
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_create_user():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
@@ -2046,7 +2084,9 @@ def api_admin_create_user():
         return jsonify({"error": "Öğrenci hesabı için bir öğrenci kaydı seçilmeli."}), 400
 
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     if existing:
         return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
@@ -2086,10 +2126,12 @@ def api_admin_create_user():
 
 
 @app.route("/api/admin/users/<int:user_id>", methods=["DELETE"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "super_admin"), permission="users.manage")
 def api_admin_delete_user(user_id):
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
         "DELETE FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
         (user_id, org_id),
@@ -2100,10 +2142,12 @@ def api_admin_delete_user(user_id):
 
 
 @app.route("/api/admin/users/<int:user_id>/toggle-active", methods=["POST"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "super_admin"), permission="users.manage")
 def api_admin_toggle_active(user_id):
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     user = db.execute(
         "SELECT active FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
         (user_id, org_id),
@@ -2118,14 +2162,16 @@ def api_admin_toggle_active(user_id):
 
 
 @app.route("/api/admin/users/<int:user_id>/password", methods=["POST"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "super_admin"), permission="users.manage")
 def api_admin_reset_password(user_id):
     data = request.get_json(silent=True) or {}
     new_password = data.get("password") or ""
     if len(new_password) < 4:
         return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
         "UPDATE users SET password_hash = ? WHERE id = ? AND role != 'admin' AND organization_id = ?",
         (hash_password(new_password), user_id, org_id),
@@ -2135,16 +2181,19 @@ def api_admin_reset_password(user_id):
 
 
 @app.route("/api/admin/users/<int:user_id>/delegate", methods=["POST"])
-@login_required(role="admin", permission="users.manage")
+@login_required(role=("admin", "super_admin"), permission="users.manage")
 def api_admin_set_delegate(user_id):
-    """Okul admini kendi ogretmenlerinden birine hesap ekleme/listeleme
-    yetkisi verir/geri alir - SADECE gercek admin cagirabilir (bir delege
-    kendini/baskasini yetkilendiremez, role="admin" sabit tutulur)."""
+    """Okul admini (ya da bir okula girmis super_admin) kendi
+    ogretmenlerinden birine hesap ekleme/listeleme yetkisi verir/geri alir -
+    bir delege kendini/baskasini yetkilendiremez (role listesi delege'nin
+    kendi 'teacher' rolunu icermiyor)."""
     data = request.get_json(silent=True) or {}
     grant = bool(data.get("grant"))
 
     db = get_db()
-    org_id = _current_org_id(db)
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     target = db.execute(
         "SELECT id FROM users WHERE id = ? AND role = 'teacher' AND organization_id = ?",
         (user_id, org_id),

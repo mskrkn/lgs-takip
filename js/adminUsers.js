@@ -27,15 +27,42 @@ const AdminUsers = {
     return result;
   },
 
+  // Super_admin bir okula "girmisse" (bkz. js/schools.js manageSchoolUsers)
+  // App.actingSchool {id,name} dolu olur - bu okulun hesap uclarina bu
+  // sorgu string'i eklenerek erisiliyor (server.py _effective_org_id).
+  // Gercek okul admini/delege icin bos string - kendi organization_id'lerine
+  // zaten sabitler, ekstra bir sey gondermelerine gerek/izin yok.
+  _schoolQuery() {
+    return (App.currentUser?.role === 'super_admin' && App.actingSchool)
+      ? `?school_id=${App.actingSchool.id}` : '';
+  },
+
+  exitSchoolContext() {
+    App.actingSchool = null;
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+      item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+    });
+    App.navigateTo('schools');
+  },
+
   async render() {
     const container = document.getElementById('page-users');
     if (!container) return;
 
+    if (App.currentUser?.role === 'super_admin' && !App.actingSchool) {
+      // Dogrudan gecmis/geri tusuyla buraya dusulduyse (okul secilmeden) -
+      // Okullar sayfasina geri gonder, aksi halde school_id'siz istekler
+      // sunucudan hep 400 doner.
+      App.navigateTo('schools');
+      return;
+    }
+
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
 
+    const q = this._schoolQuery();
     const [users, students] = await Promise.all([
-      fetch('/api/admin/users').then(r => r.json()),
-      fetch('/api/admin/students').then(r => r.json()),
+      fetch(`/api/admin/users${q}`).then(r => r.json()),
+      fetch(`/api/admin/students${q}`).then(r => r.json()),
     ]);
 
     this._students = students;
@@ -44,12 +71,24 @@ const AdminUsers = {
 
     // Gercek admin mi, yoksa hesap ekleme/listeleme yetkisi devredilmis bir
     // ogretmen mi (bkz. /api/admin/users/<id>/delegate)? Senkron (/api/admin/sync)
-    // ve hesap silme/pasiflestirme/sifre sifirlama SADECE gercek admin'e acik -
-    // delege bu butonlari hic gormez (arka planda zaten 403 doner ama once
-    // arayuzde gostermemek daha temiz).
+    // SADECE gercek okul admin'ine acik - bu, admin'in KENDI tarayicisindaki
+    // yerel (IndexedDB) deneme verisini gonderir, super_admin'in tarayicisinda
+    // o okulun verisi hic yok. Ama hesap silme/pasiflestirme/sifre
+    // sifirlama/delege yetkisi hem gercek admin'e hem "bir okula girmis"
+    // super_admin'e acik (ikisi de sunucu tarafinda role=("admin","super_admin")
+    // ile izinli) - delege bir ogretmen ise bunlarin hicbirini goremez.
     const isRealAdmin = App.currentUser?.role === 'admin';
+    const canManageAccounts = isRealAdmin || (App.currentUser?.role === 'super_admin' && !!App.actingSchool);
 
     container.innerHTML = `
+      ${App.currentUser?.role === 'super_admin' && App.actingSchool ? `
+      <div class="card" style="border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.08)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <span>🏫 <b>${App.actingSchool.name}</b> okulunun hesapları yönetiliyor</span>
+          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.exitSchoolContext()">⬅️ Okullara Dön</button>
+        </div>
+      </div>` : ''}
+
       ${isRealAdmin ? `
       <div class="card" style="border:1px solid rgba(20,184,166,0.3)">
         <div class="card-header">
@@ -157,7 +196,7 @@ const AdminUsers = {
           okulunuza öğretmen olarak kaydolabilirler.
         </p>
         <div id="teacher-invite-box" class="text-muted">Yükleniyor...</div>
-        ${isRealAdmin ? '<button class="btn btn-secondary mt-2" onclick="AdminUsers.regenerateTeacherInvite()">🔄 Linki Yeniden Oluştur (eskisi geçersiz olur)</button>' : ''}
+        ${canManageAccounts ? '<button class="btn btn-secondary mt-2" onclick="AdminUsers.regenerateTeacherInvite()">🔄 Linki Yeniden Oluştur (eskisi geçersiz olur)</button>' : ''}
       </div>
 
       <div class="card mt-2">
@@ -176,7 +215,7 @@ const AdminUsers = {
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
-        <div id="users-list">${this._renderUsersTable(users, isRealAdmin)}</div>
+        <div id="users-list">${this._renderUsersTable(users, canManageAccounts)}</div>
       </div>
 
       <div class="card mt-2">
@@ -262,7 +301,7 @@ const AdminUsers = {
     const box = document.getElementById('teacher-invite-box');
     if (!box) return;
     try {
-      const res = await fetch('/api/admin/teacher-invite');
+      const res = await fetch(`/api/admin/teacher-invite${this._schoolQuery()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Davet linki alınamadı.');
       box.innerHTML = `<code style="word-break:break-all;background:rgba(255,255,255,0.05);padding:6px 8px;border-radius:8px;display:inline-block">${data.url}</code>
@@ -274,7 +313,7 @@ const AdminUsers = {
 
   async regenerateTeacherInvite() {
     if (!confirm('Yeni bir link oluşturulacak, eski link artık çalışmayacak. Emin misiniz?')) return;
-    const res = await fetch('/api/admin/teacher-invite/regenerate', { method: 'POST' });
+    const res = await fetch(`/api/admin/teacher-invite/regenerate${this._schoolQuery()}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { UI.toast(data.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast('Yeni davet linki oluşturuldu.', 'success');
@@ -282,7 +321,7 @@ const AdminUsers = {
   },
 
   async getStudentInvite(studentId) {
-    const res = await fetch(`/api/admin/students/${studentId}/invite`, { method: 'POST' });
+    const res = await fetch(`/api/admin/students/${studentId}/invite${this._schoolQuery()}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { UI.toast(data.error || 'Davet linki alınamadı.', 'danger'); return; }
     this._copyText(data.url);
@@ -438,7 +477,7 @@ const AdminUsers = {
       .map(cb => Number(cb.value));
 
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch(`/api/admin/users${this._schoolQuery()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -459,13 +498,13 @@ const AdminUsers = {
 
   async deleteUser(id) {
     if (!confirm('Bu hesabı silmek istediğinize emin misiniz?')) return;
-    await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/users/${id}${this._schoolQuery()}`, { method: 'DELETE' });
     UI.toast('Hesap silindi.', 'info');
     this.render();
   },
 
   async toggleActive(id) {
-    const res = await fetch(`/api/admin/users/${id}/toggle-active`, { method: 'POST' });
+    const res = await fetch(`/api/admin/users/${id}/toggle-active${this._schoolQuery()}`, { method: 'POST' });
     const result = await res.json();
     if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast(result.active ? 'Hesap aktifleştirildi.' : 'Hesap pasifleştirildi.', 'info');
@@ -474,7 +513,7 @@ const AdminUsers = {
 
   async setDelegate(id, grant) {
     if (grant && !confirm('Bu öğretmen artık kendi okulunuz için öğretmen/öğrenci hesabı ekleyebilecek ve mevcut hesapları listeleyebilecek (silme/pasifleştirme yetkisi olmayacak). Onaylıyor musunuz?')) return;
-    const res = await fetch(`/api/admin/users/${id}/delegate`, {
+    const res = await fetch(`/api/admin/users/${id}/delegate${this._schoolQuery()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant }),
@@ -507,7 +546,7 @@ const AdminUsers = {
   async resetPassword(id) {
     const pw = prompt('Yeni şifreyi girin (en az 4 karakter):');
     if (!pw) return;
-    const res = await fetch(`/api/admin/users/${id}/password`, {
+    const res = await fetch(`/api/admin/users/${id}/password${this._schoolQuery()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: pw }),
@@ -643,7 +682,7 @@ const AdminUsers = {
 
       statusEl.textContent = `İşleniyor: satır ${rowNo}/${rows.length + 1}...`;
       try {
-        const res = await fetch('/api/admin/users', {
+        const res = await fetch(`/api/admin/users${this._schoolQuery()}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -669,9 +708,10 @@ const AdminUsers = {
     if (successCount > 0) {
       const usersListEl = document.getElementById('users-list');
       if (usersListEl) {
-        const freshUsers = await fetch('/api/admin/users').then(r => r.json());
-        const isRealAdmin = App.currentUser?.role === 'admin';
-        usersListEl.innerHTML = this._renderUsersTable(freshUsers, isRealAdmin);
+        const freshUsers = await fetch(`/api/admin/users${this._schoolQuery()}`).then(r => r.json());
+        const canManageAccounts = App.currentUser?.role === 'admin' ||
+          (App.currentUser?.role === 'super_admin' && !!App.actingSchool);
+        usersListEl.innerHTML = this._renderUsersTable(freshUsers, canManageAccounts);
       }
     }
   },
