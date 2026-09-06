@@ -90,6 +90,7 @@ const Schools = {
       <tr style="text-align:left;color:var(--text-muted);font-size:13px">
         <th style="padding:8px">Okul</th><th style="padding:8px">Öğrenci</th>
         <th style="padding:8px">Yönetici</th><th style="padding:8px">Durum</th><th style="padding:8px">Oluşturulma</th>
+        <th style="padding:8px"></th>
       </tr>`;
     schools.forEach(s => {
       html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
@@ -98,10 +99,27 @@ const Schools = {
         <td style="padding:8px">${s.adminCount}</td>
         <td style="padding:8px">${s.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : s.status}</td>
         <td style="padding:8px">${(s.createdAt || '').slice(0, 10)}</td>
+        <td style="padding:8px;text-align:right;white-space:nowrap">
+          <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.manageSchoolUsers(this)">👥 Kullanıcılarını Yönet</button>
+        </td>
       </tr>`;
     });
     html += '</table></div>';
     return html;
+  },
+
+  // Bu okulun "Kullanicilar" sayfasini (js/adminUsers.js) super_admin
+  // adina acar - Faz 1'de bilincli olarak yoktu ("okula girip bakma"),
+  // sonradan sadece HESAP yonetimi (Ogrenciler/Denemeler DEGIL, onlar
+  // hala o okulun kendi tarayicisindaki yerel veriye bagli) icin eklendi.
+  // data-* attribute'lardan okunuyor (JS string olarak gomulseydi okul
+  // adindaki bir tirnak isareti HTML'i bozardi).
+  manageSchoolUsers(btn) {
+    App.actingSchool = { id: Number(btn.dataset.schoolId), name: btn.dataset.schoolName };
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+      item.style.display = item.dataset.page === 'users' ? '' : 'none';
+    });
+    App.navigateTo('users');
   },
 
   async createSchool() {
