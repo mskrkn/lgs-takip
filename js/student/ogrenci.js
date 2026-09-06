@@ -724,6 +724,93 @@
     }
 
     // ----- SAYFA NAVİGASYONU -----
+    // ---- Ödevlerim ----
+    async function renderAssignmentsList() {
+      const container = document.getElementById('assignments-list');
+      document.getElementById('assignment-detail-card').innerHTML = '';
+      container.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+      let list;
+      try {
+        list = await fetch('/api/student/assignments').then(r => r.json());
+      } catch (e) {
+        container.innerHTML = '<p class="text-muted">❌ Ödevler yüklenemedi.</p>';
+        return;
+      }
+      if (!list.length) {
+        container.innerHTML = '<p class="text-muted">Şu an size verilmiş bir ödev yok.</p>';
+        return;
+      }
+      container.innerHTML = list.map(a => `
+        <div class="ep-card" style="margin-top:10px;cursor:pointer" onclick="openAssignment(${a.id})">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <b>${escapeHtml(a.title)}</b>
+              ${a.dueDate ? `<div class="text-muted" style="font-size:12px">Son tarih: ${escapeHtml(a.dueDate)}</div>` : ''}
+            </div>
+            <span style="color:${a.completed ? '#4ade80' : '#facc15'}">${a.completed ? '✅ Tamamlandı' : '⏳ Bekliyor'}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function openAssignment(id) {
+      const card = document.getElementById('assignment-detail-card');
+      card.innerHTML = '<div class="ep-card" style="margin-top:10px"><p class="text-muted">Yükleniyor...</p></div>';
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const res = await fetch(`/api/student/assignments/${id}`);
+      const data = await res.json();
+      if (!res.ok) { card.innerHTML = `<div class="ep-card" style="margin-top:10px"><p class="text-muted">❌ ${data.error}</p></div>`; return; }
+
+      const questionsHtml = data.questions.map((q, i) => `
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bg-glass-border)">
+          <div style="font-size:13px;color:var(--text-muted)">Soru ${i + 1} — ${escapeHtml(q.displayCode)}</div>
+          ${q.questionText ? `<div style="margin-top:6px">${escapeHtml(q.questionText)}</div>` : (q.hasImage ? '<div class="text-muted" style="margin-top:6px">(Görsel soru - öğretmeninize danışın)</div>' : '')}
+          <input type="text" class="form-control assignment-answer-input" data-question-id="${q.questionBankId}"
+                 style="margin-top:8px;max-width:200px" placeholder="Cevabınız"
+                 value="${escapeHtml(q.myAnswer || '')}" ${data.status !== 'active' ? 'disabled' : ''}>
+          ${q.isCorrect !== null && q.isCorrect !== undefined ? `<span style="margin-left:8px">${q.isCorrect ? '✅' : '❌'}</span>` : ''}
+        </div>
+      `).join('');
+
+      card.innerHTML = `
+        <div class="ep-card" style="margin-top:10px">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">📋</div> ${escapeHtml(data.title)}</div></div>
+          ${data.description ? `<p class="text-muted">${escapeHtml(data.description)}</p>` : ''}
+          ${questionsHtml}
+          ${data.status === 'active' ? `<button onclick="submitAssignment(${id})" style="margin-top:14px;padding:10px 20px;border:none;border-radius:8px;background:#14B8A6;color:#fff;font-weight:600;cursor:pointer">Gönder</button>` : '<p class="text-muted mt-2">Bu ödev artık aktif değil.</p>'}
+          <div id="assignment-submit-status" class="text-muted" style="margin-top:8px;font-size:13px"></div>
+        </div>
+      `;
+    }
+
+    async function submitAssignment(id) {
+      const inputs = [...document.querySelectorAll('.assignment-answer-input')];
+      const answers = inputs
+        .map(el => ({ questionBankId: Number(el.dataset.questionId), answer: el.value.trim() }))
+        .filter(a => a.answer);
+      const statusEl = document.getElementById('assignment-submit-status');
+      if (!answers.length) { statusEl.textContent = '❌ En az bir soruyu cevaplayın.'; return; }
+      statusEl.textContent = 'Gönderiliyor...';
+      try {
+        const res = await fetch(`/api/student/assignments/${id}/submit`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answers }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Gönderilemedi.');
+        // openAssignment() tum karti (statusEl dahil) yeniden olusturuyor -
+        // once yeniden render edip mesaji YENI elemente yazmak gerekiyor,
+        // aksi halde eski statusEl'e yazilan mesaj aninda silinirdi. Liste
+        // (Odevlerim) bir sonraki nav tiklamasinda zaten tazeleniyor -
+        // burada renderAssignmentsList() cagirmiyoruz cunku o, su an
+        // gorunen bu detay kartini da temizliyor (basari mesaji kaybolurdu).
+        await openAssignment(id);
+        document.getElementById('assignment-submit-status').textContent = '✅ Cevaplarınız kaydedildi.';
+      } catch (err) {
+        statusEl.textContent = '❌ ' + err.message;
+      }
+    }
+
     function showPage(page) {
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
@@ -734,6 +821,7 @@
         dashboard: ['Ana Sayfa','Başarı Merkezi'],
         analytics: ['Analizler','Konu Analizi & Sınıf Karşılaştırma'],
         exams:     ['Denemelerim','Deneme Sonuçlarım'],
+        assignments: ['Ödevlerim','Öğretmenimin Verdiği Ödevler'],
         settings:  ['Ayarlar','Hesap & Güvenlik'],
       };
       const [title, subtitle] = titles[page] || [page,''];
@@ -746,7 +834,10 @@
     }
 
     function setupNav() {
-      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.addEventListener('click', () => showPage(i.dataset.page)));
+      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.addEventListener('click', () => {
+        showPage(i.dataset.page);
+        if (i.dataset.page === 'assignments') renderAssignmentsList();
+      }));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.addEventListener('click', () => showPage(i.dataset.page)));
       const toggle  = document.getElementById('menu-toggle');
       const sidebar = document.querySelector('.sidebar');

@@ -66,6 +66,7 @@
         students: ['Öğrenciler', 'Sıralı Öğrenci Listesi & Detaylı İnceleme'],
         exams: ['Denemeler', 'Deneme Sonuçları'],
         message: ['Mesaj Gönder', 'Öğrenciye Özel Mesaj'],
+        assignments: ['Ödevler', 'Ödev Oluştur & Sonuçları Gör'],
         topics: ['Konular', 'Yakında'],
         ai: ['Edu AI', 'Eğitim Asistanın'],
         settings: ['Ayarlar', 'Hesap & Güvenlik'],
@@ -82,7 +83,10 @@
 
     function setupNav() {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.addEventListener('click', () => showPage(item.dataset.page));
+        item.addEventListener('click', () => {
+          showPage(item.dataset.page);
+          if (item.dataset.page === 'assignments') renderAssignmentsPage();
+        });
       });
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
         item.addEventListener('click', () => showPage(item.dataset.page));
@@ -413,6 +417,209 @@
         document.getElementById('message-text').value = '';
       } catch (err) {
         statusEl.textContent = '❌ ' + err.message;
+      }
+    }
+
+    // ---- Ödevler ----
+    let approvedQuestionsCache = null;
+
+    async function renderAssignmentsPage() {
+      const container = document.getElementById('page-assignments');
+      container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
+      let list;
+      try {
+        list = await fetch('/api/teacher/assignments').then(r => r.json());
+      } catch (e) {
+        container.innerHTML = `<p class="text-muted">❌ Ödevler yüklenemedi.</p>`;
+        return;
+      }
+      const classNames = [...new Set((allStudents || []).map(s => s.class_name).filter(Boolean))].sort();
+
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title"><span class="card-icon">📋</span> Ödevlerim</h3>
+          </div>
+          ${renderAssignmentsTable(list)}
+        </div>
+        <div class="card mt-2">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">➕</span> Yeni Ödev Oluştur</h3></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:14px">
+            <div>
+              <label class="form-label">Sınıf</label>
+              <select id="assignment-class" class="form-control">
+                ${classNames.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Başlık</label>
+              <input type="text" id="assignment-title" class="form-control" placeholder="Örn: Kesirler Tekrar Ödevi">
+            </div>
+            <div>
+              <label class="form-label">Son Tarih (opsiyonel)</label>
+              <input type="date" id="assignment-due" class="form-control">
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label">Açıklama (opsiyonel)</label>
+            <textarea id="assignment-description" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="mt-2">
+            <label class="form-label">Sorular (onaylanmış soru bankasından)</label>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:8px" onclick="suggestAssignmentQuestions()">🤖 AI Önerisi</button>
+            <div id="assignment-question-picker" style="max-height:260px;overflow-y:auto;border:1px solid var(--bg-glass-border);border-radius:8px;padding:8px">
+              <p class="text-muted">Yükleniyor...</p>
+            </div>
+            <div id="assignment-ai-note" class="text-muted" style="margin-top:6px;font-size:12px"></div>
+          </div>
+          <button class="btn btn-primary mt-2" onclick="createAssignment()">Ödevi Oluştur</button>
+          <div id="assignment-create-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
+        </div>
+        <div id="assignment-results-card"></div>
+      `;
+      loadQuestionPicker();
+    }
+
+    function renderAssignmentsTable(list) {
+      if (!list.length) return '<p class="text-muted">Henüz ödev oluşturmadınız.</p>';
+      let html = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
+        <tr style="text-align:left;color:var(--text-muted);font-size:13px">
+          <th style="padding:8px">Başlık</th><th style="padding:8px">Sınıf</th>
+          <th style="padding:8px">Tamamlanma</th><th style="padding:8px">Durum</th><th style="padding:8px"></th>
+        </tr>`;
+      list.forEach(a => {
+        html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
+          <td style="padding:8px">${escapeHtml(a.title)}</td>
+          <td style="padding:8px">${escapeHtml(a.className)}</td>
+          <td style="padding:8px">${a.submittedStudents}/${a.totalStudents}</td>
+          <td style="padding:8px">${a.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● İptal</span>'}</td>
+          <td style="padding:8px;text-align:right;white-space:nowrap">
+            <button class="btn btn-secondary btn-sm" onclick="viewAssignmentResults(${a.id})">📊 Sonuçlar</button>
+            ${a.status === 'active' ? `<button class="btn btn-secondary btn-sm" onclick="cancelAssignment(${a.id})">🚫 İptal Et</button>` : ''}
+          </td>
+        </tr>`;
+      });
+      html += '</table></div>';
+      return html;
+    }
+
+    async function loadQuestionPicker() {
+      const picker = document.getElementById('assignment-question-picker');
+      try {
+        if (!approvedQuestionsCache) {
+          approvedQuestionsCache = await fetch('/api/teacher/question-bank/approved').then(r => r.json());
+        }
+        if (!approvedQuestionsCache.length) {
+          picker.innerHTML = '<p class="text-muted">Henüz onaylanmış soru yok - önce yönetici soru bankasından soru onaylamalı.</p>';
+          return;
+        }
+        picker.innerHTML = approvedQuestionsCache.map(q => `
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px">
+            <input type="checkbox" value="${q.id}" class="assignment-question-checkbox">
+            <span>${escapeHtml(q.displayCode)} — ${escapeHtml(q.subjectName || '-')}${q.hasImage && !q.questionText ? ' (görsel soru)' : ''}</span>
+          </label>
+        `).join('');
+      } catch (e) {
+        picker.innerHTML = '<p class="text-muted">❌ Sorular yüklenemedi.</p>';
+      }
+    }
+
+    async function suggestAssignmentQuestions() {
+      const className = document.getElementById('assignment-class').value;
+      const note = document.getElementById('assignment-ai-note');
+      note.textContent = 'Öneri alınıyor...';
+      try {
+        const res = await fetch('/api/teacher/ai/generate-assignment', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ className }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Öneri alınamadı.');
+        document.querySelectorAll('.assignment-question-checkbox').forEach(el => {
+          el.checked = data.suggestedQuestionIds.includes(Number(el.value));
+        });
+        note.textContent = '🤖 ' + data.note;
+      } catch (err) {
+        note.textContent = '❌ ' + err.message;
+      }
+    }
+
+    async function createAssignment() {
+      const className = document.getElementById('assignment-class').value;
+      const title = document.getElementById('assignment-title').value.trim();
+      const description = document.getElementById('assignment-description').value.trim();
+      const dueDate = document.getElementById('assignment-due').value;
+      const questionIds = [...document.querySelectorAll('.assignment-question-checkbox:checked')].map(el => Number(el.value));
+      const statusEl = document.getElementById('assignment-create-status');
+
+      if (!className) { statusEl.textContent = '❌ Sınıf seçin.'; return; }
+      if (!title) { statusEl.textContent = '❌ Başlık girin.'; return; }
+      if (!questionIds.length) { statusEl.textContent = '❌ En az bir soru seçin.'; return; }
+
+      statusEl.textContent = 'Oluşturuluyor...';
+      try {
+        const res = await fetch('/api/teacher/assignments', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ className, title, description, dueDate, questionIds }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ödev oluşturulamadı.');
+        await renderAssignmentsPage();
+      } catch (err) {
+        statusEl.textContent = '❌ ' + err.message;
+      }
+    }
+
+    async function cancelAssignment(id) {
+      if (!confirm('Bu ödevi iptal etmek istediğinize emin misiniz? Öğrenciler artık göremeyecek.')) return;
+      const res = await fetch(`/api/teacher/assignments/${id}/cancel`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || 'İptal edilemedi.'); return; }
+      await renderAssignmentsPage();
+    }
+
+    async function viewAssignmentResults(id) {
+      const card = document.getElementById('assignment-results-card');
+      card.innerHTML = `<div class="card mt-2"><p class="text-muted">Yükleniyor...</p></div>`;
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const res = await fetch(`/api/teacher/assignments/${id}/results`);
+      const data = await res.json();
+      if (!res.ok) { card.innerHTML = `<div class="card mt-2"><p class="text-muted">❌ ${data.error}</p></div>`; return; }
+
+      let rows = data.students.map(s => `
+        <tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
+          <td style="padding:8px">${escapeHtml(s.firstName + ' ' + s.lastName)}</td>
+          <td style="padding:8px">${s.submitted ? `${s.correctCount}/${s.totalQuestions} doğru` : '<span class="text-muted">Yapılmadı</span>'}</td>
+        </tr>
+      `).join('');
+
+      card.innerHTML = `
+        <div class="card mt-2">
+          <div class="card-header">
+            <h3 class="card-title"><span class="card-icon">📊</span> "${escapeHtml(data.assignment.title)}" Sonuçları</h3>
+          </div>
+          <div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
+            <tr style="text-align:left;color:var(--text-muted);font-size:13px">
+              <th style="padding:8px">Öğrenci</th><th style="padding:8px">Sonuç</th>
+            </tr>
+            ${rows}
+          </table></div>
+        </div>
+      `;
+    }
+
+    async function analyzeSelectedStudent() {
+      const studentId = Number(document.getElementById('message-student-select').value);
+      const box = document.getElementById('ai-analysis-box');
+      if (!studentId) { box.textContent = '❌ Lütfen bir öğrenci seçin.'; return; }
+      box.textContent = 'Analiz ediliyor...';
+      try {
+        const res = await fetch(`/api/teacher/ai/analyze-student/${studentId}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Analiz alınamadı.');
+        box.textContent = '🤖 ' + data.analysis;
+      } catch (err) {
+        box.textContent = '❌ ' + err.message;
       }
     }
 
