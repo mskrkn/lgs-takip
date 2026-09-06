@@ -64,13 +64,21 @@ function normalizeClassName(className) {
 
 class Database {
   constructor() {
-    this.db = new Dexie(DB_NAME);
-    this._initSchema();
+    // KRITIK: burada HENUZ acmiyoruz - hangi okulun verisini acacagimizi
+    // bilmeden (session'daki organizationId gelmeden) sabit isimli tek bir
+    // veritabani acmak, AYNI tarayicida farkli okul hesaplarinin (ornegin
+    // ayni bilgisayardan sirayla iki farkli okulun adminine giris yapmak)
+    // BIRBIRININ yerel Ogrenciler/Denemeler verisini gormesine yol acardi -
+    // bkz. switchToOrg. App.init() /api/me'den organizationId'yi alir almaz
+    // switchToOrg'u cagirir, tum diger db.* kullanimlari (kullanici
+    // etkilesimiyle tetiklenen sayfa/islem kodu) bundan SONRA calisir.
+    this.db = null;
+    this._openOrgId = undefined;
   }
 
-  _initSchema() {
+  _defineSchema(dexieInstance) {
     // v1: orijinal şema (LGS-only, exam'lerde tür bilgisi yok).
-    this.db.version(1).stores({
+    dexieInstance.version(1).stores({
       students: '++id, schoolNumber, firstName, lastName, className',
       exams: '++id, name, date',
       results: '++id, studentId, examId, [studentId+examId]',
@@ -79,7 +87,7 @@ class Database {
     // v2: çoklu sınav türü desteği. exams.examType eklendi, optikProfiles tablosu
     // eklendi. Var olan exam kayıtları examType alanı olmadan geldiği için
     // upgrade adımında hepsi 'LGS' ile geriye dönük olarak işaretlenir.
-    this.db.version(2).stores({
+    dexieInstance.version(2).stores({
       students: '++id, schoolNumber, firstName, lastName, className',
       exams: '++id, name, date, examType',
       results: '++id, studentId, examId, [studentId+examId]',
@@ -93,13 +101,72 @@ class Database {
     // v3: Excel/CSV/PDF içe aktarımı için sütun eşleştirme şablonları. Bir
     // eşleştirme bir kez kaydedilince, aynı başlıklara sahip sonraki dosyalarda
     // otomatik uygulanır (optikProfiles'ın Excel/PDF tarafındaki karşılığı).
-    this.db.version(3).stores({
+    dexieInstance.version(3).stores({
       students: '++id, schoolNumber, firstName, lastName, className',
       exams: '++id, name, date, examType',
       results: '++id, studentId, examId, [studentId+examId]',
       optikProfiles: '++id, examType, kind, builtIn',
       columnMappingProfiles: '++id, examType, signature',
     });
+  }
+
+  // Bu tarayicida etkin okulu (organizationId) degistirir/acar. Her okulun
+  // KENDI adlandirilmis IndexedDB'sini kullanmasini saglar
+  // ('LGSDenemetakipDB_org<id>') - eskiden TEK, sabit isimli bir veritabani
+  // ('LGSDenemetakipDB') TUM okullar tarafindan (ayni tarayicida farkli
+  // hesaplara giris yapildiginda) PAYLASILIYORDU, bu da bir okulun Ogrenci/
+  // Deneme eklemesinin baska bir okulun panelinde gorunmesine yol aciyordu.
+  // organizationId yoksa (kendi okulu olmayan saf platform hesabi) eski
+  // paylasimli isim kullanilir - bu hesaplarin zaten kendi Ogrenciler/
+  // Denemeler sekmesi yok, o yuzden zararsiz/kullanilmiyor.
+  async switchToOrg(orgId) {
+    if (this.db && this._openOrgId === (orgId || null)) return;
+    if (this.db) {
+      this.db.close();
+    }
+    const targetName = orgId ? `${DB_NAME}_org${orgId}` : DB_NAME;
+    this.db = new Dexie(targetName);
+    this._defineSchema(this.db);
+    await this.db.open();
+    this._openOrgId = orgId || null;
+    if (orgId) {
+      await this._migrateLegacyDbIfNeeded(orgId);
+    }
+  }
+
+  // Bir kerelik gecis: bu FIZIKSEL tarayicida daha once (org-adlandirmasi
+  // olmadan) biriken eski paylasimli veri varsa VE bu okulun kendi
+  // adlandirilmis veritabani hala TAMAMEN BOSSA, eskiyi buraya kopyalar -
+  // boylece bu ozellik once mevcut gercek admin hesaplarinin verisini
+  // KAYBETMEZ. Sadece bir kez calisir (localStorage bayragi).
+  async _migrateLegacyDbIfNeeded(orgId) {
+    const migKey = `lgs_db_legacy_migrated_${orgId}`;
+    if (localStorage.getItem(migKey)) return;
+    try {
+      const ownCounts = await Promise.all(
+        ['students', 'exams', 'results'].map(t => this.db.table(t).count())
+      );
+      if (ownCounts.some(c => c > 0)) {
+        localStorage.setItem(migKey, '1');
+        return;
+      }
+      const legacyExists = await Dexie.exists(DB_NAME);
+      if (!legacyExists) {
+        localStorage.setItem(migKey, '1');
+        return;
+      }
+      const legacy = new Dexie(DB_NAME);
+      this._defineSchema(legacy);
+      await legacy.open();
+      for (const table of ['students', 'exams', 'results', 'optikProfiles', 'columnMappingProfiles']) {
+        const rows = await legacy.table(table).toArray();
+        if (rows.length) await this.db.table(table).bulkAdd(rows);
+      }
+      legacy.close();
+      localStorage.setItem(migKey, '1');
+    } catch (e) {
+      console.warn('Eski yerel veritabanindan gecis atlandi:', e);
+    }
   }
 
   // ---- Students ----
