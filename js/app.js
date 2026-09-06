@@ -87,10 +87,14 @@ const App = {
     this.setupNavigation();
     this.setupSidebar();
 
-    // Süper admin sadece "Okullar" sayfasını yönetir - hiçbir okulun kendi
-    // verisine (Öğrenciler/Denemeler/Kullanıcılar/...) erişimi yok, bu
-    // yüzden diğer tüm nav öğeleri gizlenip doğrudan Okullar açılır.
-    if (this.currentUser?.role === 'super_admin') {
+    // Super admin VE kendi okulu olmayan platform sahibi (canManageSchools=true
+    // ama organizationId=null - admin'in kendi okulu kaldirildiginda bu hale
+    // gelir) sadece "Okullar" sayfasini yonetir - hicbir okulun kendi
+    // verisine (Ogrenciler/Denemeler/Kullanicilar/...) erisimi yok, bu
+    // yuzden diger tum nav ogeleri gizlenip dogrudan Okullar acilir.
+    const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
+      (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
+    if (isPurePlatformAccount) {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
       });
@@ -140,7 +144,7 @@ const App = {
     const el = document.getElementById('role-badge');
     if (!el || !this.currentUser?.authenticated) return;
     let label, title;
-    if (this.currentUser.role === 'super_admin') {
+    if (this.currentUser.role === 'super_admin' || (this.currentUser.canManageSchools && !this.currentUser.organizationId)) {
       label = '🧭 Platform (Saf)';
       title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları yönetir.';
     } else if (this.currentUser.canManageSchools) {
