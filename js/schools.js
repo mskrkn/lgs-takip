@@ -116,7 +116,17 @@ const Schools = {
   // o veri hic yok. data-* attribute'lardan okunuyor (JS string olarak
   // gomulseydi okul adindaki bir tirnak isareti HTML'i bozardi).
   enterSchool(btn) {
-    App.actingSchool = { id: Number(btn.dataset.schoolId), name: btn.dataset.schoolName };
+    const schoolId = Number(btn.dataset.schoolId);
+    // Platform sahibi admin kendi okuluna "girerse" (Okullar listesinde
+    // kendi okulu da gorunur) - salt-okunur SchoolView yerine normal (tam
+    // yetkili) admin paneline dondur, actingSchool'i set ETME.
+    if (App.currentUser?.organizationId && schoolId === App.currentUser.organizationId) {
+      App.actingSchool = null;
+      UI.toast('Bu zaten sizin okulunuz - normal panelden yönetebilirsiniz.', 'info');
+      App.navigateTo('dashboard');
+      return;
+    }
+    App.actingSchool = { id: schoolId, name: btn.dataset.schoolName };
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
     });

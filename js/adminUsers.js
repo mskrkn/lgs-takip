@@ -33,16 +33,23 @@ const AdminUsers = {
   // Gercek okul admini/delege icin bos string - kendi organization_id'lerine
   // zaten sabitler, ekstra bir sey gondermelerine gerek/izin yok.
   _schoolQuery() {
-    return (App.currentUser?.role === 'super_admin' && App.actingSchool)
+    return (App.currentUser?.actsAsSuperAdmin && App.actingSchool)
       ? `?school_id=${App.actingSchool.id}` : '';
   },
 
   exitSchoolContext() {
     App.actingSchool = null;
-    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.style.display = item.dataset.page === 'schools' ? '' : 'none';
-    });
-    App.navigateTo('schools');
+    if (App.currentUser?.role === 'super_admin') {
+      // Saf platform hesabinin (kendi okulu yok) tek sayfasi Okullar'dir.
+      document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+        item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+      });
+      App.navigateTo('schools');
+    } else {
+      // Platform sahibi admin: butun nav zaten gorunur kaliyor, sadece
+      // kendi okuluna (normal admin paneline) geri doner.
+      App.navigateTo('dashboard');
+    }
   },
 
   async render() {
@@ -52,7 +59,8 @@ const AdminUsers = {
     if (App.currentUser?.role === 'super_admin' && !App.actingSchool) {
       // Dogrudan gecmis/geri tusuyla buraya dusulduyse (okul secilmeden) -
       // Okullar sayfasina geri gonder, aksi halde school_id'siz istekler
-      // sunucudan hep 400 doner.
+      // sunucudan hep 400 doner. (Platform sahibi hibrit admin icin bu
+      // sorun degil - okul_id verilmeyince kendi okuluna sabitlenir.)
       App.navigateTo('schools');
       return;
     }
@@ -77,11 +85,15 @@ const AdminUsers = {
     // sifirlama/delege yetkisi hem gercek admin'e hem "bir okula girmis"
     // super_admin'e acik (ikisi de sunucu tarafinda role=("admin","super_admin")
     // ile izinli) - delege bir ogretmen ise bunlarin hicbirini goremez.
-    const isRealAdmin = App.currentUser?.role === 'admin';
-    const canManageAccounts = isRealAdmin || (App.currentUser?.role === 'super_admin' && !!App.actingSchool);
+    // "Baska bir okulu goruntuluyor" durumunda (App.actingSchool dolu) - bu
+    // gercek super_admin de olabilir, platform sahibi admin de - senkron
+    // (KENDI tarayicisinin verisi) bu context'te ANLAMSIZ, o yuzden isRealAdmin
+    // bilerek false'a duser (bkz. asagidaki "Sunucuya Veri Gonder" karti).
+    const isRealAdmin = App.currentUser?.role === 'admin' && !App.actingSchool;
+    const canManageAccounts = isRealAdmin || (App.currentUser?.actsAsSuperAdmin && !!App.actingSchool);
 
     container.innerHTML = `
-      ${App.currentUser?.role === 'super_admin' && App.actingSchool ? `
+      ${App.currentUser?.actsAsSuperAdmin && App.actingSchool ? `
       <div class="card" style="border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.08)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <span>🏫 <b>${App.actingSchool.name}</b> okulunun hesapları yönetiliyor</span>
@@ -669,8 +681,8 @@ const AdminUsers = {
       const usersListEl = document.getElementById('users-list');
       if (usersListEl) {
         const freshUsers = await fetch(`/api/admin/users${this._schoolQuery()}`).then(r => r.json());
-        const canManageAccounts = App.currentUser?.role === 'admin' ||
-          (App.currentUser?.role === 'super_admin' && !!App.actingSchool);
+        const canManageAccounts = (App.currentUser?.role === 'admin' && !App.actingSchool) ||
+          (App.currentUser?.actsAsSuperAdmin && !!App.actingSchool);
         usersListEl.innerHTML = this._renderUsersTable(freshUsers, canManageAccounts);
       }
     }

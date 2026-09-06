@@ -357,7 +357,14 @@ PERMISSION_SEED = [
 ROLE_PERMISSIONS_SEED = {
     "SUPER_ADMIN": PERMISSION_SEED,
     "PLATFORM_ADMIN": PERMISSION_SEED,
-    "INSTITUTION_ADMIN": PERMISSION_SEED,
+    # "organization.manage" PLATFORM duzeyi bir izindir (baska okullari
+    # listeleme/olusturma, ?school_id= ile okul degistirme) - okul admininin
+    # KENDI okuluyla ilgisi yok, PERMISSION_SEED'den cikarilir. Aksi halde
+    # her okul admini bir digerinin school_id'sini enjekte edip o okulun
+    # verisine erisebilirdi (IDOR). Platform sahibi bir admin'e bu yetki
+    # ozel olarak PLATFORM_ADMIN v2 rolu EK OLARAK atanarak verilir (bkz.
+    # scripts/grant_platform_admin.py) - legacy role='admin' degismez.
+    "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p != "organization.manage"],
     "TEACHER": ["students.view", "classes.view", "exams.view", "results.view", "analytics.view"],
     "PARENT": ["results.view", "analytics.view"],
     "STUDENT": ["results.view", "analytics.view"],
@@ -746,28 +753,32 @@ def _current_org_id(db):
 
 
 def _effective_org_id(db):
-    """Bir Kullanicilar-sayfasi ucunun ISLEM YAPACAGI okulu cozer.
+    """Bir Kullanicilar/Ogrenciler/Denemeler ucunun ISLEM YAPACAGI okulu cozer.
 
-    - super_admin: kendi organization_id'si YOK (NULL) - hangi okulu
-      yonettigini ?school_id= query param'i ile ACIKCA belirtmek ZORUNDA.
-      Bu, "Okullar" sayfasindan bir okula "girip" Kullanicilar sayfasini
-      o okul icin acmayi saglar (bkz. js/schools.js "Kullanicilarini Yonet").
-    - herhangi baska bir rol (admin/teacher-delege): query param'i TAMAMEN
-      YOK SAYILIR - kendi organization_id'sine sabittir. Aksi halde bir
-      okul admini/delegesi URL'e baska bir school_id yapistirip baska
-      okulun hesaplarini yonetebilirdi (ciddi bir okul-arasi IDOR acigi).
-    Super_admin gecerli olmayan/var olmayan bir school_id verirse (None, str,int)
-    None doner - cagiran taraf bunu 400/404 olarak islemeli."""
-    if session.get("role") == "super_admin":
+    - "organization.manage" iznine sahip kullanicilar (her zaman super_admin;
+      ayrica platform sahibi oldugu icin bu izin EK OLARAK verilmis, legacy
+      role='admin' kalan bir "hibrit" okul admini de) ?school_id= query
+      param'i ile ACIKCA baska bir okulu secebilir.
+    - school_id verilmemisse: bu izne sahip olsa bile kendi organization_id'sine
+      (varsa) doner - saf platform hesabinin (organization_id NULL) kendi
+      okulu yoktur, None doner (cagiran taraf bunu 400 olarak islemeli).
+    - bu izne sahip OLMAYAN her rol (normal admin/teacher-delege): query
+      param'i TAMAMEN YOK SAYILIR - kendi organization_id'sine sabittir.
+      Aksi halde bir okul admini/delegesi URL'e baska bir school_id
+      yapistirip baska okulun hesaplarini yonetebilirdi (okul-arasi IDOR)."""
+    if has_permission(db, session["user_id"], "organization.manage"):
         raw = request.args.get("school_id")
-        if not raw:
-            return None
-        try:
-            org_id = int(raw)
-        except (TypeError, ValueError):
-            return None
-        exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
-        return org_id if exists else None
+        if raw:
+            try:
+                org_id = int(raw)
+            except (TypeError, ValueError):
+                return None
+            exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
+            return org_id if exists else None
+        own_row = db.execute(
+            "SELECT organization_id FROM users WHERE id=?", (session["user_id"],)
+        ).fetchone()
+        return own_row["organization_id"] if own_row else None
     return _current_org_id(db)
 
 
@@ -830,6 +841,15 @@ def _seed_reference_data(conn):
                 "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?,?)",
                 (role_row["id"], perm_row["id"]),
             )
+
+    # Gecmiste INSTITUTION_ADMIN'e yanlislikla verilmis "organization.manage"
+    # iznini var olan veritabanlarindan temizle (yukaridaki INSERT OR IGNORE
+    # bunu bir daha eklemez ama zaten var olan satiri silmez de). Idempotent -
+    # satir yoksa no-op.
+    conn.execute(
+        "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
+        "AND permission_id = (SELECT id FROM permissions WHERE name='organization.manage')"
+    )
 
     for code, name in SUBJECT_SEED:
         conn.execute("INSERT OR IGNORE INTO subjects (code, name) VALUES (?,?)", (code, name))
@@ -1520,12 +1540,18 @@ def api_login():
     # admin SPA'sina mi yoksa normal /ogretmen.html'e mi yonlendirecegine
     # karar veriyor - /api/me'deki ayni mantik (bkz. orada).
     is_delegate = user["role"] == "teacher" and has_permission(db, user["id"], "users.manage")
+    # Platform sahibi bir admin mi (bkz. scripts/grant_platform_admin.py) -
+    # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
+    # verilmis olabilir. /api/me'deki ayni mantik (bkz. orada).
+    can_manage_schools = has_permission(db, user["id"], "organization.manage")
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
         "className": teacher_class_display(user["class_name"]) if user["role"] == "teacher" else user["class_name"],
         "studentId": user["student_id"],
         "isDelegateAdmin": is_delegate,
+        "canManageSchools": can_manage_schools,
+        "organizationId": user["organization_id"],
     })
 
 
@@ -1543,16 +1569,27 @@ def api_me():
     # bkz. /api/admin/users/<id>/delegate) - frontend'in "Kullanicilar"
     # sayfasinda hangi butonlari (sil/pasiflestir/sifre sifirla DEGIL,
     # sadece ekleme/listeleme) gosterecegine karar vermesi icin.
+    db = get_db()
     is_delegate = (
         session.get("role") == "teacher"
-        and has_permission(get_db(), session["user_id"], "users.manage")
+        and has_permission(db, session["user_id"], "users.manage")
     )
+    # Platform sahibi bir admin mi (bkz. scripts/grant_platform_admin.py) -
+    # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
+    # verilmis olabilir - bu durumda normal admin panelinin YANI SIRA
+    # "Okullar" sekmesini de gorur (bkz. js/app.js init()).
+    can_manage_schools = has_permission(db, session["user_id"], "organization.manage")
+    own_org_row = db.execute(
+        "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
         "className": teacher_class_display(session.get("class_name")) if session.get("role") == "teacher" else session.get("class_name"),
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
+        "canManageSchools": can_manage_schools,
+        "organizationId": own_org_row["organization_id"] if own_org_row else None,
     })
 
 
@@ -1586,7 +1623,7 @@ def _external_base_url():
 
 
 @app.route("/api/superadmin/organizations", methods=["GET"])
-@login_required(role="super_admin", permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organization.manage")
 def api_superadmin_list_organizations():
     db = get_db()
     rows = db.execute(
@@ -1603,7 +1640,7 @@ def api_superadmin_list_organizations():
 
 
 @app.route("/api/superadmin/organizations", methods=["POST"])
-@login_required(role="super_admin", permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organization.manage")
 def api_superadmin_create_organization():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2025,7 +2062,7 @@ def api_admin_list_users():
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
         "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
-        "WHERE role != 'admin' AND organization_id = ? ORDER BY role, username",
+        "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
     out = []
@@ -2145,7 +2182,7 @@ def api_admin_delete_user(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
-        "DELETE FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "DELETE FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (user_id, org_id),
     )
     db.commit()
@@ -2161,7 +2198,7 @@ def api_admin_toggle_active(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     user = db.execute(
-        "SELECT active FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "SELECT active FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (user_id, org_id),
     ).fetchone()
     if not user:
@@ -2185,7 +2222,7 @@ def api_admin_reset_password(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
-        "UPDATE users SET password_hash = ? WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "UPDATE users SET password_hash = ? WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (hash_password(new_password), user_id, org_id),
     )
     db.commit()
@@ -2469,15 +2506,24 @@ def api_teacher_insights():
 
 
 @app.route("/api/teacher/overview")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_overview():
     db = get_db()
     org_id = _effective_org_id(db)
-    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     allowed_ids = get_allowed_student_ids(db)
-    if not allowed_ids:
+    # None => sinirsiz (admin/class_name='*' degil, sadece admin - bkz.
+    # get_allowed_student_ids) - okulun TUM ogrencileri. `if not allowed_ids`
+    # ile bunu bos kumeyle KARISTIRMAMAK kritik, aksi halde admin kendi
+    # okulunun ogrencilerini hic goremezdi.
+    if allowed_ids is None:
+        students = db.execute(
+            "SELECT * FROM students WHERE organization_id = ? ORDER BY last_name, first_name",
+            (org_id,)
+        ).fetchall()
+    elif not allowed_ids:
         students = []
     else:
         placeholders = ",".join("?" * len(allowed_ids))
@@ -2550,13 +2596,13 @@ def api_teacher_overview():
 
 
 @app.route("/api/teacher/exam/<int:exam_id>")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_exam_detail(exam_id):
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
-    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     exam_row = db.execute(
@@ -2566,7 +2612,16 @@ def api_teacher_exam_detail(exam_id):
         return jsonify({"error": "Deneme bulunamadı."}), 404
     exam_data = json.loads(exam_row["data_json"])
 
-    my_student_ids = get_allowed_student_ids(db) or set()
+    # None => sinirsiz (admin) - okulun TUM ogrencileri. `or set()` bunu bos
+    # kumeyle karistirip admin'in kendi "siralama" tablosunu hep bos
+    # dondururdu (bkz. api_teacher_overview'deki ayni sinif hata).
+    _allowed = get_allowed_student_ids(db)
+    if _allowed is None:
+        my_student_ids = {r["id"] for r in db.execute(
+            "SELECT id FROM students WHERE organization_id = ?", (org_id,)
+        ).fetchall()}
+    else:
+        my_student_ids = _allowed
     if my_student_ids:
         placeholders_s = ",".join("?" * len(my_student_ids))
         my_students = db.execute(
@@ -2658,7 +2713,7 @@ def api_teacher_exam_detail(exam_id):
 
 
 @app.route("/api/teacher/student/<int:student_id>")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_student_detail(student_id):
     """Öğretmenin kendi sınıfındaki tek bir öğrencinin ayrıntılı raporu (deneme
     geçmişi, net trendi, konu analizi, Başarı Pusulası) - veli tarafındaki
