@@ -48,6 +48,8 @@ const App = {
       localStorage.setItem('lgs_sync_key', `edupusula-org-${this.currentUser.organizationId}`);
     }
 
+    this.renderRoleBadge();
+
     // Initialize Cloud Sync Module
     if (typeof SyncModule !== 'undefined') {
       await SyncModule.init();
@@ -126,6 +128,31 @@ const App = {
     }
 
     await this.navigateTo('dashboard');
+  },
+
+  // Hesap turu rozeti: "Platform Sahibi" (bu okulun normal admini + baska
+  // okullari da yonetebilen), "Okul Admini" (sadece kendi okulu) ya da
+  // (nadiren, ayri bir hesap uzerinden) saf "Platform" gorunumu - hangisi
+  // oldugu HER ZAMAN header'da gorunur olsun diye (bkz. kullanicinin
+  // "roller karisik" geri bildirimi - iki farkli "en ust" hesap turunun
+  // UI'da ayirt edilememesi kafa karistiriyordu).
+  renderRoleBadge() {
+    const el = document.getElementById('role-badge');
+    if (!el || !this.currentUser?.authenticated) return;
+    let label, title;
+    if (this.currentUser.role === 'super_admin') {
+      label = '🧭 Platform (Saf)';
+      title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları yönetir.';
+    } else if (this.currentUser.canManageSchools) {
+      label = '🧭 Platform Sahibi';
+      title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz.';
+    } else {
+      label = '🏫 Okul Admini';
+      title = 'Sadece kendi okulunuzun verilerini yönetirsiniz.';
+    }
+    el.textContent = label;
+    el.title = title;
+    el.style.cssText = 'display:inline-flex;cursor:default;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.3);color:#c4b5fd';
   },
 
   // Trigger PWA installation dialog
