@@ -530,6 +530,27 @@ const AdminUsers = {
 
   async logout() {
     await fetch('/api/logout', { method: 'POST' });
+    // KRITIK: PWA service worker'i (sw.js) ve tum Cache Storage'i temizle -
+    // aktif bir service worker kaydi varken ayni tarayicida ard arda farkli
+    // okul hesaplariyla giris yapildiginda (test/dogrulama sirasinda tespit
+    // edildi), bir SONRAKI girisin /api/me yaniti ONCEKI hesabin bilgisini
+    // gosterebiliyordu - hicbir tekil ag yaniti "service worker'dan geldi"
+    // olarak isaretlenmese bile (bkz. arastirma notlari). Cikis, hesap
+    // degistirmenin en dogal noktasi oldugu icin temiz sayfa burada garanti
+    // ediliyor - bir sonraki giris sifirdan, hicbir eski service worker/
+    // cache olmadan baslar.
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+      if ('caches' in window) {
+        const names = await caches.keys();
+        await Promise.all(names.map(n => caches.delete(n)));
+      }
+    } catch (e) {
+      console.warn('Service worker/cache temizligi basarisiz (kritik degil):', e);
+    }
     window.location.href = '/login.html';
   },
 
