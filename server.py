@@ -2961,6 +2961,31 @@ def api_teacher_send_message():
 # class_name'i - teacher_class_list ile ayni desen), SCHOOL_ADMIN/
 # SUPER_ADMIN=ORGANIZATION (org icindeki HERHANGI bir sinif).
 
+@app.route("/api/teacher/question-bank/approved")
+@login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
+def api_teacher_approved_questions():
+    """Ogretmenin odev olustururken secebilecegi, ONAYLANMIS sorularin
+    sade (batch/inceleme detaylari olmadan) listesi - tam admin soru
+    bankasi ekranindan FARKLI, kasitli olarak basit bir secim listesi."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    rows = db.execute(
+        "SELECT qb.id, qb.display_code, qb.question_text, qb.image_path, "
+        "s.name as subject_name "
+        "FROM question_bank qb LEFT JOIN subjects s ON s.id = qb.subject_id "
+        "WHERE qb.organization_id = ? AND qb.status = 'approved' "
+        "ORDER BY s.name, qb.display_code",
+        (org_id,),
+    ).fetchall()
+    return jsonify([{
+        "id": r["id"], "displayCode": r["display_code"],
+        "questionText": r["question_text"], "hasImage": bool(r["image_path"]),
+        "subjectName": r["subject_name"],
+    } for r in rows])
+
+
 def _teacher_can_use_class(class_name):
     """Oturumdaki kullanici (teacher/admin/super_admin) verilen sinifa odev
     verebilir mi? Admin/super_admin icin sinir yok (ORGANIZATION scope -
