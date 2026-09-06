@@ -16,9 +16,6 @@ const App = {
 
   // ---- Initialize ----
   async init() {
-    // Background self-healing for student-exam matches and duplicates
-    db.repairAndLinkStudents().catch(console.error);
-
     // Karşılama başlığı için giriş yapan admin bilgisi (bkz. renderDashboard)
     try {
       this.currentUser = await fetch('/api/me').then(r => r.json());
@@ -34,6 +31,15 @@ const App = {
     } catch (e) {
       this.currentUser = null;
     }
+
+    // KRITIK: yerel (IndexedDB) veritabanini bu okulun KENDI ad alanina AC -
+    // bkz. db.switchToOrg. Eskiden TEK, sabit isimli bir veritabani TUM
+    // okullar tarafindan (ayni tarayicida farkli hesaplara giris yapildiginda)
+    // PAYLASILIYORDU - bir okulun ekledigi ogrenci/deneme baska bir okulun
+    // panelinde goruluyordu. db.* KULLANAN HER SEYDEN (repairAndLinkStudents
+    // dahil) ONCE, senkron modulunden de ONCE calismasi ZORUNLU.
+    await db.switchToOrg(this.currentUser?.organizationId || null);
+    db.repairAndLinkStudents().catch(console.error);
 
     // KRITIK: Bulut Senkronizasyonu (Firebase) anahtarini HER GIRISTE bu
     // okulun organization_id'sine kilitle - SyncModule.init() bunu okumadan
