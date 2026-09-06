@@ -362,7 +362,7 @@ PERMISSION_SEED = [
     "classes.view", "classes.create", "classes.update", "classes.delete", "classes.archive",
     "exams.view", "exams.create", "exams.update", "exams.delete",
     "exams.import", "exams.view_results",
-    "results.view", "analytics.view", "organization.manage", "users.manage",
+    "results.view", "results.create", "analytics.view", "organization.manage", "users.manage",
     "users.view", "users.create", "users.update", "users.deactivate", "users.assign_role",
     "organizations.view", "organizations.create", "organizations.update", "organizations.archive",
     "teachers.view", "teachers.create", "teachers.update", "teachers.manage_assignments",
@@ -698,6 +698,18 @@ def _create_v2_tables(conn):
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         if "organization_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id INTEGER REFERENCES organizations(id)")
+    # students/exams/results.source: bu satir okulun kendi tarayici senkronundan
+    # mi ('browser_sync', varsayilan - mevcut TUM veri bu sekilde damgalanir)
+    # yoksa platform sahibinin dogrudan girdisinden mi ('platform_admin') geldi.
+    # api_admin_sync'in DELETE'leri SADECE 'browser_sync' satirlarini siler,
+    # yani platform sahibinin ekledigi kayitlar bir okulun kendi senkronuyla
+    # asla silinmez (bkz. _platform_admin_next_id).
+    for table in ("students", "exams", "results"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if "source" not in cols:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN source TEXT NOT NULL DEFAULT 'browser_sync'"
+            )
     org_cols = [r[1] for r in conn.execute("PRAGMA table_info(organizations)").fetchall()]
     if "teacher_invite_code" not in org_cols:
         # SQLite "ALTER TABLE ... ADD COLUMN" bir UNIQUE kisitiyla dogrudan
@@ -1006,6 +1018,32 @@ def _org_scoped_id(org_id, client_id):
     if not client_id:
         return client_id
     return int(client_id) + (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
+
+
+# Platform sahibinin bir okula DOGRUDAN (o okulun kendi tarayicisi disinda)
+# ekledigi ogrenci/deneme/sonuc kayitlari icin, o okulun ID blogunun EN UST
+# 1 milyonluk alt-araligi rezerve edilir. Bir okulun tarayici sayaci
+# (Dexie auto-increment) buraya pratikte asla ulasmaz (milyonlarca kayit
+# gerekir), bu yuzden browser_sync ve platform_admin kaynakli id'ler
+# CAKISMAZ - ayrica bkz. yukaridaki ORG_ID_BLOCK_SIZE yorumu.
+PLATFORM_ADMIN_ID_RESERVE_START = 9_000_000
+
+
+def _platform_admin_next_id(db, table, org_id):
+    """table icin, org_id'ye ayrilmis rezerve id alt-araliginda bir sonraki
+    (kullanilmamis) global-benzersiz id'yi dondurur."""
+    org_id = int(org_id)
+    range_start = _org_scoped_id(org_id, PLATFORM_ADMIN_ID_RESERVE_START)
+    range_end = _org_scoped_id(org_id, ORG_ID_BLOCK_SIZE - 1)
+    row = db.execute(
+        f"SELECT MAX(id) FROM {table} WHERE id >= ? AND id <= ?",
+        (range_start, range_end),
+    ).fetchone()
+    current_max = row[0]
+    next_id = (current_max + 1) if current_max else range_start
+    if next_id > range_end:
+        raise ValueError(f"{table} icin platform-admin id rezervi doldu (org {org_id})")
+    return next_id
 
 
 def _seed_reference_data(conn):
@@ -2305,25 +2343,31 @@ def api_admin_sync():
         (org_id,),
     ).fetchall()
 
-    db.execute("DELETE FROM students WHERE organization_id=?", (org_id,))
-    db.execute("DELETE FROM exams WHERE organization_id=?", (org_id,))
-    db.execute("DELETE FROM results WHERE organization_id=?", (org_id,))
+    # SADECE bu okulun kendi tarayicisindan gelen ('browser_sync') satirlar
+    # silinir - platform sahibinin dogrudan ekledigi ('platform_admin')
+    # kayitlar (bkz. _platform_admin_next_id) bu okulun kendi senkronundan
+    # HICBIR ZAMAN etkilenmez.
+    db.execute("DELETE FROM students WHERE organization_id=? AND source='browser_sync'", (org_id,))
+    db.execute("DELETE FROM exams WHERE organization_id=? AND source='browser_sync'", (org_id,))
+    db.execute("DELETE FROM results WHERE organization_id=? AND source='browser_sync'", (org_id,))
 
     for s in students:
         db.execute(
-            "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+            "VALUES (?,?,?,?,?,?,'browser_sync')",
             (sid(s.get("id")), org_id, s.get("schoolNumber"), s.get("firstName"), s.get("lastName"),
              s.get("className")),
         )
     for e in exams:
         db.execute(
-            "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) "
+            "VALUES (?,?,?,?,?,?,'browser_sync')",
             (sid(e.get("id")), org_id, e.get("name"), e.get("date"), e.get("examType"), json.dumps(e)),
         )
     for r in results:
         db.execute(
-            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json) VALUES (?,?,?,?,?)",
+            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) "
+            "VALUES (?,?,?,?,?,'browser_sync')",
             (sid(r.get("id")), org_id, sid(r.get("studentId")), sid(r.get("examId")), json.dumps(r)),
         )
 
@@ -2353,6 +2397,137 @@ def api_admin_sync():
         "ok": True,
         "counts": {"students": len(students), "exams": len(exams), "results": len(results)},
     })
+
+
+# ============================================================
+# API: Platform sahibinin bir okula DOGRUDAN veri girisi
+# ============================================================
+# Bu uc noktalar, platform sahibinin (legacy role='admin'/'super_admin')
+# "Okula Gir" ile baktigi HERHANGI BIR okula ogrenci/deneme/sonuc
+# eklemesini saglar - okulun kendi admininin tarayicisindan BAGIMSIZ olarak.
+# Yazilan satirlar source='platform_admin' ile damgalanir ve
+# _platform_admin_next_id ile rezerve bir id araligindan numaralanir, boylece
+# o okulun kendi /api/admin/sync'i (SADECE source='browser_sync' satirlarini
+# siler) bu kayitlari ASLA silmez/ezmez. Ayni uclar, platform sahibi
+# OLMAYAN normal bir okul admininin KENDI okuluna veri girmesi icin de
+# calisir (org_id = _effective_org_id(db) kendi sabit organization_id'sine
+# duser) - IDOR korumasi tamamen _effective_org_id'ye devredilmistir.
+
+@app.route("/api/teacher/students", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_platform_add_student():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    first_name = (data.get("firstName") or "").strip()
+    last_name = (data.get("lastName") or "").strip()
+    school_number = (data.get("schoolNumber") or "").strip() or None
+    class_name = (data.get("className") or "").strip() or None
+    if not first_name or not last_name:
+        return jsonify({"error": "Ad ve soyad gerekli."}), 400
+
+    new_id = _platform_admin_next_id(db, "students", org_id)
+    db.execute(
+        "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+        "VALUES (?,?,?,?,?,?,'platform_admin')",
+        (new_id, org_id, school_number, first_name, last_name, class_name),
+    )
+    db.commit()
+    log_audit(db, "STUDENT_CREATED_BY_PLATFORM", resource_type="student", resource_id=new_id)
+    return jsonify({"ok": True, "id": new_id})
+
+
+@app.route("/api/teacher/exams", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_platform_add_exam():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    date = (data.get("date") or "").strip()
+    exam_type = (data.get("examType") or "").strip() or "LGS"
+    if not name or not date:
+        return jsonify({"error": "Deneme adı ve tarihi gerekli."}), 400
+
+    new_id = _platform_admin_next_id(db, "exams", org_id)
+    exam_payload = {**data, "id": new_id}
+    db.execute(
+        "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) "
+        "VALUES (?,?,?,?,?,?,'platform_admin')",
+        (new_id, org_id, name, date, exam_type, json.dumps(exam_payload)),
+    )
+    db.commit()
+    log_audit(db, "EXAM_CREATED_BY_PLATFORM", resource_type="exam", resource_id=new_id)
+    return jsonify({"ok": True, "id": new_id})
+
+
+@app.route("/api/teacher/results", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="results.create")
+def api_platform_add_result():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    student_id = data.get("studentId")
+    exam_id = data.get("examId")
+    subjects = data.get("subjects")
+    if not student_id or not exam_id or not isinstance(subjects, dict):
+        return jsonify({"error": "Öğrenci, deneme ve sonuçlar gerekli."}), 400
+
+    # student_id/exam_id istemciden AYNEN geldigi haliyle (offsetsiz) kullanilir -
+    # bunlar zaten sunucudaki gercek satir id'leridir (browser_sync veya
+    # platform_admin kaynakli), IDOR karsiligi asagida DOGRUDAN dogrulanir:
+    # baska bir okulun ogrencisine/denemesine sonuc yazilamaz.
+    student = db.execute(
+        "SELECT id FROM students WHERE id = ? AND organization_id = ?", (student_id, org_id)
+    ).fetchone()
+    exam = db.execute(
+        "SELECT id FROM exams WHERE id = ? AND organization_id = ?", (exam_id, org_id)
+    ).fetchone()
+    if not student or not exam:
+        return jsonify({"error": "Öğrenci ya da deneme bu okula ait değil."}), 400
+
+    # Kapsam bilerek "yeni kayit ekleme" ile sinirli (bkz. plan) - var olan bir
+    # sonucu DUZENLEMEK bu turda yok. browser_sync kaynakli bir sonuc varsa
+    # dokunulmaz (bir sonraki gercek okul senkronuyla CAKISABILIRDI); daha
+    # once platform_admin tarafindan eklenmis kendi kaydini guncellemeye izin
+    # verilir (o zaten senkrondan bagimsizdir, cakisma riski yok).
+    existing = db.execute(
+        "SELECT id, source FROM results WHERE student_id = ? AND exam_id = ?", (student_id, exam_id)
+    ).fetchone()
+    if existing and existing["source"] == "browser_sync":
+        return jsonify({
+            "error": "Bu öğrenci/deneme için zaten bir sonuç var (okulun kendi verisinden). "
+                     "Bu turda var olan sonuçların düzenlenmesi desteklenmiyor.",
+        }), 409
+
+    result_payload = {"studentId": student_id, "examId": exam_id, "subjects": subjects}
+    if existing:
+        new_id = existing["id"]
+        result_payload["id"] = new_id
+        db.execute(
+            "UPDATE results SET data_json = ? WHERE id = ?",
+            (json.dumps(result_payload), new_id),
+        )
+    else:
+        new_id = _platform_admin_next_id(db, "results", org_id)
+        result_payload["id"] = new_id
+        db.execute(
+            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) "
+            "VALUES (?,?,?,?,?,'platform_admin')",
+            (new_id, org_id, student_id, exam_id, json.dumps(result_payload)),
+        )
+    db.commit()
+    log_audit(db, "RESULT_CREATED_BY_PLATFORM", resource_type="result", resource_id=new_id)
+    return jsonify({"ok": True, "id": new_id})
 
 
 # ============================================================
