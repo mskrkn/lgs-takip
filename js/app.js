@@ -184,16 +184,36 @@ const App = {
         await this.renderDashboard();
         break;
       case 'students':
-        await this.renderStudents();
+        // Süper admin bir okula "girmişken" bu sayfa tarayıcının yerel
+        // (IndexedDB) verisini DEĞİL, o okulun sunucudaki verisini salt
+        // okunur gösterir (bkz. js/schoolView.js) - okul admini için
+        // hiçbir şey değişmedi.
+        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+          await SchoolView.renderStudents();
+        } else {
+          await this.renderStudents();
+        }
         break;
       case 'student-profile':
-        await this.renderStudentProfile(data.studentId);
+        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+          await SchoolView.renderStudentProfile(data.studentId, data.examId);
+        } else {
+          await this.renderStudentProfile(data.studentId);
+        }
         break;
       case 'exams':
-        await this.renderExams();
+        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+          await SchoolView.renderExams();
+        } else {
+          await this.renderExams();
+        }
         break;
       case 'exam-detail':
-        await this.renderExamDetail(data.examId);
+        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+          await SchoolView.renderExamDetail(data.examId);
+        } else {
+          await this.renderExamDetail(data.examId);
+        }
         break;
       case 'class-detail':
         await this.renderClassDetail(data.className, data.examId);

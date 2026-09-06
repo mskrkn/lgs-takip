@@ -100,7 +100,7 @@ const Schools = {
         <td style="padding:8px">${s.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : s.status}</td>
         <td style="padding:8px">${(s.createdAt || '').slice(0, 10)}</td>
         <td style="padding:8px;text-align:right;white-space:nowrap">
-          <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.manageSchoolUsers(this)">👥 Kullanıcılarını Yönet</button>
+          <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.enterSchool(this)">🚪 Okula Gir</button>
         </td>
       </tr>`;
     });
@@ -108,16 +108,17 @@ const Schools = {
     return html;
   },
 
-  // Bu okulun "Kullanicilar" sayfasini (js/adminUsers.js) super_admin
-  // adina acar - Faz 1'de bilincli olarak yoktu ("okula girip bakma"),
-  // sonradan sadece HESAP yonetimi (Ogrenciler/Denemeler DEGIL, onlar
-  // hala o okulun kendi tarayicisindaki yerel veriye bagli) icin eklendi.
-  // data-* attribute'lardan okunuyor (JS string olarak gomulseydi okul
-  // adindaki bir tirnak isareti HTML'i bozardi).
-  manageSchoolUsers(btn) {
+  // Bu okulu super_admin adina "acar": Kullanicilar (hesap yonetimi,
+  // js/adminUsers.js) VE Ogrenciler/Denemeler (salt okunur, sunucu
+  // uzerinden - js/schoolView.js) sayfalari gorunur hale gelir. Ogrenci/
+  // deneme EKLEME/DUZENLEME/SILME hala YOK - o hala o okulun kendi
+  // tarayicisindaki yerel (IndexedDB) veri, super_admin'in tarayicisinda
+  // o veri hic yok. data-* attribute'lardan okunuyor (JS string olarak
+  // gomulseydi okul adindaki bir tirnak isareti HTML'i bozardi).
+  enterSchool(btn) {
     App.actingSchool = { id: Number(btn.dataset.schoolId), name: btn.dataset.schoolName };
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.style.display = item.dataset.page === 'users' ? '' : 'none';
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
     });
     App.navigateTo('users');
   },

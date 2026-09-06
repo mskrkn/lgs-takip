@@ -1347,6 +1347,18 @@ def get_allowed_student_ids(db):
     role = session.get("role")
     if role == "admin":
         return None
+    if role == "super_admin":
+        # admin'in aksine "None = sinirsiz" DEGIL - super_admin'in sabit bir
+        # organization_id'si yok (NULL), bu yuzden ?school_id= ile ACIKCA
+        # hangi okulu goruntuledigini belirtmek zorunda (bkz. _effective_org_id).
+        # Belirtmezse/gecersizse HICBIR ogrenciyi gormemeli (bos kume) -
+        # None donmek yanlislikla "tum okullarin tum ogrencileri" anlamina
+        # gelirdi ki bu ciddi bir okul-arasi veri sizintisi olurdu.
+        org_id = _effective_org_id(db)
+        if org_id is None:
+            return set()
+        rows = db.execute("SELECT id FROM students WHERE organization_id = ?", (org_id,)).fetchall()
+        return {r["id"] for r in rows}
     if role == "teacher":
         org_id = _current_org_id(db)
         classes = teacher_class_list(session.get("class_name"))
@@ -2457,10 +2469,11 @@ def api_teacher_insights():
 
 
 @app.route("/api/teacher/overview")
-@login_required(role="teacher", permission="students.view")
+@login_required(role=("teacher", "super_admin"), permission="students.view")
 def api_teacher_overview():
     db = get_db()
-    classes = teacher_class_list(session.get("class_name"))
+    org_id = _effective_org_id(db)
+    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     allowed_ids = get_allowed_student_ids(db)
@@ -2472,7 +2485,13 @@ def api_teacher_overview():
             f"SELECT * FROM students WHERE id IN ({placeholders}) ORDER BY last_name, first_name",
             tuple(allowed_ids)
         ).fetchall()
-    exams = db.execute("SELECT id, name, date, exam_type FROM exams ORDER BY date DESC").fetchall()
+    # DUZELTME: bu sorgu daha once organization_id filtresi icermiyordu -
+    # herhangi bir ogretmen TUM okullarin deneme listesini goruyordu (isim/
+    # tarih). Ikinci gercek okul eklenince bu bir sizinti olurdu.
+    exams = db.execute(
+        "SELECT id, name, date, exam_type FROM exams WHERE organization_id = ? ORDER BY date DESC",
+        (org_id,),
+    ).fetchall()
 
     student_list = []
     for s in students:
@@ -2526,16 +2545,18 @@ def api_teacher_overview():
         "className": my_class,
         "students": student_list,
         "exams": [dict(e) for e in exams],
-        "classAverages": _all_class_averages(db, _current_org_id(db)),
+        "classAverages": _all_class_averages(db, org_id),
     })
 
 
 @app.route("/api/teacher/exam/<int:exam_id>")
-@login_required(role="teacher", permission="students.view")
+@login_required(role=("teacher", "super_admin"), permission="students.view")
 def api_teacher_exam_detail(exam_id):
     db = get_db()
-    org_id = _current_org_id(db)
-    classes = teacher_class_list(session.get("class_name"))
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     exam_row = db.execute(
@@ -2617,18 +2638,27 @@ def api_teacher_exam_detail(exam_id):
     question_stats = build_question_stats(exam_data, my_results_raw)
     topic_stats = build_topic_stats(question_stats) if question_stats else None
 
+    # classes is None => sinirsiz goruntuleyici (class_name='*' ogretmen ya da
+    # super_admin) - "kendi sinifim" diye bir sey yok, o yuzden HICBIR sinif
+    # haric tutulmadan TUM sinif ortalamalari donuyor. Daha once bu durumda
+    # (classes is None oldugunda) liste her zaman BOS donuyordu - duzeltildi.
+    all_class_averages = _all_class_averages(db, org_id, exam_id)
+    other_class_averages = all_class_averages if classes is None else [
+        c for c in all_class_averages if c["className"] not in classes
+    ]
+
     return jsonify({
         "exam": {"id": exam_row["id"], "name": exam_row["name"], "date": exam_row["date"],
                  "examType": exam_row["exam_type"]},
         "myClassResults": sorted(my_results, key=lambda x: -x["totalNet"]),
-        "otherClassAverages": [c for c in _all_class_averages(db, _current_org_id(db), exam_id)
-                                if classes is not None and c["className"] not in classes],
+        "otherClassAverages": other_class_averages,
         "topicStats": topic_stats,
+        "questionStats": question_stats,
     })
 
 
 @app.route("/api/teacher/student/<int:student_id>")
-@login_required(role="teacher", permission="students.view")
+@login_required(role=("teacher", "super_admin"), permission="students.view")
 def api_teacher_student_detail(student_id):
     """Öğretmenin kendi sınıfındaki tek bir öğrencinin ayrıntılı raporu (deneme
     geçmişi, net trendi, konu analizi, Başarı Pusulası) - veli tarafındaki
@@ -2637,7 +2667,8 @@ def api_teacher_student_detail(student_id):
     db = get_db()
     if not can_view_student(db, student_id):
         return jsonify({"error": "Bu öğrenciye erişim yetkiniz yok."}), 403
-    report = _build_student_report(db, student_id)
+    exam_id = request.args.get("exam_id", type=int)
+    report = _build_student_report(db, student_id, exam_id=exam_id)
     if not report:
         return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
     return jsonify(report)
@@ -2785,9 +2816,13 @@ def _build_error_memory(result_rows):
     }
 
 
-def _build_student_report(db, student_id):
+def _build_student_report(db, student_id, exam_id=None):
     """Tek bir öğrencinin deneme geçmişi + konu analizi + güçlü/zayıf ders özeti.
-    /api/parent/child/<id> ve /api/student/overview tarafından ortak kullanılır."""
+    /api/parent/child/<id> ve /api/student/overview tarafından ortak kullanılır.
+    exam_id verilirse konu analizi EN SON deneme yerine o denemeye göre
+    hesaplanır (admin panelinin öğrenci profilinde geçmiş bir deneme
+    seçilebilmesi için, bkz. api_teacher_student_detail) - verilmezse (veli/
+    öğrenci panelindeki gibi) davranış değişmez."""
     student = db.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
     if not student:
         return None
@@ -2812,11 +2847,17 @@ def _build_student_report(db, student_id):
             subject_nets.setdefault(key, []).append((s or {}).get("net") or 0)
 
     topic_stats = None
+    topic_stats_exam_id = None
     if result_rows:
-        latest = result_rows[-1]
-        exam_data = json.loads(latest["exam_json"])
-        latest_result_data = json.loads(latest["data_json"])
-        qs = build_question_stats(exam_data, [latest_result_data])
+        target_row = None
+        if exam_id:
+            target_row = next((r for r in result_rows if r["exam_id"] == exam_id), None)
+        if target_row is None:
+            target_row = result_rows[-1]  # varsayilan: en son deneme
+        topic_stats_exam_id = target_row["exam_id"]
+        exam_data = json.loads(target_row["exam_json"])
+        target_result_data = json.loads(target_row["data_json"])
+        qs = build_question_stats(exam_data, [target_result_data])
         if qs:
             topic_stats = build_topic_stats(qs)
 
@@ -2958,6 +2999,7 @@ def _build_student_report(db, student_id):
         "netTrend": [{"examName": r["examName"], "examDate": r["examDate"], "totalNet": r["totalNet"]}
                      for r in results],
         "latestExamTopicStats": topic_stats,
+        "topicStatsExamId": topic_stats_exam_id,
         "classSubjectAverages": class_subject_averages,
         "classRank": class_rank,
         "scoreBreakdown": score_breakdown,
