@@ -345,22 +345,80 @@ SUBJECT_SEED = [
 ]
 
 ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "SCHOOL_ADMIN_DELEGATE",
-             "TEACHER", "PARENT", "STUDENT"]
+             "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
 
 PERMISSION_SEED = [
     "students.view", "students.create", "students.update", "students.delete",
-    "classes.view", "classes.create", "classes.update", "classes.delete",
+    "students.archive", "students.view_academic_data",
+    "classes.view", "classes.create", "classes.update", "classes.delete", "classes.archive",
     "exams.view", "exams.create", "exams.update", "exams.delete",
+    "exams.import", "exams.view_results",
     "results.view", "analytics.view", "organization.manage", "users.manage",
+    "users.view", "users.create", "users.update", "users.deactivate", "users.assign_role",
+    "organizations.view", "organizations.create", "organizations.update", "organizations.archive",
+    "teachers.view", "teachers.create", "teachers.update", "teachers.manage_assignments",
+    "questions.view", "questions.create", "questions.update", "questions.delete",
+    "questions.submit_review", "questions.approve", "questions.publish", "questions.view_assigned",
+    "assignments.view", "assignments.create", "assignments.update", "assignments.cancel",
+    "assignments.view_results", "assignments.complete",
+    "analytics.student", "analytics.class", "analytics.school", "analytics.global",
+    "ai.analyze", "ai.generate_question", "ai.generate_assignment", "ai.manage", "ai.analyze_self",
+    "system.settings", "system.logs", "system.manage",
+]
+
+# Platform (okul-ustu) duzeyi izinler - hicbir okul admininin KENDI okuluyla
+# ilgisi yok, ROLE_PERMISSIONS_SEED'de INSTITUTION_ADMIN'den bilerek
+# cikarilir (bkz. asagisi). organization.manage = "baska bir okulun
+# VERISINI goruntule/yonet" (_effective_org_id'nin ?school_id= override
+# gate'i). organizations.* = "organizations TABLOSUNUN kendisini (ad/
+# iletisim/durum) yonet". analytics.global/system.*/ai.manage = platform
+# geneli, tek bir okulla sinirli olmayan yetkiler. Hepsi sadece
+# SUPER_ADMIN/PLATFORM_ADMIN'de.
+PLATFORM_ONLY_PERMISSIONS = [
+    "organization.manage", "organizations.view", "organizations.create",
+    "organizations.update", "organizations.archive",
+    "analytics.global", "system.settings", "system.logs", "system.manage", "ai.manage",
 ]
 
 ROLE_PERMISSIONS_SEED = {
     "SUPER_ADMIN": PERMISSION_SEED,
     "PLATFORM_ADMIN": PERMISSION_SEED,
-    "INSTITUTION_ADMIN": PERMISSION_SEED,
-    "TEACHER": ["students.view", "classes.view", "exams.view", "results.view", "analytics.view"],
-    "PARENT": ["results.view", "analytics.view"],
-    "STUDENT": ["results.view", "analytics.view"],
+    # Platform sahibi bir admin'e PLATFORM_ONLY_PERMISSIONS ozel olarak
+    # PLATFORM_ADMIN v2 rolu EK OLARAK atanarak verilir (bkz.
+    # grant_platform_admin.py) - legacy role='admin' degismez. Aksi halde
+    # (bu liste PERMISSION_SEED'in tamami olsaydi) her okul admini bir
+    # digerinin school_id'sini enjekte edip/organizations ucuna erisip
+    # baska okulun verisine ulasabilirdi (IDOR).
+    "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p not in PLATFORM_ONLY_PERMISSIONS],
+    # Veri girisi personeli (Excel/optik/PDF aktarimi, ogrenci kaydi) -
+    # organizasyon ayarlarina/kullanici yetkilerine dokunamaz. NOT: legacy
+    # role='admin' uzerine ek v2 rol olarak verilecekse (grant_data_admin.py),
+    # bugun admin panelinin cogu ucu SADECE role="admin" kontrol ediyor,
+    # permission= DEGIL - bu yuzden DATA_ADMIN'e bu rolu vermek onu GERCEKTEN
+    # daraltmaz (hala tam admin gibi davranir), ta ki o uclar tek tek
+    # permission= ile de korunana kadar (ayri, gelecekteki bir is). Bu liste
+    # simdilik SADECE has_permission() kontrollerinin dogru calismasi icin var.
+    "DATA_ADMIN": ["students.view", "students.create", "students.update",
+                   "exams.view", "exams.import", "exams.update"],
+    # Ogrenci gelisimini/sinif-okul analizini izleyen, veri GIRMEYEN rol.
+    # Legacy role='teacher' uzerine ek v2 rol olarak verilir (grant_coordinator.py) -
+    # ogretmen paneli/oturumu degismez, sadece org-genelinde salt-okunur
+    # analiz gorunurlugu ekler.
+    "COORDINATOR": ["students.view", "analytics.student", "analytics.class",
+                    "analytics.school", "assignments.view"],
+    "TEACHER": [
+        "students.view", "students.view_academic_data",
+        "classes.view", "exams.view", "results.view", "analytics.view",
+        "questions.view", "questions.create", "questions.update",
+        "assignments.view", "assignments.create", "assignments.update",
+        "assignments.cancel", "assignments.view_results",
+        "analytics.student", "analytics.class",
+        "ai.analyze", "ai.generate_question", "ai.generate_assignment",
+    ],
+    "PARENT": ["results.view", "analytics.view", "students.view",
+               "assignments.view", "analytics.student"],
+    "STUDENT": ["results.view", "analytics.view", "assignments.view", "assignments.complete",
+                "analytics.student", "questions.view_assigned", "ai.analyze_self"],
     # Okul admini kendi ogretmenlerinden birine "hesap ekleme" yetkisi
     # devredebilir - bkz. /api/admin/users/<id>/delegate. Legacy role hala
     # 'teacher' kalir (ogretmen paneli/oturumu degismez), bu SADECE ek bir
@@ -546,6 +604,43 @@ def _create_v2_tables(conn):
             topic TEXT, insight_type TEXT NOT NULL,
             confidence_level REAL, based_on_exam_count INTEGER,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+
+        -- Odev (assignment) modulu: icerik kaynagi question_bank (status='approved'
+        -- olanlar) - eski/olu 'questions' tablosuna KASITLI OLARAK dokunulmuyor,
+        -- o her sync'te silinip yeniden kuruluyor. class_name TEXT (classes.id
+        -- DEGIL) - ogretmen erisimi zaten class_name string'ine dayanan
+        -- teacher_class_list() ile calisiyor (bkz. get_allowed_student_ids),
+        -- ayni deseni tekrar kullanmak yeni bir id-cozumleme katmani eklemekten
+        -- daha az riskli.
+        CREATE TABLE IF NOT EXISTS assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            class_name TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','cancelled')),
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS assignment_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            question_bank_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            order_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS assignment_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            question_bank_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            answer TEXT,
+            is_correct INTEGER,
+            submitted_at TEXT NOT NULL,
+            UNIQUE(assignment_id, student_id, question_bank_id)
         );
 
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -746,28 +841,32 @@ def _current_org_id(db):
 
 
 def _effective_org_id(db):
-    """Bir Kullanicilar-sayfasi ucunun ISLEM YAPACAGI okulu cozer.
+    """Bir Kullanicilar/Ogrenciler/Denemeler ucunun ISLEM YAPACAGI okulu cozer.
 
-    - super_admin: kendi organization_id'si YOK (NULL) - hangi okulu
-      yonettigini ?school_id= query param'i ile ACIKCA belirtmek ZORUNDA.
-      Bu, "Okullar" sayfasindan bir okula "girip" Kullanicilar sayfasini
-      o okul icin acmayi saglar (bkz. js/schools.js "Kullanicilarini Yonet").
-    - herhangi baska bir rol (admin/teacher-delege): query param'i TAMAMEN
-      YOK SAYILIR - kendi organization_id'sine sabittir. Aksi halde bir
-      okul admini/delegesi URL'e baska bir school_id yapistirip baska
-      okulun hesaplarini yonetebilirdi (ciddi bir okul-arasi IDOR acigi).
-    Super_admin gecerli olmayan/var olmayan bir school_id verirse (None, str,int)
-    None doner - cagiran taraf bunu 400/404 olarak islemeli."""
-    if session.get("role") == "super_admin":
+    - "organization.manage" iznine sahip kullanicilar (her zaman super_admin;
+      ayrica platform sahibi oldugu icin bu izin EK OLARAK verilmis, legacy
+      role='admin' kalan bir "hibrit" okul admini de) ?school_id= query
+      param'i ile ACIKCA baska bir okulu secebilir.
+    - school_id verilmemisse: bu izne sahip olsa bile kendi organization_id'sine
+      (varsa) doner - saf platform hesabinin (organization_id NULL) kendi
+      okulu yoktur, None doner (cagiran taraf bunu 400 olarak islemeli).
+    - bu izne sahip OLMAYAN her rol (normal admin/teacher-delege): query
+      param'i TAMAMEN YOK SAYILIR - kendi organization_id'sine sabittir.
+      Aksi halde bir okul admini/delegesi URL'e baska bir school_id
+      yapistirip baska okulun hesaplarini yonetebilirdi (okul-arasi IDOR)."""
+    if has_permission(db, session["user_id"], "organization.manage"):
         raw = request.args.get("school_id")
-        if not raw:
-            return None
-        try:
-            org_id = int(raw)
-        except (TypeError, ValueError):
-            return None
-        exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
-        return org_id if exists else None
+        if raw:
+            try:
+                org_id = int(raw)
+            except (TypeError, ValueError):
+                return None
+            exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
+            return org_id if exists else None
+        own_row = db.execute(
+            "SELECT organization_id FROM users WHERE id=?", (session["user_id"],)
+        ).fetchone()
+        return own_row["organization_id"] if own_row else None
     return _current_org_id(db)
 
 
@@ -830,6 +929,15 @@ def _seed_reference_data(conn):
                 "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?,?)",
                 (role_row["id"], perm_row["id"]),
             )
+
+    # Gecmiste INSTITUTION_ADMIN'e yanlislikla verilmis "organization.manage"
+    # iznini var olan veritabanlarindan temizle (yukaridaki INSERT OR IGNORE
+    # bunu bir daha eklemez ama zaten var olan satiri silmez de). Idempotent -
+    # satir yoksa no-op.
+    conn.execute(
+        "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
+        "AND permission_id = (SELECT id FROM permissions WHERE name='organization.manage')"
+    )
 
     for code, name in SUBJECT_SEED:
         conn.execute("INSERT OR IGNORE INTO subjects (code, name) VALUES (?,?)", (code, name))
@@ -1502,6 +1610,15 @@ def api_login():
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
     if not user["active"]:
         return jsonify({"error": "Bu hesap pasifleştirilmiş. Yöneticinizle iletişime geçin."}), 403
+    # Okulun kendisi pasiflestirilmisse (bkz. api_superadmin_toggle_organization_status)
+    # o okula bagli KIMSE giris yapamaz - platform sahibinin organization_id'si
+    # NULL oldugu icin bu kontrolden hic etkilenmez.
+    if user["organization_id"]:
+        org = db.execute(
+            "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        if org and org["status"] != "active":
+            return jsonify({"error": "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin."}), 403
     if needs_rehash:
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), user["id"]))
         db.commit()
@@ -1520,12 +1637,18 @@ def api_login():
     # admin SPA'sina mi yoksa normal /ogretmen.html'e mi yonlendirecegine
     # karar veriyor - /api/me'deki ayni mantik (bkz. orada).
     is_delegate = user["role"] == "teacher" and has_permission(db, user["id"], "users.manage")
+    # Platform sahibi bir admin mi (bkz. scripts/grant_platform_admin.py) -
+    # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
+    # verilmis olabilir. /api/me'deki ayni mantik (bkz. orada).
+    can_manage_schools = has_permission(db, user["id"], "organization.manage")
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
         "className": teacher_class_display(user["class_name"]) if user["role"] == "teacher" else user["class_name"],
         "studentId": user["student_id"],
         "isDelegateAdmin": is_delegate,
+        "canManageSchools": can_manage_schools,
+        "organizationId": user["organization_id"],
     })
 
 
@@ -1543,16 +1666,27 @@ def api_me():
     # bkz. /api/admin/users/<id>/delegate) - frontend'in "Kullanicilar"
     # sayfasinda hangi butonlari (sil/pasiflestir/sifre sifirla DEGIL,
     # sadece ekleme/listeleme) gosterecegine karar vermesi icin.
+    db = get_db()
     is_delegate = (
         session.get("role") == "teacher"
-        and has_permission(get_db(), session["user_id"], "users.manage")
+        and has_permission(db, session["user_id"], "users.manage")
     )
+    # Platform sahibi bir admin mi (bkz. scripts/grant_platform_admin.py) -
+    # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
+    # verilmis olabilir - bu durumda normal admin panelinin YANI SIRA
+    # "Okullar" sekmesini de gorur (bkz. js/app.js init()).
+    can_manage_schools = has_permission(db, session["user_id"], "organization.manage")
+    own_org_row = db.execute(
+        "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
         "className": teacher_class_display(session.get("class_name")) if session.get("role") == "teacher" else session.get("class_name"),
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
+        "canManageSchools": can_manage_schools,
+        "organizationId": own_org_row["organization_id"] if own_org_row else None,
     })
 
 
@@ -1586,7 +1720,7 @@ def _external_base_url():
 
 
 @app.route("/api/superadmin/organizations", methods=["GET"])
-@login_required(role="super_admin", permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_list_organizations():
     db = get_db()
     rows = db.execute(
@@ -1603,7 +1737,7 @@ def api_superadmin_list_organizations():
 
 
 @app.route("/api/superadmin/organizations", methods=["POST"])
-@login_required(role="super_admin", permission="organization.manage")
+@login_required(role=("admin", "super_admin"), permission="organizations.create")
 def api_superadmin_create_organization():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -1653,6 +1787,107 @@ def api_superadmin_create_organization():
         "organization": {"id": org_id, "name": name, "slug": slug},
         "admin": {"id": admin_cur.lastrowid, "username": admin_username},
     })
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>", methods=["PATCH"])
+@login_required(role=("admin", "super_admin"), permission="organizations.update")
+def api_superadmin_update_organization(org_id):
+    """Bir okulun ad/iletisim bilgilerini kismi gunceller - status (aktif/
+    pasif) BURADAN degil, ayri toggle-status ucundan degistirilir (bkz.
+    asagisi) - iki farkli niyet (metadata duzenleme vs. erisimi kesme)
+    tek bir PATCH gövdesinde karışmasın."""
+    db = get_db()
+    org = db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, values = [], []
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Okul adı boş olamaz."}), 400
+        fields.append("name = ?")
+        values.append(name)
+    if "email" in data:
+        fields.append("email = ?")
+        values.append((data.get("email") or "").strip() or None)
+    if "phone" in data:
+        fields.append("phone = ?")
+        values.append((data.get("phone") or "").strip() or None)
+    if "address" in data:
+        fields.append("address = ?")
+        values.append((data.get("address") or "").strip() or None)
+
+    if not fields:
+        return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
+
+    fields.append("updated_at = ?")
+    values.append(datetime.now().isoformat())
+    values.append(org_id)
+    db.execute(f"UPDATE organizations SET {', '.join(fields)} WHERE id = ?", values)
+    db.commit()
+    log_audit(db, "ORGANIZATION_UPDATED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>/toggle-status", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.archive")
+def api_superadmin_toggle_organization_status(org_id):
+    """Bir okulu aktif/pasif yapar (soft archive - hard delete YOK, bkz. plan
+    context). Pasif bir okulun kullanicilari giris yapamaz (bkz. api_login),
+    ama platform sahibi ?school_id= ile o okulu goruntulemeye/yeniden aktive
+    etmeye devam edebilir - _effective_org_id'ye kasitli olarak dokunulmadi."""
+    db = get_db()
+    org = db.execute("SELECT status FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+    new_status = "inactive" if org["status"] == "active" else "active"
+    db.execute(
+        "UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?",
+        (new_status, datetime.now().isoformat(), org_id),
+    )
+    db.commit()
+    log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/superadmin/audit-logs")
+@login_required(role=("admin", "super_admin"), permission="system.logs")
+def api_superadmin_audit_logs():
+    """Denetim kaydi goruntuleyici. audit_logs.organization_id, ISLEMI YAPAN
+    kullanicinin okulunu tutar (bkz. log_audit) - yani filtre "bu okulun
+    KENDI personelinin yaptigi islemler" anlamina gelir, "bu okulu etkileyen
+    islemler" degil (ornegin platform sahibinin baska bir okulu duzenlemesi
+    kendi okulunun logunda gorunur, duzenlenen okulun degil - mevcut
+    log_audit tasarimi boyle, burada degistirilmiyor).
+    organization.manage izni olmayan (normal okul admini/delege) sadece
+    kendi okulunun loglarini gorur, ?school_id= YOK SAYILIR (_effective_org_id
+    ile ayni IDOR-guvenli desen)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    limit = min(request.args.get("limit", 50, type=int) or 50, 200)
+    before_id = request.args.get("before_id", type=int)
+    query = (
+        "SELECT al.id, al.action, al.resource_type, al.resource_id, al.ip_address, al.created_at, "
+        "u.username, u.display_name "
+        "FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id "
+        "WHERE al.organization_id = ?"
+    )
+    params = [org_id]
+    if before_id:
+        query += " AND al.id < ?"
+        params.append(before_id)
+    query += " ORDER BY al.id DESC LIMIT ?"
+    params.append(limit)
+    rows = db.execute(query, params).fetchall()
+    return jsonify([{
+        "id": r["id"], "action": r["action"], "resourceType": r["resource_type"],
+        "resourceId": r["resource_id"], "ipAddress": r["ip_address"], "createdAt": r["created_at"],
+        "actorUsername": r["username"], "actorDisplayName": r["display_name"],
+    } for r in rows])
 
 
 # ============================================================
@@ -2025,7 +2260,7 @@ def api_admin_list_users():
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
         "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
-        "WHERE role != 'admin' AND organization_id = ? ORDER BY role, username",
+        "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
     out = []
@@ -2145,7 +2380,7 @@ def api_admin_delete_user(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
-        "DELETE FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "DELETE FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (user_id, org_id),
     )
     db.commit()
@@ -2161,7 +2396,7 @@ def api_admin_toggle_active(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     user = db.execute(
-        "SELECT active FROM users WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "SELECT active FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (user_id, org_id),
     ).fetchone()
     if not user:
@@ -2185,7 +2420,7 @@ def api_admin_reset_password(user_id):
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     db.execute(
-        "UPDATE users SET password_hash = ? WHERE id = ? AND role != 'admin' AND organization_id = ?",
+        "UPDATE users SET password_hash = ? WHERE id = ? AND role NOT IN ('admin', 'super_admin') AND organization_id = ?",
         (hash_password(new_password), user_id, org_id),
     )
     db.commit()
@@ -2469,15 +2704,24 @@ def api_teacher_insights():
 
 
 @app.route("/api/teacher/overview")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_overview():
     db = get_db()
     org_id = _effective_org_id(db)
-    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     allowed_ids = get_allowed_student_ids(db)
-    if not allowed_ids:
+    # None => sinirsiz (admin/class_name='*' degil, sadece admin - bkz.
+    # get_allowed_student_ids) - okulun TUM ogrencileri. `if not allowed_ids`
+    # ile bunu bos kumeyle KARISTIRMAMAK kritik, aksi halde admin kendi
+    # okulunun ogrencilerini hic goremezdi.
+    if allowed_ids is None:
+        students = db.execute(
+            "SELECT * FROM students WHERE organization_id = ? ORDER BY last_name, first_name",
+            (org_id,)
+        ).fetchall()
+    elif not allowed_ids:
         students = []
     else:
         placeholders = ",".join("?" * len(allowed_ids))
@@ -2550,13 +2794,13 @@ def api_teacher_overview():
 
 
 @app.route("/api/teacher/exam/<int:exam_id>")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_exam_detail(exam_id):
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
-    classes = None if session.get("role") == "super_admin" else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     exam_row = db.execute(
@@ -2566,7 +2810,16 @@ def api_teacher_exam_detail(exam_id):
         return jsonify({"error": "Deneme bulunamadı."}), 404
     exam_data = json.loads(exam_row["data_json"])
 
-    my_student_ids = get_allowed_student_ids(db) or set()
+    # None => sinirsiz (admin) - okulun TUM ogrencileri. `or set()` bunu bos
+    # kumeyle karistirip admin'in kendi "siralama" tablosunu hep bos
+    # dondururdu (bkz. api_teacher_overview'deki ayni sinif hata).
+    _allowed = get_allowed_student_ids(db)
+    if _allowed is None:
+        my_student_ids = {r["id"] for r in db.execute(
+            "SELECT id FROM students WHERE organization_id = ?", (org_id,)
+        ).fetchall()}
+    else:
+        my_student_ids = _allowed
     if my_student_ids:
         placeholders_s = ",".join("?" * len(my_student_ids))
         my_students = db.execute(
@@ -2658,7 +2911,7 @@ def api_teacher_exam_detail(exam_id):
 
 
 @app.route("/api/teacher/student/<int:student_id>")
-@login_required(role=("teacher", "super_admin"), permission="students.view")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_student_detail(student_id):
     """Öğretmenin kendi sınıfındaki tek bir öğrencinin ayrıntılı raporu (deneme
     geçmişi, net trendi, konu analizi, Başarı Pusulası) - veli tarafındaki
@@ -2698,6 +2951,457 @@ def api_teacher_send_message():
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+# ============================================================
+# API: Ödev (Assignment) modülü
+# ============================================================
+# Icerik kaynagi HER ZAMAN question_bank (status='approved') - bkz.
+# assignments tablosunun yorumu. Scope: TEACHER=ASSIGNED (sadece kendi
+# class_name'i - teacher_class_list ile ayni desen), SCHOOL_ADMIN/
+# SUPER_ADMIN=ORGANIZATION (org icindeki HERHANGI bir sinif).
+
+@app.route("/api/teacher/question-bank/approved")
+@login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
+def api_teacher_approved_questions():
+    """Ogretmenin odev olustururken secebilecegi, ONAYLANMIS sorularin
+    sade (batch/inceleme detaylari olmadan) listesi - tam admin soru
+    bankasi ekranindan FARKLI, kasitli olarak basit bir secim listesi."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    rows = db.execute(
+        "SELECT qb.id, qb.display_code, qb.question_text, qb.image_path, "
+        "s.name as subject_name "
+        "FROM question_bank qb LEFT JOIN subjects s ON s.id = qb.subject_id "
+        "WHERE qb.organization_id = ? AND qb.status = 'approved' "
+        "ORDER BY s.name, qb.display_code",
+        (org_id,),
+    ).fetchall()
+    return jsonify([{
+        "id": r["id"], "displayCode": r["display_code"],
+        "questionText": r["question_text"], "hasImage": bool(r["image_path"]),
+        "subjectName": r["subject_name"],
+    } for r in rows])
+
+
+def _teacher_can_use_class(class_name):
+    """Oturumdaki kullanici (teacher/admin/super_admin) verilen sinifa odev
+    verebilir mi? Admin/super_admin icin sinir yok (ORGANIZATION scope -
+    org filtresi zaten cagiran tarafta uygulaniyor); teacher icin
+    get_allowed_student_ids ile AYNI teacher_class_list mantigi (ASSIGNED scope)."""
+    if session.get("role") in ("admin", "super_admin"):
+        return True
+    allowed = teacher_class_list(session.get("class_name"))
+    return allowed is None or class_name in allowed
+
+
+@app.route("/api/teacher/assignments", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.create")
+def api_teacher_create_assignment():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    class_name = (data.get("className") or "").strip()
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip() or None
+    due_date = (data.get("dueDate") or "").strip() or None
+    question_ids = data.get("questionIds") or []
+
+    if not class_name or not title:
+        return jsonify({"error": "Sınıf ve başlık gerekli."}), 400
+    if not isinstance(question_ids, list) or not question_ids:
+        return jsonify({"error": "En az bir soru seçilmeli."}), 400
+    if not _teacher_can_use_class(class_name):
+        return jsonify({"error": "Bu sınıfa ödev verme yetkiniz yok."}), 403
+
+    # Sadece ONAYLANMIS sorular odeve eklenebilir (bkz. questions.publish -
+    # onaylanmamis/incelemedeki bir soru ogrenciye gitmemeli).
+    placeholders = ",".join("?" * len(question_ids))
+    valid_rows = db.execute(
+        f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'approved'",
+        (*question_ids, org_id),
+    ).fetchall()
+    valid_ids = {r["id"] for r in valid_rows}
+    if len(valid_ids) != len(set(question_ids)):
+        return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz onaylanmamış."}), 400
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO assignments (organization_id, teacher_id, class_name, title, description, due_date, "
+        "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (org_id, session["user_id"], class_name, title, description, due_date, "active", now, now),
+    )
+    assignment_id = cur.lastrowid
+    for i, qid in enumerate(question_ids):
+        db.execute(
+            "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index) VALUES (?,?,?)",
+            (assignment_id, qid, i),
+        )
+    db.commit()
+    log_audit(db, "ASSIGNMENT_CREATED", resource_type="assignment", resource_id=assignment_id)
+    return jsonify({"ok": True, "id": assignment_id})
+
+
+@app.route("/api/teacher/assignments")
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.view")
+def api_teacher_list_assignments():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    query = "SELECT * FROM assignments WHERE organization_id = ?"
+    params = [org_id]
+    if session.get("role") == "teacher":
+        query += " AND teacher_id = ?"
+        params.append(session["user_id"])
+    query += " ORDER BY created_at DESC"
+    rows = db.execute(query, params).fetchall()
+
+    out = []
+    for a in rows:
+        total_students = db.execute(
+            "SELECT COUNT(*) c FROM students WHERE organization_id = ? AND class_name = ?",
+            (org_id, a["class_name"]),
+        ).fetchone()["c"]
+        total_questions = db.execute(
+            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        submitted_students = db.execute(
+            "SELECT COUNT(DISTINCT student_id) c FROM assignment_submissions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        out.append({
+            "id": a["id"], "className": a["class_name"], "title": a["title"],
+            "description": a["description"], "dueDate": a["due_date"], "status": a["status"],
+            "createdAt": a["created_at"], "totalStudents": total_students,
+            "totalQuestions": total_questions, "submittedStudents": submitted_students,
+        })
+    return jsonify(out)
+
+
+@app.route("/api/teacher/assignments/<int:assignment_id>/results")
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.view_results")
+def api_teacher_assignment_results(assignment_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ?", (assignment_id, org_id)
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if session.get("role") == "teacher" and assignment["teacher_id"] != session["user_id"]:
+        return jsonify({"error": "Bu ödeve erişim yetkiniz yok."}), 403
+
+    questions = db.execute(
+        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.correct_answer "
+        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
+        (assignment_id,),
+    ).fetchall()
+    students = db.execute(
+        "SELECT id, first_name, last_name, school_number FROM students "
+        "WHERE organization_id = ? AND class_name = ? ORDER BY last_name, first_name",
+        (org_id, assignment["class_name"]),
+    ).fetchall()
+    submissions = db.execute(
+        "SELECT student_id, question_bank_id, answer, is_correct FROM assignment_submissions WHERE assignment_id = ?",
+        (assignment_id,),
+    ).fetchall()
+    sub_map = {(s["student_id"], s["question_bank_id"]): s for s in submissions}
+
+    student_results = []
+    for s in students:
+        answers = []
+        correct_count = 0
+        submitted = False
+        for q in questions:
+            sub = sub_map.get((s["id"], q["question_bank_id"]))
+            if sub:
+                submitted = True
+                if sub["is_correct"]:
+                    correct_count += 1
+            answers.append({
+                "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
+                "answer": sub["answer"] if sub else None,
+                "isCorrect": bool(sub["is_correct"]) if sub else None,
+            })
+        student_results.append({
+            "studentId": s["id"], "firstName": s["first_name"], "lastName": s["last_name"],
+            "schoolNumber": s["school_number"], "submitted": submitted,
+            "correctCount": correct_count, "totalQuestions": len(questions), "answers": answers,
+        })
+
+    return jsonify({
+        "assignment": {
+            "id": assignment["id"], "title": assignment["title"], "className": assignment["class_name"],
+            "description": assignment["description"], "dueDate": assignment["due_date"],
+            "status": assignment["status"],
+        },
+        "students": student_results,
+    })
+
+
+@app.route("/api/teacher/assignments/<int:assignment_id>/cancel", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.cancel")
+def api_teacher_cancel_assignment(assignment_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    assignment = db.execute(
+        "SELECT teacher_id FROM assignments WHERE id = ? AND organization_id = ?", (assignment_id, org_id)
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if session.get("role") == "teacher" and assignment["teacher_id"] != session["user_id"]:
+        return jsonify({"error": "Bu ödeve erişim yetkiniz yok."}), 403
+    db.execute(
+        "UPDATE assignments SET status = 'cancelled', updated_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), assignment_id),
+    )
+    db.commit()
+    log_audit(db, "ASSIGNMENT_CANCELLED", resource_type="assignment", resource_id=assignment_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/student/assignments")
+@login_required(role="student", permission="assignments.view")
+def api_student_list_assignments():
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify([])
+    db = get_db()
+    student = db.execute(
+        "SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)
+    ).fetchone()
+    if not student or not student["class_name"]:
+        return jsonify([])
+    rows = db.execute(
+        "SELECT * FROM assignments WHERE organization_id = ? AND class_name = ? AND status = 'active' "
+        "ORDER BY created_at DESC",
+        (student["organization_id"], student["class_name"]),
+    ).fetchall()
+    out = []
+    for a in rows:
+        total_questions = db.execute(
+            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        answered = db.execute(
+            "SELECT COUNT(*) c FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?",
+            (a["id"], student_id),
+        ).fetchone()["c"]
+        out.append({
+            "id": a["id"], "title": a["title"], "description": a["description"],
+            "dueDate": a["due_date"], "totalQuestions": total_questions,
+            "completed": answered >= total_questions and total_questions > 0,
+        })
+    return jsonify(out)
+
+
+@app.route("/api/student/assignments/<int:assignment_id>")
+@login_required(role="student", permission="assignments.view")
+def api_student_assignment_detail(assignment_id):
+    student_id = session.get("student_id")
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ? AND class_name = ?",
+        (assignment_id, student["organization_id"], student["class_name"]),
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+
+    questions = db.execute(
+        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.image_path, qb.question_type "
+        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
+        (assignment_id,),
+    ).fetchall()
+    my_submissions = {
+        r["question_bank_id"]: dict(r) for r in db.execute(
+            "SELECT question_bank_id, answer, is_correct FROM assignment_submissions "
+            "WHERE assignment_id = ? AND student_id = ?", (assignment_id, student_id),
+        ).fetchall()
+    }
+    return jsonify({
+        "id": assignment["id"], "title": assignment["title"], "description": assignment["description"],
+        "dueDate": assignment["due_date"], "status": assignment["status"],
+        "questions": [{
+            "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
+            "questionText": q["question_text"], "questionType": q["question_type"],
+            "hasImage": bool(q["image_path"]),
+            "myAnswer": (my_submissions.get(q["question_bank_id"]) or {}).get("answer"),
+            "isCorrect": (my_submissions.get(q["question_bank_id"]) or {}).get("is_correct"),
+        } for q in questions],
+    })
+
+
+@app.route("/api/student/assignments/<int:assignment_id>/submit", methods=["POST"])
+@login_required(role="student", permission="assignments.complete")
+def api_student_submit_assignment(assignment_id):
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ? AND class_name = ?",
+        (assignment_id, student["organization_id"], student["class_name"]),
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if assignment["status"] != "active":
+        return jsonify({"error": "Bu ödev artık aktif değil."}), 400
+
+    data = request.get_json(silent=True) or {}
+    answers = data.get("answers") or []
+    if not isinstance(answers, list) or not answers:
+        return jsonify({"error": "En az bir cevap gerekli."}), 400
+
+    valid_question_ids = {
+        r["question_bank_id"] for r in db.execute(
+            "SELECT question_bank_id FROM assignment_questions WHERE assignment_id = ?", (assignment_id,)
+        ).fetchall()
+    }
+    now = datetime.now().isoformat()
+    saved = 0
+    for a in answers:
+        qid = a.get("questionBankId")
+        answer_text = (a.get("answer") or "").strip()
+        if qid not in valid_question_ids or not answer_text:
+            continue
+        correct_answer = db.execute(
+            "SELECT correct_answer FROM question_bank WHERE id = ?", (qid,)
+        ).fetchone()
+        is_correct = (
+            correct_answer and correct_answer["correct_answer"]
+            and answer_text.strip().lower() == correct_answer["correct_answer"].strip().lower()
+        )
+        db.execute(
+            "INSERT INTO assignment_submissions (assignment_id, student_id, question_bank_id, answer, "
+            "is_correct, submitted_at) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(assignment_id, student_id, question_bank_id) DO UPDATE SET "
+            "answer=excluded.answer, is_correct=excluded.is_correct, submitted_at=excluded.submitted_at",
+            (assignment_id, student_id, qid, answer_text, 1 if is_correct else 0, now),
+        )
+        saved += 1
+    db.commit()
+    return jsonify({"ok": True, "saved": saved})
+
+
+@app.route("/api/parent/assignments")
+@login_required(role="parent", permission="assignments.view")
+def api_parent_list_assignments():
+    db = get_db()
+    allowed_ids = get_allowed_student_ids(db)
+    if not allowed_ids:
+        return jsonify([])
+    placeholders = ",".join("?" * len(allowed_ids))
+    children = db.execute(
+        f"SELECT id, first_name, last_name, organization_id, class_name FROM students WHERE id IN ({placeholders})",
+        tuple(allowed_ids),
+    ).fetchall()
+    out = []
+    for child in children:
+        if not child["class_name"]:
+            continue
+        rows = db.execute(
+            "SELECT * FROM assignments WHERE organization_id = ? AND class_name = ? AND status = 'active' "
+            "ORDER BY created_at DESC",
+            (child["organization_id"], child["class_name"]),
+        ).fetchall()
+        for a in rows:
+            total_questions = db.execute(
+                "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+            ).fetchone()["c"]
+            answered = db.execute(
+                "SELECT COUNT(*) c FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?",
+                (a["id"], child["id"]),
+            ).fetchone()["c"]
+            out.append({
+                "assignmentId": a["id"], "title": a["title"], "dueDate": a["due_date"],
+                "studentId": child["id"],
+                "studentName": f'{child["first_name"]} {child["last_name"]}'.strip(),
+                "totalQuestions": total_questions,
+                "completed": answered >= total_questions and total_questions > 0,
+            })
+    return jsonify(out)
+
+
+# ============================================================
+# API: AI (STUB) - gercek bir LLM cagrisi YAPMAZ, mevcut veriden kural
+# tabanli basit ciktilar uretir. "placeholder": true alani her zaman
+# donuyor - ileride gercek entegrasyon eklenirse frontend bunu ayirt edebilsin.
+# ============================================================
+
+@app.route("/api/teacher/ai/analyze-student/<int:student_id>", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="ai.analyze")
+def api_ai_analyze_student(student_id):
+    db = get_db()
+    if not can_view_student(db, student_id):
+        return jsonify({"error": "Bu öğrenciye erişim yetkiniz yok."}), 403
+    report = _build_student_report(db, student_id)
+    if not report:
+        return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
+
+    compass = report.get("compass") or {}
+    strong = compass.get("strong") or []
+    priority = compass.get("priority") or []
+    lines = []
+    if strong:
+        lines.append(f"Güçlü olduğu konular: {', '.join(s['kazanim'] for s in strong[:3])}.")
+    if priority:
+        lines.append(f"Öncelikli çalışması gereken konular: {', '.join(p['kazanim'] for p in priority[:3])}.")
+    if not lines:
+        lines.append("Yeterli veri birikmedi - birkaç deneme daha girildikten sonra analiz daha anlamlı olacak.")
+    return jsonify({"placeholder": True, "analysis": " ".join(lines)})
+
+
+@app.route("/api/teacher/ai/generate-assignment", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="ai.generate_assignment")
+def api_ai_generate_assignment():
+    """Sinifin en zayif konularina gore onaylanmis soru bankasindan basit,
+    kural-tabanli bir soru onerisi - gercek bir icerik URETMEZ, var olan
+    onaylanmis sorular arasindan ESLESTIRIR."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    data = request.get_json(silent=True) or {}
+    class_name = (data.get("className") or "").strip()
+    if not class_name or not _teacher_can_use_class(class_name):
+        return jsonify({"error": "Bu sınıf için öneri alma yetkiniz yok."}), 403
+
+    rows = db.execute(
+        "SELECT id, display_code FROM question_bank WHERE organization_id = ? AND status = 'approved' "
+        "ORDER BY RANDOM() LIMIT 5",
+        (org_id,),
+    ).fetchall()
+    return jsonify({
+        "placeholder": True,
+        "suggestedQuestionIds": [r["id"] for r in rows],
+        "note": "Bu, onaylanmış soru bankasından rastgele bir öneri - gerçek yapay zekâ destekli eşleştirme yakında.",
+    })
+
+
+@app.route("/api/admin/question-bank/ai-generate", methods=["POST"])
+@login_required(role="admin", permission="ai.generate_question")
+def api_ai_generate_question():
+    return jsonify({
+        "placeholder": True,
+        "message": "AI ile soru üretimi yakında gelecek. Şu an için Soru Girişi sayfasından PDF yükleyerek soru ekleyebilirsiniz.",
+    })
 
 
 # ============================================================
@@ -3155,7 +3859,7 @@ _MAX_PDF_PAGES = 60
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_upload():
     file = request.files.get("file")
     if not file or not (file.filename or "").lower().endswith(".pdf"):
@@ -3238,7 +3942,7 @@ def api_question_bank_upload():
 
 
 @app.route("/api/admin/question-bank/batches")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
@@ -3255,7 +3959,7 @@ def api_question_bank_batches():
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_batch(batch_id):
     db = get_db()
     org_id = _current_org_id(db)
@@ -3291,7 +3995,7 @@ def _source_pdf_path(batch_id):
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.delete")
 def api_question_bank_delete_batch(batch_id):
     """Bir yükleme setini ve içindeki TÜM soruları (onaylanmış olsa da)
     kalıcı olarak siler - kırpma görselleri ve kaynak PDF'i diskten de
@@ -3332,7 +4036,7 @@ def api_question_bank_delete_batch(batch_id):
 
 
 @app.route("/api/admin/question-bank/image/<int:question_id>")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_image(question_id):
     db = get_db()
     row = db.execute(
@@ -3347,7 +4051,7 @@ def api_question_bank_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/context-image")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_context_image(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3371,7 +4075,7 @@ def api_question_bank_context_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/recrop", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_recrop(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3432,7 +4136,7 @@ def _apply_question_status(db, row, status, user_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>", methods=["PATCH"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_update(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3460,6 +4164,13 @@ def api_question_bank_update(question_id):
     status = data.get("status")
     if status and status not in _QUESTION_STATUSES:
         return jsonify({"error": "Geçersiz durum."}), 400
+    # Durum degisikligi, salt metadata duzenlemekten (questions.update, decorator'da
+    # zaten kontrol edildi) ayri bir yetki gerektirir: incelemeye gonderme
+    # (pending_review -> reviewed) vs. nihai karar (excluded/approved).
+    if status == "reviewed" and not has_permission(db, session["user_id"], "questions.submit_review"):
+        return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
+    if status in ("excluded", "approved") and not has_permission(db, session["user_id"], "questions.approve"):
+        return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
 
     if not fields and not status:
         return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400
@@ -3479,7 +4190,7 @@ def api_question_bank_update(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/bulk-update", methods=["PATCH"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.approve")
 def api_question_bank_bulk_update():
     """Onay ekranındaki ızgara görünümünden birden çok soruyu tek istekte
     onaylamak/hariç tutmak için - tek tek inceleme akışını değiştirmez,
@@ -3507,7 +4218,7 @@ def api_question_bank_bulk_update():
 
 
 @app.route("/api/admin/question-bank/topics")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_topics():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
@@ -3520,7 +4231,7 @@ def api_question_bank_topics():
 
 
 @app.route("/api/admin/question-bank/topics", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_create_topic():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -3541,7 +4252,7 @@ def api_question_bank_create_topic():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_learning_outcomes():
     db = get_db()
     topic_id = request.args.get("topic_id", type=int)
@@ -3554,7 +4265,7 @@ def api_question_bank_learning_outcomes():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_create_learning_outcome():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -3575,7 +4286,7 @@ def api_question_bank_create_learning_outcome():
 
 
 @app.route("/api/admin/question-bank/export")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.publish")
 def api_question_bank_export():
     """Onaylanmış soruları (status='approved') resim + manifest.csv olarak
     tek bir ZIP'te indirir - havuza kesin girmiş sorular dışındakiler
@@ -3640,7 +4351,7 @@ def api_question_bank_export():
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_get_booklet_numbers(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3665,7 +4376,7 @@ def api_question_bank_get_booklet_numbers(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers", methods=["PUT"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_set_booklet_numbers(question_id):
     """Bir sorunun DİĞER kitapçıklardaki numaralarını topluca değiştirir -
     body: {numbers: {"B": 5, "C": 12}}. Sorunun kendi (native) kitapçık
@@ -3757,7 +4468,7 @@ def _parse_booklet_map_rows(file):
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>/import-booklet-map", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_import_booklet_map(batch_id):
     """CSV veya JSON yükler: her satır/kayıt bir mantıksal sorunun kitapçık
     başına numarası (bkz. _parse_booklet_map_rows). Bu batch'in kendi

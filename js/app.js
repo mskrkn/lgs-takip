@@ -22,6 +22,15 @@ const App = {
     // Karşılama başlığı için giriş yapan admin bilgisi (bkz. renderDashboard)
     try {
       this.currentUser = await fetch('/api/me').then(r => r.json());
+      // Bir okula "girmisken" (App.actingSchool) hangi render'in (server
+      // taraflı salt-okunur SchoolView mi, yoksa normal IndexedDB tabanli mi)
+      // kullanilacagina karar veren tek bayrak: gercek super_admin HER ZAMAN,
+      // platform sahibi oldugu icin "organization.manage" izni EK OLARAK
+      // verilmis (legacy role='admin' kalan) hibrit bir admin de (bkz.
+      // grant_platform_admin.py) bu sekilde davranir.
+      if (this.currentUser) {
+        this.currentUser.actsAsSuperAdmin = this.currentUser.role === 'super_admin' || !!this.currentUser.canManageSchools;
+      }
     } catch (e) {
       this.currentUser = null;
     }
@@ -68,10 +77,8 @@ const App = {
     // yüzden diğer tüm nav öğeleri gizlenip doğrudan Okullar açılır.
     if (this.currentUser?.role === 'super_admin') {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+        item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
       });
-      const schoolsNav = document.getElementById('nav-schools');
-      if (schoolsNav) schoolsNav.style.display = '';
       await this.navigateTo('schools');
       return;
     }
@@ -88,10 +95,22 @@ const App = {
       return;
     }
 
-    // "Demo Talepleri" artık platform geneli (potansiyel okul adayları) bir
-    // liste - okul adminlerinin işi değil, sadece süper admine görünür.
+    // Platform sahibi bir admin (legacy role='admin' kalir, ek olarak
+    // "organization.manage" izni verilmis - bkz. grant_platform_admin.py):
+    // normal admin panelinin TAMAMINI (kendi okulu, senkron, soru bankası,
+    // vs.) bugünküyle birebir aynı şekilde kullanmaya devam eder, EK OLARAK
+    // "Okullar" sekmesini de görür ve oradan başka okullara "girebilir".
     const demoNav = document.getElementById('nav-demo-talepleri');
-    if (demoNav) demoNav.style.display = 'none';
+    if (this.currentUser?.canManageSchools) {
+      ['nav-schools', 'nav-system-logs'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      });
+    } else if (demoNav) {
+      // "Demo Talepleri" artık platform geneli (potansiyel okul adayları) bir
+      // liste - okul adminlerinin işi değil, sadece platform sahibine görünür.
+      demoNav.style.display = 'none';
+    }
 
     await this.navigateTo('dashboard');
   },
@@ -170,6 +189,7 @@ const App = {
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
       'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
       schools: ['Okullar', 'Okul Yönetimi'],
+      'system-logs': ['Sistem Logları', 'Denetim Kaydı'],
     };
 
     const [title, subtitle] = titles[page] || [page, ''];
@@ -188,28 +208,28 @@ const App = {
         // (IndexedDB) verisini DEĞİL, o okulun sunucudaki verisini salt
         // okunur gösterir (bkz. js/schoolView.js) - okul admini için
         // hiçbir şey değişmedi.
-        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderStudents();
         } else {
           await this.renderStudents();
         }
         break;
       case 'student-profile':
-        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderStudentProfile(data.studentId, data.examId);
         } else {
           await this.renderStudentProfile(data.studentId);
         }
         break;
       case 'exams':
-        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderExams();
         } else {
           await this.renderExams();
         }
         break;
       case 'exam-detail':
-        if (this.currentUser?.role === 'super_admin' && this.actingSchool) {
+        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderExamDetail(data.examId);
         } else {
           await this.renderExamDetail(data.examId);
@@ -238,6 +258,9 @@ const App = {
         break;
       case 'schools':
         await Schools.render();
+        break;
+      case 'system-logs':
+        await SystemLogs.render();
         break;
     }
 
@@ -2300,6 +2323,8 @@ const App = {
         </div>
         <div id="qb-status" style="margin-top:14px"></div>
         <div id="qb-results"></div>
+        <button class="btn btn-secondary btn-sm mt-2" onclick="App.tryAiGenerateQuestion()">🤖 AI ile Soru Üret</button>
+        <div id="qb-ai-note" class="text-muted" style="margin-top:8px;font-size:13px"></div>
       </div>
       <div class="card mt-2">
         <div class="card-header" style="justify-content:space-between">
@@ -2318,6 +2343,18 @@ const App = {
     const subjectCode = subjectSelect ? subjectSelect.value : '';
     const url = '/api/admin/question-bank/export' + (subjectCode ? `?subject_code=${encodeURIComponent(subjectCode)}` : '');
     window.location.href = url;
+  },
+
+  async tryAiGenerateQuestion() {
+    const note = document.getElementById('qb-ai-note');
+    note.textContent = '...';
+    try {
+      const res = await fetch('/api/admin/question-bank/ai-generate', { method: 'POST' });
+      const data = await res.json();
+      note.textContent = '🤖 ' + (data.message || 'Şu an kullanılamıyor.');
+    } catch (err) {
+      note.textContent = '❌ ' + err.message;
+    }
   },
 
   async loadQuestionBankBatches() {

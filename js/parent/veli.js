@@ -1,5 +1,10 @@
     let children = [];
     let activeChildId = null;
+    let allAssignments = [];
+
+    function escapeHtml(str) {
+      return String(str === null || str === undefined ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
 
     function subjectName(key) {
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
@@ -304,7 +309,31 @@
         document.getElementById('children-card').style.display = '';
         renderChildTabs();
       }
+      try {
+        allAssignments = await fetch('/api/parent/assignments').then(r => r.json());
+      } catch (e) {
+        allAssignments = [];
+      }
       await loadChild(children[0].id);
+    }
+
+    function renderAssignmentsSummary(studentId) {
+      const el = document.getElementById('assignments-summary');
+      if (!el) return;
+      const mine = (allAssignments || []).filter(a => a.studentId === studentId);
+      if (!mine.length) {
+        el.innerHTML = '<p class="text-muted">Şu an aktif bir ödev yok.</p>';
+        return;
+      }
+      el.innerHTML = mine.map(a => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--bg-glass-border);font-size:13px">
+          <div>
+            <b>${escapeHtml(a.title)}</b>
+            ${a.dueDate ? `<div class="text-muted" style="font-size:12px">Son tarih: ${escapeHtml(a.dueDate)}</div>` : ''}
+          </div>
+          <span style="color:${a.completed ? '#4ade80' : '#facc15'}">${a.completed ? '✅ Tamamlandı' : '⏳ Bekliyor'}</span>
+        </div>
+      `).join('');
     }
 
     function renderChildTabs() {
@@ -337,6 +366,7 @@
         <div class="summary-tile"><div class="label">Geliştirilmesi Gereken Ders</div><div class="value">${data.weakestSubject ? subjectName(data.weakestSubject) : '-'}</div></div>
       `;
 
+      renderAssignmentsSummary(studentId);
       renderCompass(data.compass);
       renderScoreHero(data.scoreBreakdown);
       renderScoreRadar(data.scoreBreakdown);

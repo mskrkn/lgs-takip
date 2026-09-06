@@ -1,8 +1,10 @@
 // ============================================
 // LGS Deneme Takip - Süper Admin: Okul (Organization) Yönetimi
-// Faz 1: sadece okul listeleme + yeni okul (+ ilk yönetici hesabı) oluşturma.
-// Her okulun admini kendi tarayıcısından bugünküyle birebir aynı şekilde
-// çalışır (bkz. js/adminUsers.js) - burası sadece o hesapları açan panel.
+// Okul listeleme, yeni okul (+ ilk yönetici hesabı) oluşturma, mevcut bir
+// okulun ad/iletişim bilgilerini düzenleme ve aktif/pasif (soft archive)
+// yapma. Her okulun admini kendi tarayıcısından bugünküyle birebir aynı
+// şekilde çalışır (bkz. js/adminUsers.js) - burası sadece o hesapları açan
+// panel + organizations tablosunun kendi metadata/durum yönetimi.
 // ============================================
 
 // js/adminUsers.js (bu dosyanin komsusu) kullanici verisini escape'lemeden
@@ -32,6 +34,7 @@ const Schools = {
       container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
       return;
     }
+    this._schools = schools; // Duzenle formunun mevcut degerlerle doldurulmasi icin
 
     container.innerHTML = `
       <div class="card" style="border:1px solid rgba(20,184,166,0.3)">
@@ -40,6 +43,8 @@ const Schools = {
         </div>
         ${this._renderSchoolsTable(schools)}
       </div>
+
+      <div class="card mt-2" id="edit-school-card" style="display:none"></div>
 
       <div class="card mt-2">
         <div class="card-header">
@@ -97,10 +102,12 @@ const Schools = {
         <td style="padding:8px">${_schoolsEscapeHtml(s.name)}<br><span style="color:var(--text-muted);font-size:11px">${_schoolsEscapeHtml(s.slug)}</span></td>
         <td style="padding:8px">${s.studentCount}</td>
         <td style="padding:8px">${s.adminCount}</td>
-        <td style="padding:8px">${s.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : s.status}</td>
+        <td style="padding:8px">${s.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
         <td style="padding:8px">${(s.createdAt || '').slice(0, 10)}</td>
         <td style="padding:8px;text-align:right;white-space:nowrap">
           <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.enterSchool(this)">🚪 Okula Gir</button>
+          <button class="btn btn-secondary btn-sm" onclick="Schools.editSchool(${s.id})">✏️ Düzenle</button>
+          <button class="btn btn-secondary btn-sm" onclick="Schools.toggleStatus(${s.id})">${s.status === 'active' ? '⏸️ Pasifleştir' : '▶️ Aktifleştir'}</button>
         </td>
       </tr>`;
     });
@@ -116,11 +123,98 @@ const Schools = {
   // o veri hic yok. data-* attribute'lardan okunuyor (JS string olarak
   // gomulseydi okul adindaki bir tirnak isareti HTML'i bozardi).
   enterSchool(btn) {
-    App.actingSchool = { id: Number(btn.dataset.schoolId), name: btn.dataset.schoolName };
+    const schoolId = Number(btn.dataset.schoolId);
+    // Platform sahibi admin kendi okuluna "girerse" (Okullar listesinde
+    // kendi okulu da gorunur) - salt-okunur SchoolView yerine normal (tam
+    // yetkili) admin paneline dondur, actingSchool'i set ETME.
+    if (App.currentUser?.organizationId && schoolId === App.currentUser.organizationId) {
+      App.actingSchool = null;
+      UI.toast('Bu zaten sizin okulunuz - normal panelden yönetebilirsiniz.', 'info');
+      App.navigateTo('dashboard');
+      return;
+    }
+    App.actingSchool = { id: schoolId, name: btn.dataset.schoolName };
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
     });
     App.navigateTo('users');
+  },
+
+  editSchool(schoolId) {
+    const school = (this._schools || []).find(s => s.id === schoolId);
+    if (!school) return;
+    const card = document.getElementById('edit-school-card');
+    card.style.display = '';
+    card.innerHTML = `
+      <div class="card-header">
+        <h3 class="card-title"><span class="card-icon">✏️</span> "${_schoolsEscapeHtml(school.name)}" Okulunu Düzenle</h3>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px">
+        <div>
+          <label class="form-label">Okul Adı</label>
+          <input type="text" id="edit-school-name" class="form-control" value="${_schoolsEscapeHtml(school.name)}">
+        </div>
+        <div>
+          <label class="form-label">E-posta (opsiyonel)</label>
+          <input type="text" id="edit-school-email" class="form-control" value="${_schoolsEscapeHtml(school.email || '')}">
+        </div>
+        <div>
+          <label class="form-label">Telefon (opsiyonel)</label>
+          <input type="text" id="edit-school-phone" class="form-control" value="${_schoolsEscapeHtml(school.phone || '')}">
+        </div>
+        <div>
+          <label class="form-label">Adres (opsiyonel)</label>
+          <input type="text" id="edit-school-address" class="form-control" value="${_schoolsEscapeHtml(school.address || '')}">
+        </div>
+      </div>
+      <div class="mt-2">
+        <button class="btn btn-primary" onclick="Schools.saveSchoolEdit(${school.id})">Kaydet</button>
+        <button class="btn btn-secondary" onclick="Schools.cancelSchoolEdit()">İptal</button>
+      </div>
+      <div id="edit-school-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
+    `;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  },
+
+  cancelSchoolEdit() {
+    const card = document.getElementById('edit-school-card');
+    card.style.display = 'none';
+    card.innerHTML = '';
+  },
+
+  async saveSchoolEdit(schoolId) {
+    const name = document.getElementById('edit-school-name').value.trim();
+    const email = document.getElementById('edit-school-email').value.trim();
+    const phone = document.getElementById('edit-school-phone').value.trim();
+    const address = document.getElementById('edit-school-address').value.trim();
+    const statusEl = document.getElementById('edit-school-status');
+    statusEl.textContent = 'Kaydediliyor...';
+    try {
+      const res = await fetch(`/api/superadmin/organizations/${schoolId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, phone, address }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Güncellenemedi.');
+      UI.toast('Okul bilgileri güncellendi.', 'success');
+      await this.render();
+    } catch (err) {
+      statusEl.textContent = '❌ ' + err.message;
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async toggleStatus(schoolId) {
+    try {
+      const res = await fetch(`/api/superadmin/organizations/${schoolId}/toggle-status`, { method: 'POST' });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'İşlem başarısız.');
+      UI.toast(result.status === 'active' ? 'Okul aktifleştirildi.' : 'Okul pasifleştirildi - bu okulun kullanıcıları artık giriş yapamaz.', 'info');
+      await this.render();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   async createSchool() {
