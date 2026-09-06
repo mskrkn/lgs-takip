@@ -606,6 +606,43 @@ def _create_v2_tables(conn):
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
 
+        -- Odev (assignment) modulu: icerik kaynagi question_bank (status='approved'
+        -- olanlar) - eski/olu 'questions' tablosuna KASITLI OLARAK dokunulmuyor,
+        -- o her sync'te silinip yeniden kuruluyor. class_name TEXT (classes.id
+        -- DEGIL) - ogretmen erisimi zaten class_name string'ine dayanan
+        -- teacher_class_list() ile calisiyor (bkz. get_allowed_student_ids),
+        -- ayni deseni tekrar kullanmak yeni bir id-cozumleme katmani eklemekten
+        -- daha az riskli.
+        CREATE TABLE IF NOT EXISTS assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            class_name TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','cancelled')),
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS assignment_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            question_bank_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            order_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS assignment_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            question_bank_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            answer TEXT,
+            is_correct INTEGER,
+            submitted_at TEXT NOT NULL,
+            UNIQUE(assignment_id, student_id, question_bank_id)
+        );
+
         CREATE TABLE IF NOT EXISTS ai_conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -2914,6 +2951,367 @@ def api_teacher_send_message():
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+# ============================================================
+# API: Ödev (Assignment) modülü
+# ============================================================
+# Icerik kaynagi HER ZAMAN question_bank (status='approved') - bkz.
+# assignments tablosunun yorumu. Scope: TEACHER=ASSIGNED (sadece kendi
+# class_name'i - teacher_class_list ile ayni desen), SCHOOL_ADMIN/
+# SUPER_ADMIN=ORGANIZATION (org icindeki HERHANGI bir sinif).
+
+def _teacher_can_use_class(class_name):
+    """Oturumdaki kullanici (teacher/admin/super_admin) verilen sinifa odev
+    verebilir mi? Admin/super_admin icin sinir yok (ORGANIZATION scope -
+    org filtresi zaten cagiran tarafta uygulaniyor); teacher icin
+    get_allowed_student_ids ile AYNI teacher_class_list mantigi (ASSIGNED scope)."""
+    if session.get("role") in ("admin", "super_admin"):
+        return True
+    allowed = teacher_class_list(session.get("class_name"))
+    return allowed is None or class_name in allowed
+
+
+@app.route("/api/teacher/assignments", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.create")
+def api_teacher_create_assignment():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    class_name = (data.get("className") or "").strip()
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip() or None
+    due_date = (data.get("dueDate") or "").strip() or None
+    question_ids = data.get("questionIds") or []
+
+    if not class_name or not title:
+        return jsonify({"error": "Sınıf ve başlık gerekli."}), 400
+    if not isinstance(question_ids, list) or not question_ids:
+        return jsonify({"error": "En az bir soru seçilmeli."}), 400
+    if not _teacher_can_use_class(class_name):
+        return jsonify({"error": "Bu sınıfa ödev verme yetkiniz yok."}), 403
+
+    # Sadece ONAYLANMIS sorular odeve eklenebilir (bkz. questions.publish -
+    # onaylanmamis/incelemedeki bir soru ogrenciye gitmemeli).
+    placeholders = ",".join("?" * len(question_ids))
+    valid_rows = db.execute(
+        f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'approved'",
+        (*question_ids, org_id),
+    ).fetchall()
+    valid_ids = {r["id"] for r in valid_rows}
+    if len(valid_ids) != len(set(question_ids)):
+        return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz onaylanmamış."}), 400
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO assignments (organization_id, teacher_id, class_name, title, description, due_date, "
+        "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (org_id, session["user_id"], class_name, title, description, due_date, "active", now, now),
+    )
+    assignment_id = cur.lastrowid
+    for i, qid in enumerate(question_ids):
+        db.execute(
+            "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index) VALUES (?,?,?)",
+            (assignment_id, qid, i),
+        )
+    db.commit()
+    log_audit(db, "ASSIGNMENT_CREATED", resource_type="assignment", resource_id=assignment_id)
+    return jsonify({"ok": True, "id": assignment_id})
+
+
+@app.route("/api/teacher/assignments")
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.view")
+def api_teacher_list_assignments():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    query = "SELECT * FROM assignments WHERE organization_id = ?"
+    params = [org_id]
+    if session.get("role") == "teacher":
+        query += " AND teacher_id = ?"
+        params.append(session["user_id"])
+    query += " ORDER BY created_at DESC"
+    rows = db.execute(query, params).fetchall()
+
+    out = []
+    for a in rows:
+        total_students = db.execute(
+            "SELECT COUNT(*) c FROM students WHERE organization_id = ? AND class_name = ?",
+            (org_id, a["class_name"]),
+        ).fetchone()["c"]
+        total_questions = db.execute(
+            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        submitted_students = db.execute(
+            "SELECT COUNT(DISTINCT student_id) c FROM assignment_submissions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        out.append({
+            "id": a["id"], "className": a["class_name"], "title": a["title"],
+            "description": a["description"], "dueDate": a["due_date"], "status": a["status"],
+            "createdAt": a["created_at"], "totalStudents": total_students,
+            "totalQuestions": total_questions, "submittedStudents": submitted_students,
+        })
+    return jsonify(out)
+
+
+@app.route("/api/teacher/assignments/<int:assignment_id>/results")
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.view_results")
+def api_teacher_assignment_results(assignment_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ?", (assignment_id, org_id)
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if session.get("role") == "teacher" and assignment["teacher_id"] != session["user_id"]:
+        return jsonify({"error": "Bu ödeve erişim yetkiniz yok."}), 403
+
+    questions = db.execute(
+        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.correct_answer "
+        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
+        (assignment_id,),
+    ).fetchall()
+    students = db.execute(
+        "SELECT id, first_name, last_name, school_number FROM students "
+        "WHERE organization_id = ? AND class_name = ? ORDER BY last_name, first_name",
+        (org_id, assignment["class_name"]),
+    ).fetchall()
+    submissions = db.execute(
+        "SELECT student_id, question_bank_id, answer, is_correct FROM assignment_submissions WHERE assignment_id = ?",
+        (assignment_id,),
+    ).fetchall()
+    sub_map = {(s["student_id"], s["question_bank_id"]): s for s in submissions}
+
+    student_results = []
+    for s in students:
+        answers = []
+        correct_count = 0
+        submitted = False
+        for q in questions:
+            sub = sub_map.get((s["id"], q["question_bank_id"]))
+            if sub:
+                submitted = True
+                if sub["is_correct"]:
+                    correct_count += 1
+            answers.append({
+                "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
+                "answer": sub["answer"] if sub else None,
+                "isCorrect": bool(sub["is_correct"]) if sub else None,
+            })
+        student_results.append({
+            "studentId": s["id"], "firstName": s["first_name"], "lastName": s["last_name"],
+            "schoolNumber": s["school_number"], "submitted": submitted,
+            "correctCount": correct_count, "totalQuestions": len(questions), "answers": answers,
+        })
+
+    return jsonify({
+        "assignment": {
+            "id": assignment["id"], "title": assignment["title"], "className": assignment["class_name"],
+            "description": assignment["description"], "dueDate": assignment["due_date"],
+            "status": assignment["status"],
+        },
+        "students": student_results,
+    })
+
+
+@app.route("/api/teacher/assignments/<int:assignment_id>/cancel", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="assignments.cancel")
+def api_teacher_cancel_assignment(assignment_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    assignment = db.execute(
+        "SELECT teacher_id FROM assignments WHERE id = ? AND organization_id = ?", (assignment_id, org_id)
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if session.get("role") == "teacher" and assignment["teacher_id"] != session["user_id"]:
+        return jsonify({"error": "Bu ödeve erişim yetkiniz yok."}), 403
+    db.execute(
+        "UPDATE assignments SET status = 'cancelled', updated_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), assignment_id),
+    )
+    db.commit()
+    log_audit(db, "ASSIGNMENT_CANCELLED", resource_type="assignment", resource_id=assignment_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/student/assignments")
+@login_required(role="student", permission="assignments.view")
+def api_student_list_assignments():
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify([])
+    db = get_db()
+    student = db.execute(
+        "SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)
+    ).fetchone()
+    if not student or not student["class_name"]:
+        return jsonify([])
+    rows = db.execute(
+        "SELECT * FROM assignments WHERE organization_id = ? AND class_name = ? AND status = 'active' "
+        "ORDER BY created_at DESC",
+        (student["organization_id"], student["class_name"]),
+    ).fetchall()
+    out = []
+    for a in rows:
+        total_questions = db.execute(
+            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+        ).fetchone()["c"]
+        answered = db.execute(
+            "SELECT COUNT(*) c FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?",
+            (a["id"], student_id),
+        ).fetchone()["c"]
+        out.append({
+            "id": a["id"], "title": a["title"], "description": a["description"],
+            "dueDate": a["due_date"], "totalQuestions": total_questions,
+            "completed": answered >= total_questions and total_questions > 0,
+        })
+    return jsonify(out)
+
+
+@app.route("/api/student/assignments/<int:assignment_id>")
+@login_required(role="student", permission="assignments.view")
+def api_student_assignment_detail(assignment_id):
+    student_id = session.get("student_id")
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ? AND class_name = ?",
+        (assignment_id, student["organization_id"], student["class_name"]),
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+
+    questions = db.execute(
+        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.image_path, qb.question_type "
+        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
+        (assignment_id,),
+    ).fetchall()
+    my_submissions = {
+        r["question_bank_id"]: dict(r) for r in db.execute(
+            "SELECT question_bank_id, answer, is_correct FROM assignment_submissions "
+            "WHERE assignment_id = ? AND student_id = ?", (assignment_id, student_id),
+        ).fetchall()
+    }
+    return jsonify({
+        "id": assignment["id"], "title": assignment["title"], "description": assignment["description"],
+        "dueDate": assignment["due_date"], "status": assignment["status"],
+        "questions": [{
+            "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
+            "questionText": q["question_text"], "questionType": q["question_type"],
+            "hasImage": bool(q["image_path"]),
+            "myAnswer": (my_submissions.get(q["question_bank_id"]) or {}).get("answer"),
+            "isCorrect": (my_submissions.get(q["question_bank_id"]) or {}).get("is_correct"),
+        } for q in questions],
+    })
+
+
+@app.route("/api/student/assignments/<int:assignment_id>/submit", methods=["POST"])
+@login_required(role="student", permission="assignments.complete")
+def api_student_submit_assignment(assignment_id):
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    assignment = db.execute(
+        "SELECT * FROM assignments WHERE id = ? AND organization_id = ? AND class_name = ?",
+        (assignment_id, student["organization_id"], student["class_name"]),
+    ).fetchone()
+    if not assignment:
+        return jsonify({"error": "Ödev bulunamadı."}), 404
+    if assignment["status"] != "active":
+        return jsonify({"error": "Bu ödev artık aktif değil."}), 400
+
+    data = request.get_json(silent=True) or {}
+    answers = data.get("answers") or []
+    if not isinstance(answers, list) or not answers:
+        return jsonify({"error": "En az bir cevap gerekli."}), 400
+
+    valid_question_ids = {
+        r["question_bank_id"] for r in db.execute(
+            "SELECT question_bank_id FROM assignment_questions WHERE assignment_id = ?", (assignment_id,)
+        ).fetchall()
+    }
+    now = datetime.now().isoformat()
+    saved = 0
+    for a in answers:
+        qid = a.get("questionBankId")
+        answer_text = (a.get("answer") or "").strip()
+        if qid not in valid_question_ids or not answer_text:
+            continue
+        correct_answer = db.execute(
+            "SELECT correct_answer FROM question_bank WHERE id = ?", (qid,)
+        ).fetchone()
+        is_correct = (
+            correct_answer and correct_answer["correct_answer"]
+            and answer_text.strip().lower() == correct_answer["correct_answer"].strip().lower()
+        )
+        db.execute(
+            "INSERT INTO assignment_submissions (assignment_id, student_id, question_bank_id, answer, "
+            "is_correct, submitted_at) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(assignment_id, student_id, question_bank_id) DO UPDATE SET "
+            "answer=excluded.answer, is_correct=excluded.is_correct, submitted_at=excluded.submitted_at",
+            (assignment_id, student_id, qid, answer_text, 1 if is_correct else 0, now),
+        )
+        saved += 1
+    db.commit()
+    return jsonify({"ok": True, "saved": saved})
+
+
+@app.route("/api/parent/assignments")
+@login_required(role="parent", permission="assignments.view")
+def api_parent_list_assignments():
+    db = get_db()
+    allowed_ids = get_allowed_student_ids(db)
+    if not allowed_ids:
+        return jsonify([])
+    placeholders = ",".join("?" * len(allowed_ids))
+    children = db.execute(
+        f"SELECT id, first_name, last_name, organization_id, class_name FROM students WHERE id IN ({placeholders})",
+        tuple(allowed_ids),
+    ).fetchall()
+    out = []
+    for child in children:
+        if not child["class_name"]:
+            continue
+        rows = db.execute(
+            "SELECT * FROM assignments WHERE organization_id = ? AND class_name = ? AND status = 'active' "
+            "ORDER BY created_at DESC",
+            (child["organization_id"], child["class_name"]),
+        ).fetchall()
+        for a in rows:
+            total_questions = db.execute(
+                "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+            ).fetchone()["c"]
+            answered = db.execute(
+                "SELECT COUNT(*) c FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?",
+                (a["id"], child["id"]),
+            ).fetchone()["c"]
+            out.append({
+                "assignmentId": a["id"], "title": a["title"], "dueDate": a["due_date"],
+                "studentId": child["id"],
+                "studentName": f'{child["first_name"]} {child["last_name"]}'.strip(),
+                "totalQuestions": total_questions,
+                "completed": answered >= total_questions and total_questions > 0,
+            })
+    return jsonify(out)
 
 
 # ============================================================
