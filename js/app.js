@@ -2508,6 +2508,8 @@ const App = {
       reviewed: ['👁️ İncelendi', 'var(--text-muted)'],
       approved: ['✅ Onaylandı', 'var(--success)'],
       excluded: ['🚫 Hariç Tutuldu', 'var(--danger)'],
+      published: ['📤 Yayınlandı', 'var(--success)'],
+      archived: ['🗄️ Arşivlendi', 'var(--text-muted)'],
     };
     overlay.innerHTML = `
       <div class="modal modal-lg" style="max-width:1180px">
@@ -2720,6 +2722,8 @@ const App = {
             <button class="btn btn-secondary" onclick="App._qbSaveFields()">💾 Kaydet</button>
             <button class="btn btn-danger" onclick="App._qbSaveFields('excluded')">🚫 Hariç Tut</button>
             <button class="btn btn-primary" onclick="App._qbSaveFields('approved')">✅ Onayla</button>
+            <button class="btn btn-secondary" onclick="App._qbSaveFields('published')" title="Sadece onaylanmış sorular yayınlanabilir - ödevlerde kullanılabilir hale gelir">📤 Yayınla</button>
+            <button class="btn btn-ghost" onclick="App._qbSaveFields('archived')" title="Soru arşivlenir, silinmez">🗄️ Arşivle</button>
           </div>
         </div>
       </div>`;
@@ -2791,6 +2795,8 @@ const App = {
       reviewed: ['👁️ İncelendi', 'var(--text-muted)'],
       approved: ['✅ Onaylandı', 'var(--success)'],
       excluded: ['🚫 Hariç Tutuldu', 'var(--danger)'],
+      published: ['📤 Yayınlandı', 'var(--success)'],
+      archived: ['🗄️ Arşivlendi', 'var(--text-muted)'],
     };
     const [label, color] = statusLabels[q.status] || statusLabels.pending_review;
     document.getElementById('qbr-status-badge').innerHTML = `<span style="color:${color};font-weight:700;font-size:12.5px">${label}</span>`;
@@ -3094,7 +3100,11 @@ const App = {
       });
       if (status) q.status = status;
 
-      UI.toast(status === 'approved' ? 'Soru onaylandı ✅' : status === 'excluded' ? 'Soru hariç tutuldu' : 'Kaydedildi 💾', 'success');
+      const statusToasts = {
+        approved: 'Soru onaylandı ✅', excluded: 'Soru hariç tutuldu',
+        published: 'Soru yayınlandı 📤 - artık ödevlerde kullanılabilir', archived: 'Soru arşivlendi 🗄️',
+      };
+      UI.toast(statusToasts[status] || 'Kaydedildi 💾', 'success');
 
       if (status && s.index < s.questions.length - 1) {
         this._qbNav(1);
