@@ -345,14 +345,25 @@ SUBJECT_SEED = [
 ]
 
 ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "SCHOOL_ADMIN_DELEGATE",
-             "TEACHER", "PARENT", "STUDENT"]
+             "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
 
 PERMISSION_SEED = [
     "students.view", "students.create", "students.update", "students.delete",
-    "classes.view", "classes.create", "classes.update", "classes.delete",
+    "students.archive", "students.view_academic_data",
+    "classes.view", "classes.create", "classes.update", "classes.delete", "classes.archive",
     "exams.view", "exams.create", "exams.update", "exams.delete",
+    "exams.import", "exams.view_results",
     "results.view", "analytics.view", "organization.manage", "users.manage",
-    "organizations.view", "organizations.create", "organizations.edit",
+    "users.view", "users.create", "users.update", "users.deactivate", "users.assign_role",
+    "organizations.view", "organizations.create", "organizations.update", "organizations.archive",
+    "teachers.view", "teachers.create", "teachers.update", "teachers.manage_assignments",
+    "questions.view", "questions.create", "questions.update", "questions.delete",
+    "questions.submit_review", "questions.approve", "questions.publish", "questions.view_assigned",
+    "assignments.view", "assignments.create", "assignments.update", "assignments.cancel",
+    "assignments.view_results", "assignments.complete",
+    "analytics.student", "analytics.class", "analytics.school", "analytics.global",
+    "ai.analyze", "ai.generate_question", "ai.generate_assignment", "ai.manage", "ai.analyze_self",
+    "system.settings", "system.logs", "system.manage",
 ]
 
 # Platform (okul-ustu) duzeyi izinler - hicbir okul admininin KENDI okuluyla
@@ -360,10 +371,13 @@ PERMISSION_SEED = [
 # cikarilir (bkz. asagisi). organization.manage = "baska bir okulun
 # VERISINI goruntule/yonet" (_effective_org_id'nin ?school_id= override
 # gate'i). organizations.* = "organizations TABLOSUNUN kendisini (ad/
-# iletisim/durum) yonet" - kavramsal olarak ayri ama ikisi de sadece
+# iletisim/durum) yonet". analytics.global/system.*/ai.manage = platform
+# geneli, tek bir okulla sinirli olmayan yetkiler. Hepsi sadece
 # SUPER_ADMIN/PLATFORM_ADMIN'de.
 PLATFORM_ONLY_PERMISSIONS = [
-    "organization.manage", "organizations.view", "organizations.create", "organizations.edit",
+    "organization.manage", "organizations.view", "organizations.create",
+    "organizations.update", "organizations.archive",
+    "analytics.global", "system.settings", "system.logs", "system.manage", "ai.manage",
 ]
 
 ROLE_PERMISSIONS_SEED = {
@@ -376,9 +390,35 @@ ROLE_PERMISSIONS_SEED = {
     # digerinin school_id'sini enjekte edip/organizations ucuna erisip
     # baska okulun verisine ulasabilirdi (IDOR).
     "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p not in PLATFORM_ONLY_PERMISSIONS],
-    "TEACHER": ["students.view", "classes.view", "exams.view", "results.view", "analytics.view"],
-    "PARENT": ["results.view", "analytics.view"],
-    "STUDENT": ["results.view", "analytics.view"],
+    # Veri girisi personeli (Excel/optik/PDF aktarimi, ogrenci kaydi) -
+    # organizasyon ayarlarina/kullanici yetkilerine dokunamaz. NOT: legacy
+    # role='admin' uzerine ek v2 rol olarak verilecekse (grant_data_admin.py),
+    # bugun admin panelinin cogu ucu SADECE role="admin" kontrol ediyor,
+    # permission= DEGIL - bu yuzden DATA_ADMIN'e bu rolu vermek onu GERCEKTEN
+    # daraltmaz (hala tam admin gibi davranir), ta ki o uclar tek tek
+    # permission= ile de korunana kadar (ayri, gelecekteki bir is). Bu liste
+    # simdilik SADECE has_permission() kontrollerinin dogru calismasi icin var.
+    "DATA_ADMIN": ["students.view", "students.create", "students.update",
+                   "exams.view", "exams.import", "exams.update"],
+    # Ogrenci gelisimini/sinif-okul analizini izleyen, veri GIRMEYEN rol.
+    # Legacy role='teacher' uzerine ek v2 rol olarak verilir (grant_coordinator.py) -
+    # ogretmen paneli/oturumu degismez, sadece org-genelinde salt-okunur
+    # analiz gorunurlugu ekler.
+    "COORDINATOR": ["students.view", "analytics.student", "analytics.class",
+                    "analytics.school", "assignments.view"],
+    "TEACHER": [
+        "students.view", "students.view_academic_data",
+        "classes.view", "exams.view", "results.view", "analytics.view",
+        "questions.view", "questions.create", "questions.update",
+        "assignments.view", "assignments.create", "assignments.update",
+        "assignments.cancel", "assignments.view_results",
+        "analytics.student", "analytics.class",
+        "ai.analyze", "ai.generate_question", "ai.generate_assignment",
+    ],
+    "PARENT": ["results.view", "analytics.view", "students.view",
+               "assignments.view", "analytics.student"],
+    "STUDENT": ["results.view", "analytics.view", "assignments.view", "assignments.complete",
+                "analytics.student", "questions.view_assigned", "ai.analyze_self"],
     # Okul admini kendi ogretmenlerinden birine "hesap ekleme" yetkisi
     # devredebilir - bkz. /api/admin/users/<id>/delegate. Legacy role hala
     # 'teacher' kalir (ogretmen paneli/oturumu degismez), bu SADECE ek bir
@@ -1713,7 +1753,7 @@ def api_superadmin_create_organization():
 
 
 @app.route("/api/superadmin/organizations/<int:org_id>", methods=["PATCH"])
-@login_required(role=("admin", "super_admin"), permission="organizations.edit")
+@login_required(role=("admin", "super_admin"), permission="organizations.update")
 def api_superadmin_update_organization(org_id):
     """Bir okulun ad/iletisim bilgilerini kismi gunceller - status (aktif/
     pasif) BURADAN degil, ayri toggle-status ucundan degistirilir (bkz.
@@ -1755,7 +1795,7 @@ def api_superadmin_update_organization(org_id):
 
 
 @app.route("/api/superadmin/organizations/<int:org_id>/toggle-status", methods=["POST"])
-@login_required(role=("admin", "super_admin"), permission="organizations.edit")
+@login_required(role=("admin", "super_admin"), permission="organizations.archive")
 def api_superadmin_toggle_organization_status(org_id):
     """Bir okulu aktif/pasif yapar (soft archive - hard delete YOK, bkz. plan
     context). Pasif bir okulun kullanicilari giris yapamaz (bkz. api_login),
@@ -1773,6 +1813,44 @@ def api_superadmin_toggle_organization_status(org_id):
     db.commit()
     log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
     return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/superadmin/audit-logs")
+@login_required(role=("admin", "super_admin"), permission="system.logs")
+def api_superadmin_audit_logs():
+    """Denetim kaydi goruntuleyici. audit_logs.organization_id, ISLEMI YAPAN
+    kullanicinin okulunu tutar (bkz. log_audit) - yani filtre "bu okulun
+    KENDI personelinin yaptigi islemler" anlamina gelir, "bu okulu etkileyen
+    islemler" degil (ornegin platform sahibinin baska bir okulu duzenlemesi
+    kendi okulunun logunda gorunur, duzenlenen okulun degil - mevcut
+    log_audit tasarimi boyle, burada degistirilmiyor).
+    organization.manage izni olmayan (normal okul admini/delege) sadece
+    kendi okulunun loglarini gorur, ?school_id= YOK SAYILIR (_effective_org_id
+    ile ayni IDOR-guvenli desen)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    limit = min(request.args.get("limit", 50, type=int) or 50, 200)
+    before_id = request.args.get("before_id", type=int)
+    query = (
+        "SELECT al.id, al.action, al.resource_type, al.resource_id, al.ip_address, al.created_at, "
+        "u.username, u.display_name "
+        "FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id "
+        "WHERE al.organization_id = ?"
+    )
+    params = [org_id]
+    if before_id:
+        query += " AND al.id < ?"
+        params.append(before_id)
+    query += " ORDER BY al.id DESC LIMIT ?"
+    params.append(limit)
+    rows = db.execute(query, params).fetchall()
+    return jsonify([{
+        "id": r["id"], "action": r["action"], "resourceType": r["resource_type"],
+        "resourceId": r["resource_id"], "ipAddress": r["ip_address"], "createdAt": r["created_at"],
+        "actorUsername": r["username"], "actorDisplayName": r["display_name"],
+    } for r in rows])
 
 
 # ============================================================
@@ -3293,7 +3371,7 @@ _MAX_PDF_PAGES = 60
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_upload():
     file = request.files.get("file")
     if not file or not (file.filename or "").lower().endswith(".pdf"):
@@ -3376,7 +3454,7 @@ def api_question_bank_upload():
 
 
 @app.route("/api/admin/question-bank/batches")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
@@ -3393,7 +3471,7 @@ def api_question_bank_batches():
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_batch(batch_id):
     db = get_db()
     org_id = _current_org_id(db)
@@ -3429,7 +3507,7 @@ def _source_pdf_path(batch_id):
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.delete")
 def api_question_bank_delete_batch(batch_id):
     """Bir yükleme setini ve içindeki TÜM soruları (onaylanmış olsa da)
     kalıcı olarak siler - kırpma görselleri ve kaynak PDF'i diskten de
@@ -3470,7 +3548,7 @@ def api_question_bank_delete_batch(batch_id):
 
 
 @app.route("/api/admin/question-bank/image/<int:question_id>")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_image(question_id):
     db = get_db()
     row = db.execute(
@@ -3485,7 +3563,7 @@ def api_question_bank_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/context-image")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_context_image(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3509,7 +3587,7 @@ def api_question_bank_context_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/recrop", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_recrop(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3570,7 +3648,7 @@ def _apply_question_status(db, row, status, user_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>", methods=["PATCH"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_update(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3598,6 +3676,13 @@ def api_question_bank_update(question_id):
     status = data.get("status")
     if status and status not in _QUESTION_STATUSES:
         return jsonify({"error": "Geçersiz durum."}), 400
+    # Durum degisikligi, salt metadata duzenlemekten (questions.update, decorator'da
+    # zaten kontrol edildi) ayri bir yetki gerektirir: incelemeye gonderme
+    # (pending_review -> reviewed) vs. nihai karar (excluded/approved).
+    if status == "reviewed" and not has_permission(db, session["user_id"], "questions.submit_review"):
+        return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
+    if status in ("excluded", "approved") and not has_permission(db, session["user_id"], "questions.approve"):
+        return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
 
     if not fields and not status:
         return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400
@@ -3617,7 +3702,7 @@ def api_question_bank_update(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/bulk-update", methods=["PATCH"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.approve")
 def api_question_bank_bulk_update():
     """Onay ekranındaki ızgara görünümünden birden çok soruyu tek istekte
     onaylamak/hariç tutmak için - tek tek inceleme akışını değiştirmez,
@@ -3645,7 +3730,7 @@ def api_question_bank_bulk_update():
 
 
 @app.route("/api/admin/question-bank/topics")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_topics():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
@@ -3658,7 +3743,7 @@ def api_question_bank_topics():
 
 
 @app.route("/api/admin/question-bank/topics", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_create_topic():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -3679,7 +3764,7 @@ def api_question_bank_create_topic():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_learning_outcomes():
     db = get_db()
     topic_id = request.args.get("topic_id", type=int)
@@ -3692,7 +3777,7 @@ def api_question_bank_learning_outcomes():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.create")
 def api_question_bank_create_learning_outcome():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -3713,7 +3798,7 @@ def api_question_bank_create_learning_outcome():
 
 
 @app.route("/api/admin/question-bank/export")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.publish")
 def api_question_bank_export():
     """Onaylanmış soruları (status='approved') resim + manifest.csv olarak
     tek bir ZIP'te indirir - havuza kesin girmiş sorular dışındakiler
@@ -3778,7 +3863,7 @@ def api_question_bank_export():
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers")
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.view")
 def api_question_bank_get_booklet_numbers(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -3803,7 +3888,7 @@ def api_question_bank_get_booklet_numbers(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers", methods=["PUT"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_set_booklet_numbers(question_id):
     """Bir sorunun DİĞER kitapçıklardaki numaralarını topluca değiştirir -
     body: {numbers: {"B": 5, "C": 12}}. Sorunun kendi (native) kitapçık
@@ -3895,7 +3980,7 @@ def _parse_booklet_map_rows(file):
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>/import-booklet-map", methods=["POST"])
-@login_required(role="admin")
+@login_required(role="admin", permission="questions.update")
 def api_question_bank_import_booklet_map(batch_id):
     """CSV veya JSON yükler: her satır/kayıt bir mantıksal sorunun kitapçık
     başına numarası (bkz. _parse_booklet_map_rows). Bu batch'in kendi

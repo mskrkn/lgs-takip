@@ -77,10 +77,8 @@ const App = {
     // yüzden diğer tüm nav öğeleri gizlenip doğrudan Okullar açılır.
     if (this.currentUser?.role === 'super_admin') {
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+        item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
       });
-      const schoolsNav = document.getElementById('nav-schools');
-      if (schoolsNav) schoolsNav.style.display = '';
       await this.navigateTo('schools');
       return;
     }
@@ -104,8 +102,10 @@ const App = {
     // "Okullar" sekmesini de görür ve oradan başka okullara "girebilir".
     const demoNav = document.getElementById('nav-demo-talepleri');
     if (this.currentUser?.canManageSchools) {
-      const schoolsNav = document.getElementById('nav-schools');
-      if (schoolsNav) schoolsNav.style.display = '';
+      ['nav-schools', 'nav-system-logs'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      });
     } else if (demoNav) {
       // "Demo Talepleri" artık platform geneli (potansiyel okul adayları) bir
       // liste - okul adminlerinin işi değil, sadece platform sahibine görünür.
@@ -189,6 +189,7 @@ const App = {
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
       'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
       schools: ['Okullar', 'Okul Yönetimi'],
+      'system-logs': ['Sistem Logları', 'Denetim Kaydı'],
     };
 
     const [title, subtitle] = titles[page] || [page, ''];
@@ -257,6 +258,9 @@ const App = {
         break;
       case 'schools':
         await Schools.render();
+        break;
+      case 'system-logs':
+        await SystemLogs.render();
         break;
     }
 
