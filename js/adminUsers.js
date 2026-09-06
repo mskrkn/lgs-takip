@@ -201,18 +201,6 @@ const AdminUsers = {
 
       <div class="card mt-2">
         <div class="card-header">
-          <h3 class="card-title"><span class="card-icon">👨‍👩‍👧</span> Öğrenci Davet Linkleri (Veli/Öğrenci)</h3>
-        </div>
-        <p class="text-muted mb-2">
-          Her öğrenci için ayrı bir davet linki alıp aileye gönderebilirsiniz — okul
-          numarası gibi tahmin edilebilir bir bilgi yerine, sadece o bağlantıyı
-          bilenler o öğrenci için kayıt olabilir.
-        </p>
-        <div id="student-invite-list">${this._renderStudentInviteList(students)}</div>
-      </div>
-
-      <div class="card mt-2">
-        <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
         <div id="users-list">${this._renderUsersTable(users, canManageAccounts)}</div>
@@ -277,26 +265,6 @@ const AdminUsers = {
     return html;
   },
 
-  _renderStudentInviteList(students) {
-    if (!students.length) return '<p class="text-muted">Henüz öğrenci kaydı yok.</p>';
-    let html = `<div class="table-wrapper" style="max-height:320px;overflow-y:auto">
-      <table style="width:100%;border-collapse:collapse">
-      <tr style="text-align:left;color:var(--text-muted);font-size:13px">
-        <th style="padding:6px">Öğrenci</th><th style="padding:6px">Sınıf</th><th style="padding:6px"></th>
-      </tr>`;
-    students.forEach(s => {
-      html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
-        <td style="padding:6px">${s.first_name} ${s.last_name}</td>
-        <td style="padding:6px">${s.class_name || '-'}</td>
-        <td style="padding:6px;text-align:right">
-          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.getStudentInvite(${s.id})">🔗 Davet Linki Al</button>
-        </td>
-      </tr>`;
-    });
-    html += '</table></div>';
-    return html;
-  },
-
   async _loadTeacherInvite() {
     const box = document.getElementById('teacher-invite-box');
     if (!box) return;
@@ -318,14 +286,6 @@ const AdminUsers = {
     if (!res.ok) { UI.toast(data.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast('Yeni davet linki oluşturuldu.', 'success');
     this._loadTeacherInvite();
-  },
-
-  async getStudentInvite(studentId) {
-    const res = await fetch(`/api/admin/students/${studentId}/invite${this._schoolQuery()}`, { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) { UI.toast(data.error || 'Davet linki alınamadı.', 'danger'); return; }
-    this._copyText(data.url);
-    prompt('Bu linki kopyaladık (panoya da kopyalandı) - ailesine iletebilirsiniz:', data.url);
   },
 
   _copyText(text) {
