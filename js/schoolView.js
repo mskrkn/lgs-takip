@@ -47,6 +47,55 @@ const SchoolView = {
     return data;
   },
 
+  // Platform sahibinin bu okula dogrudan ogrenci/deneme/sonuc eklemesi -
+  // bkz. server.py POST /api/teacher/students,exams,results. Yazilan
+  // satirlar source='platform_admin' ile damgalanir, bu okulun kendi
+  // senkronu bunlara asla dokunmaz (bkz. server.py api_admin_sync).
+  _addStudentFormHtml() {
+    return `<div id="sv-add-student-form" style="display:none" class="card mt-2">
+      <div class="form-row" style="grid-template-columns:repeat(4,1fr)">
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Ad</label><input class="form-input" id="sv-student-firstname"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Soyad</label><input class="form-input" id="sv-student-lastname"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Okul No</label><input class="form-input" id="sv-student-schoolnumber"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Sınıf</label><input class="form-input" id="sv-student-classname" placeholder="8A"></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="SchoolView.submitAddStudent()">💾 Kaydet</button>
+        <button class="btn btn-secondary btn-sm" onclick="SchoolView.toggleAddStudentForm(false)">İptal</button>
+      </div>
+    </div>`;
+  },
+
+  toggleAddStudentForm(show) {
+    const el = document.getElementById('sv-add-student-form');
+    if (el) el.style.display = show ? 'block' : 'none';
+  },
+
+  async submitAddStudent() {
+    const firstName = document.getElementById('sv-student-firstname')?.value.trim();
+    const lastName = document.getElementById('sv-student-lastname')?.value.trim();
+    const schoolNumber = document.getElementById('sv-student-schoolnumber')?.value.trim();
+    const className = document.getElementById('sv-student-classname')?.value.trim();
+    if (!firstName || !lastName) {
+      UI.toast('Ad ve soyad gerekli.', 'warning');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/teacher/students${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firstName, lastName, schoolNumber, className }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Öğrenci eklenemedi.');
+      UI.toast(`${firstName} ${lastName} eklendi.`, 'success');
+      this._overviewCache = null;
+      this.renderStudents();
+    } catch (err) {
+      UI.toast(err.message, 'error');
+    }
+  },
+
   async renderStudents() {
     const container = document.getElementById('page-students');
     if (!container) return;
@@ -57,7 +106,11 @@ const SchoolView = {
       container.innerHTML = `
         ${this._banner()}
         <div class="card mt-2">
-          <div class="card-header"><h3 class="card-title"><span class="card-icon">🎓</span> Öğrenciler (${rows.length})</h3></div>
+          <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <h3 class="card-title"><span class="card-icon">🎓</span> Öğrenciler (${rows.length})</h3>
+            <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddStudentForm(true)">➕ Öğrenci Ekle</button>
+          </div>
+          ${this._addStudentFormHtml()}
           <div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
             <tr style="text-align:left;color:var(--text-muted)">
               <th style="padding:8px">Ad Soyad</th><th style="padding:8px">Sınıf</th>
@@ -77,6 +130,50 @@ const SchoolView = {
     }
   },
 
+  _addExamFormHtml() {
+    const typeOptions = Object.keys(SUBJECT_SETS).map(t => `<option value="${t}">${t}</option>`).join('');
+    return `<div id="sv-add-exam-form" style="display:none" class="card mt-2">
+      <div class="form-row" style="grid-template-columns:repeat(3,1fr)">
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Deneme Adı</label><input class="form-input" id="sv-exam-name"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tarih</label><input type="date" class="form-input" id="sv-exam-date"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tür</label><select class="form-select" id="sv-exam-type">${typeOptions}</select></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="SchoolView.submitAddExam()">💾 Kaydet</button>
+        <button class="btn btn-secondary btn-sm" onclick="SchoolView.toggleAddExamForm(false)">İptal</button>
+      </div>
+    </div>`;
+  },
+
+  toggleAddExamForm(show) {
+    const el = document.getElementById('sv-add-exam-form');
+    if (el) el.style.display = show ? 'block' : 'none';
+  },
+
+  async submitAddExam() {
+    const name = document.getElementById('sv-exam-name')?.value.trim();
+    const date = document.getElementById('sv-exam-date')?.value;
+    const examType = document.getElementById('sv-exam-type')?.value || 'LGS';
+    if (!name || !date) {
+      UI.toast('Deneme adı ve tarihi gerekli.', 'warning');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/teacher/exams${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, date, examType }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Deneme oluşturulamadı.');
+      UI.toast(`"${name}" oluşturuldu.`, 'success');
+      this._overviewCache = null;
+      this.renderExams();
+    } catch (err) {
+      UI.toast(err.message, 'error');
+    }
+  },
+
   async renderExams() {
     const container = document.getElementById('page-exams');
     if (!container) return;
@@ -86,7 +183,11 @@ const SchoolView = {
       container.innerHTML = `
         ${this._banner()}
         <div class="card mt-2">
-          <div class="card-header"><h3 class="card-title"><span class="card-icon">📝</span> Denemeler (${data.exams.length})</h3></div>
+          <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <h3 class="card-title"><span class="card-icon">📝</span> Denemeler (${data.exams.length})</h3>
+            <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddExamForm(true)">➕ Deneme Oluştur</button>
+          </div>
+          ${this._addExamFormHtml()}
           <div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
             <tr style="text-align:left;color:var(--text-muted)"><th style="padding:8px">Deneme</th><th style="padding:8px">Tarih</th><th style="padding:8px">Tür</th></tr>
             ${data.exams.map(e => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('exam-detail', {examId: ${e.id}})">
@@ -101,12 +202,94 @@ const SchoolView = {
     }
   },
 
+  _addResultFormHtml(examId, examType, students) {
+    const studentOptions = students
+      .slice()
+      .sort((a, b) => (a.last_name || '').localeCompare(b.last_name || '', 'tr'))
+      .map(s => `<option value="${s.id}">${_svEscapeHtml(s.first_name)} ${_svEscapeHtml(s.last_name)}${s.class_name ? ' (' + _svEscapeHtml(s.class_name) + ')' : ''}</option>`)
+      .join('');
+    const subjectInputs = getSubjectsForExam(examType).map(sub => `
+      <div class="card" style="padding:12px;">
+        <div style="margin-bottom:8px"><b style="font-size:13px">${_svEscapeHtml(sub.name)}</b>
+          <span class="text-muted" style="font-size:11px"> (${sub.questions} soru)</span></div>
+        <div class="form-row" style="grid-template-columns:repeat(3,1fr)">
+          <div class="form-group" style="margin-bottom:0"><label class="form-label">Doğru</label>
+            <input type="number" class="form-input" id="sv-result-${sub.key}-correct" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}')"></div>
+          <div class="form-group" style="margin-bottom:0"><label class="form-label">Yanlış</label>
+            <input type="number" class="form-input" id="sv-result-${sub.key}-wrong" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}')"></div>
+          <div class="form-group" style="margin-bottom:0"><label class="form-label">Net</label>
+            <input type="text" class="form-input font-mono" id="sv-result-${sub.key}-net" readonly value="0.00"></div>
+        </div>
+      </div>`).join('');
+    return `<div class="card mt-2">
+      <div class="card-header"><h3 class="card-title"><span class="card-icon">✍️</span> Sonuç Gir</h3></div>
+      <div class="form-group"><label class="form-label">Öğrenci</label>
+        <select class="form-select" id="sv-result-student"><option value="">-- Öğrenci seçin --</option>${studentOptions}</select>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:12px">${subjectInputs}</div>
+      <div style="margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="padding:12px 16px;background:rgba(20,184,166,0.05);border-radius:10px;border:1px solid rgba(20,184,166,0.15)">
+          <span class="text-muted" style="font-size:12px">Toplam Net:</span>
+          <span class="font-mono font-bold" id="sv-result-total-net" style="margin-left:8px">0.00</span>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="SchoolView.submitAddResult(${examId}, '${examType}')">💾 Kaydet</button>
+      </div>
+    </div>`;
+  },
+
+  calcResultNets(examType) {
+    let total = 0;
+    getSubjectsForExam(examType).forEach(sub => {
+      const correct = parseInt(document.getElementById(`sv-result-${sub.key}-correct`)?.value) || 0;
+      const wrong = parseInt(document.getElementById(`sv-result-${sub.key}-wrong`)?.value) || 0;
+      const net = correct - wrong / 3;
+      const netEl = document.getElementById(`sv-result-${sub.key}-net`);
+      if (netEl) netEl.value = net.toFixed(2);
+      total += net;
+    });
+    const totalEl = document.getElementById('sv-result-total-net');
+    if (totalEl) totalEl.textContent = total.toFixed(2);
+  },
+
+  async submitAddResult(examId, examType) {
+    const studentId = parseInt(document.getElementById('sv-result-student')?.value);
+    if (!studentId) {
+      UI.toast('Lütfen bir öğrenci seçin.', 'warning');
+      return;
+    }
+    const subjects = {};
+    getSubjectsForExam(examType).forEach(sub => {
+      const correct = parseInt(document.getElementById(`sv-result-${sub.key}-correct`)?.value) || 0;
+      const wrong = parseInt(document.getElementById(`sv-result-${sub.key}-wrong`)?.value) || 0;
+      const blank = Math.max(0, sub.questions - correct - wrong);
+      const net = parseFloat((correct - wrong / 3).toFixed(2));
+      subjects[sub.key] = { correct, wrong, blank, net };
+    });
+    try {
+      const res = await fetch(`/api/teacher/results${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, examId, subjects }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Sonuç kaydedilemedi.');
+      UI.toast('Sonuç kaydedildi.', 'success');
+      this._overviewCache = null;
+      this.renderExamDetail(examId);
+    } catch (err) {
+      UI.toast(err.message, 'error');
+    }
+  },
+
   async renderExamDetail(examId) {
     const container = document.getElementById('page-exam-detail');
     if (!container) return;
     container.innerHTML = `${this._banner()}<p class="text-muted mt-2">Yükleniyor...</p>`;
     try {
-      const res = await fetch(`/api/teacher/exam/${examId}${this._schoolQuery()}`);
+      const [res, overview] = await Promise.all([
+        fetch(`/api/teacher/exam/${examId}${this._schoolQuery()}`),
+        this._loadOverview(),
+      ]);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Deneme detayı alınamadı.');
 
@@ -174,7 +357,8 @@ const SchoolView = {
             <tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Soru</th><th style="padding:6px">Kazanım</th><th style="padding:6px">Başarı</th><th style="padding:6px">D/Y/B</th></tr>
             ${questionRows}
           </table></div>
-        </div>` : ''}`;
+        </div>` : ''}
+        ${this._addResultFormHtml(examId, d.exam.examType, overview.students)}`;
     } catch (err) {
       container.innerHTML = `${this._banner()}<p class="text-muted mt-2">❌ ${_svEscapeHtml(err.message)}</p>`;
     }
