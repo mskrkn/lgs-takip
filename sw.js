@@ -2,7 +2,7 @@
 // LGS Deneme Takip - Service Worker (PWA Offline Support)
 // ============================================
 
-const CACHE_NAME = 'lgs-takip-v1.2';
+const CACHE_NAME = 'lgs-takip-v1.3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -72,6 +72,18 @@ self.addEventListener('fetch', (event) => {
 
   // For Firebase API requests, do network only
   if (event.request.url.includes('firestore.googleapis.com') || event.request.url.includes('firebaseio.com')) {
+    return;
+  }
+
+  // KRITIK: /api/* asla cache'lenmemeli - bunlar oturuma/okula (organization_id)
+  // gore degisen dinamik yanitlar (/api/me, /api/admin/students, vb.). Bu SW
+  // her GET'i "network first, ag basarisiz olursa cache'e dus" ile ele aliyor,
+  // ama araci Cache Storage'a bu yanitlari YAZMASI bile riskli - aynı
+  // tarayicida farkli bir okul hesabina gecildiginde (ag gecici olarak
+  // kesilirse) bir ONCEKI okulun API yanitlari servis edilebilirdi. API
+  // istekleri bu SW'nin tamamen disinda birakilir, tarayici onlari normal
+  // (cache'siz) sekilde halleder.
+  if (new URL(event.request.url).pathname.startsWith('/api/')) {
     return;
   }
 

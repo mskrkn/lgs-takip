@@ -91,6 +91,15 @@ app = Flask(__name__, static_folder=None)
 
 @app.after_request
 def _inject_env_banner(resp):
+    # KRITIK: /api/* yanitlari HICBIR sekilde (tarayici HTTP cache'i, PWA
+    # service worker'i, aradaki bir proxy) cache'lenmemeli - hepsi oturuma/
+    # okula (organization_id) gore degisir. Bir tarayicida art arda farkli
+    # okul hesaplariyla giris yapildiginda (bkz. sw.js'deki ayni gerekce)
+    # onceki hesabin yaniti servis edilebilirdi. Bu, o sinif hatanin ikinci,
+    # sunucu tarafli savunma katmani.
+    if request.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
     if APP_ENV == "production":
         return resp
     if resp.content_type and resp.content_type.startswith("text/html"):

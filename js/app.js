@@ -35,6 +35,19 @@ const App = {
       this.currentUser = null;
     }
 
+    // KRITIK: Bulut Senkronizasyonu (Firebase) anahtarini HER GIRISTE bu
+    // okulun organization_id'sine kilitle - SyncModule.init() bunu okumadan
+    // ONCE calisir. Eskiden bu alan serbest metindi ve varsayilan deger
+    // TUM kurulumlarda AYNIYDI ("mskrknedupusula") - yeni acilan bir okul
+    // Ayarlar'dan ozel bir anahtar girmeyi UNUTURSA, baska bir okulla ayni
+    // gercek-zamanli Firestore odasina baglanip birbirinin Ogrenciler/
+    // Denemeler verisini goruyor (ve potansiyel olarak uzerine yaziyordu).
+    // organization_id yoksa (saf platform/super_admin hesabi - kendi okulu
+    // yok) hicbir sey yapilmiyor, zaten senkronize edecek yerel verisi yok.
+    if (this.currentUser?.organizationId) {
+      localStorage.setItem('lgs_sync_key', `edupusula-org-${this.currentUser.organizationId}`);
+    }
+
     // Initialize Cloud Sync Module
     if (typeof SyncModule !== 'undefined') {
       await SyncModule.init();
@@ -3255,13 +3268,14 @@ const App = {
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;margin-bottom:16px">
           <!-- Sync Key & Actions -->
           <div style="background:rgba(255,255,255,0.03);padding:16px;border-radius:12px;border:1px solid var(--bg-glass-border)">
-            <label class="form-label" style="font-weight:700">🔑 Ortak Senkronizasyon Anahtarı / Oda Adı</label>
+            <label class="form-label" style="font-weight:700">🔑 Senkronizasyon Kimliği</label>
             <div style="display:flex;gap:8px;margin-top:6px">
-              <input type="text" id="setting-sync-key" class="form-control" value="${syncKey}" placeholder="Örn: okulum-lgs-2026" onchange="SyncModule.setSyncKey(this.value)">
-              <button class="btn btn-secondary btn-sm" onclick="App.saveSyncKey()" title="Kaydet">💾</button>
+              <input type="text" id="setting-sync-key" class="form-control" value="${syncKey}" readonly disabled style="opacity:0.7;cursor:not-allowed">
             </div>
             <small class="text-muted" style="display:block;margin-top:6px">
-              💡 Tüm telefon ve bilgisayarlarınıza <b>aynı anahtarı</b> girerek verilerinizi eşleştirin.
+              💡 Bu okula özel, otomatik atanır - değiştirilemez. Aynı okulun tüm cihazları
+              (telefon/bilgisayar) giriş yaptığında otomatik olarak birbiriyle eşitlenir;
+              başka bir okulun verisiyle asla karışmaz.
             </small>
           </div>
 
@@ -3368,12 +3382,6 @@ const App = {
         </div>
       </div>
     `;
-  },
-
-  saveSyncKey() {
-    const key = document.getElementById('setting-sync-key')?.value;
-    SyncModule.setSyncKey(key);
-    UI.toast('Senkronizasyon anahtarı kaydedildi: ' + (key || 'Varsayılan'), 'success');
   },
 
   async syncPush() {
