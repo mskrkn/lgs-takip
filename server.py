@@ -439,10 +439,13 @@ def _create_v2_tables(conn):
         CREATE TABLE IF NOT EXISTS organizations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            short_name TEXT,
+            type TEXT,
             slug TEXT UNIQUE NOT NULL,
             logo_url TEXT, email TEXT, phone TEXT, address TEXT,
             status TEXT NOT NULL DEFAULT 'active',
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            archived_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS roles (
@@ -514,11 +517,18 @@ def _create_v2_tables(conn):
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
 
+        -- subject_id: Yetki Matrisi Faz 4 - "hangi ogretmen hangi dersi hangi
+        -- sinifa okutuyor" (TEACHER_ASSIGNMENTS) icin rezerve edilmis kolon.
+        -- Su an HICBIR kod yolu bunu yazmiyor/okumuyor (bkz. asagidaki NOT) -
+        -- bu tabloyu zaten dolduran sync_derived_tables() sadece class_name
+        -- string'inden turetiyor, ders bilgisi hic yok. Gercek kullanim icin
+        -- once bir ogretmene ders atama UI'i gerekir (ayri, gelecekteki is).
         CREATE TABLE IF NOT EXISTS teacher_classes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             teacher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
             academic_year_id INTEGER REFERENCES academic_years(id) ON DELETE SET NULL,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL,
             UNIQUE(teacher_id, class_id, academic_year_id)
         );
@@ -663,7 +673,7 @@ def _create_v2_tables(conn):
             organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
             user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
             action TEXT NOT NULL, resource_type TEXT, resource_id INTEGER,
-            ip_address TEXT, created_at TEXT NOT NULL
+            ip_address TEXT, metadata TEXT, created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS notifications (
@@ -791,10 +801,12 @@ def _create_question_bank_tables(conn):
             explanation TEXT,
 
             status TEXT NOT NULL DEFAULT 'pending_review'
-                CHECK(status IN ('pending_review','reviewed','excluded','approved')),
+                CHECK(status IN ('pending_review','reviewed','excluded','approved','published','archived')),
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             reviewed_at TEXT,
+            published_at TEXT,
+            archived_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -814,6 +826,93 @@ def _create_question_bank_tables(conn):
     batch_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
     if batch_cols and "booklet_code" not in batch_cols:
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN booklet_code TEXT NOT NULL DEFAULT 'A'")
+    conn.commit()
+
+    _migrate_question_bank_lifecycle(conn)
+
+    tc_cols = [r[1] for r in conn.execute("PRAGMA table_info(teacher_classes)").fetchall()]
+    if tc_cols and "subject_id" not in tc_cols:
+        conn.execute("ALTER TABLE teacher_classes ADD COLUMN subject_id INTEGER REFERENCES subjects(id)")
+        conn.commit()
+
+    org_extra_cols = [r[1] for r in conn.execute("PRAGMA table_info(organizations)").fetchall()]
+    for col, decl in (("short_name", "TEXT"), ("type", "TEXT"), ("archived_at", "TEXT")):
+        if col not in org_extra_cols:
+            conn.execute(f"ALTER TABLE organizations ADD COLUMN {col} {decl}")
+    conn.commit()
+
+    audit_cols = [r[1] for r in conn.execute("PRAGMA table_info(audit_logs)").fetchall()]
+    if audit_cols and "metadata" not in audit_cols:
+        conn.execute("ALTER TABLE audit_logs ADD COLUMN metadata TEXT")
+        conn.commit()
+
+
+def _migrate_question_bank_lifecycle(conn):
+    """question_bank.status'un CHECK kisitina 'published'/'archived' ekler
+    (Yetki Matrisi Faz 4 - onaylanmis bir soruyu fiilen KULLANILABILIR
+    yapan ayri bir 'yayinlama' adimi + hard delete yerine arsivleme).
+    SQLite CHECK kisitini dogrudan ALTER edemedigi icin _migrate_users_table
+    ile AYNI kanitlanmis desen kullanilir: yeni semali bir tabloyu GECICI
+    adla olustur, veriyi kopyala, ESKI TABLOYU (yeniden adlandirmadan) SIL,
+    sonra geciciyi gercek isme yeniden adlandir. 'question_bank' adini
+    ASLA gecici bir isme (orn. question_bank_old) YENIDEN ADLANDIRMIYORUZ -
+    aksi halde ona REFERENCES question_bank(id) ile bagli
+    question_booklet_numbers/assignment_questions tablolarinin FK metni
+    SQLite tarafindan o gecici isme guncellenir ve tablo silinince kalici
+    olarak kirilir (_migrate_users_table'daki users_old hatasinin ayni
+    tuzagi, bkz. oradaki yorum)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='question_bank'"
+    ).fetchone()
+    if not row or "'published'" in row["sql"]:
+        return  # tablo yok (ilk kurulum, asagidaki CREATE zaten dogru) ya da zaten migrate edilmis
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(question_bank)").fetchall()]
+    has_question_number = "question_number" in cols
+
+    conn.executescript(
+        f"""
+        CREATE TABLE question_bank_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            batch_id INTEGER REFERENCES question_import_batches(id) ON DELETE SET NULL,
+            display_code TEXT UNIQUE,
+
+            subject_id INTEGER NOT NULL REFERENCES subjects(id),
+            grade_level TEXT,
+            topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+            learning_outcome_id INTEGER REFERENCES learning_outcomes(id) ON DELETE SET NULL,
+
+            question_type TEXT,
+            difficulty_level INTEGER,
+            tags TEXT,
+            {"question_number INTEGER," if has_question_number else ""}
+
+            image_path TEXT NOT NULL,
+            source_page_number INTEGER,
+            crop_x REAL, crop_y REAL, crop_width REAL, crop_height REAL,
+            question_text TEXT,
+
+            correct_answer TEXT,
+            correct_answer_source TEXT CHECK(correct_answer_source IN ('answer_key','manual','edited')),
+            explanation TEXT,
+
+            status TEXT NOT NULL DEFAULT 'pending_review'
+                CHECK(status IN ('pending_review','reviewed','excluded','approved','published','archived')),
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_at TEXT,
+            published_at TEXT,
+            archived_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO question_bank_new ({", ".join(cols)})
+            SELECT {", ".join(cols)} FROM question_bank;
+        DROP TABLE question_bank;
+        ALTER TABLE question_bank_new RENAME TO question_bank;
+        """
+    )
     conn.commit()
 
 
@@ -2964,9 +3063,11 @@ def api_teacher_send_message():
 @app.route("/api/teacher/question-bank/approved")
 @login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
 def api_teacher_approved_questions():
-    """Ogretmenin odev olustururken secebilecegi, ONAYLANMIS sorularin
-    sade (batch/inceleme detaylari olmadan) listesi - tam admin soru
-    bankasi ekranindan FARKLI, kasitli olarak basit bir secim listesi."""
+    """Ogretmenin odev olustururken secebilecegi, YAYINLANMIS (published)
+    sorularin sade (batch/inceleme detaylari olmadan) listesi - tam admin
+    soru bankasi ekranindan FARKLI, kasitli olarak basit bir secim listesi.
+    'approved' henuz yayina hazir degil - published olmadan odeve
+    eklenemez (bkz. questions.publish, _migrate_question_bank_lifecycle)."""
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
@@ -2975,7 +3076,7 @@ def api_teacher_approved_questions():
         "SELECT qb.id, qb.display_code, qb.question_text, qb.image_path, "
         "s.name as subject_name "
         "FROM question_bank qb LEFT JOIN subjects s ON s.id = qb.subject_id "
-        "WHERE qb.organization_id = ? AND qb.status = 'approved' "
+        "WHERE qb.organization_id = ? AND qb.status = 'published' "
         "ORDER BY s.name, qb.display_code",
         (org_id,),
     ).fetchall()
@@ -3019,16 +3120,16 @@ def api_teacher_create_assignment():
     if not _teacher_can_use_class(class_name):
         return jsonify({"error": "Bu sınıfa ödev verme yetkiniz yok."}), 403
 
-    # Sadece ONAYLANMIS sorular odeve eklenebilir (bkz. questions.publish -
-    # onaylanmamis/incelemedeki bir soru ogrenciye gitmemeli).
+    # Sadece YAYINLANMIS (published) sorular odeve eklenebilir - "approved"
+    # tek basina yeterli degil, bkz. questions.publish/_migrate_question_bank_lifecycle.
     placeholders = ",".join("?" * len(question_ids))
     valid_rows = db.execute(
-        f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'approved'",
+        f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'published'",
         (*question_ids, org_id),
     ).fetchall()
     valid_ids = {r["id"] for r in valid_rows}
     if len(valid_ids) != len(set(question_ids)):
-        return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz onaylanmamış."}), 400
+        return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz yayınlanmamış."}), 400
 
     now = datetime.now().isoformat()
     cur = db.execute(
@@ -3384,14 +3485,14 @@ def api_ai_generate_assignment():
         return jsonify({"error": "Bu sınıf için öneri alma yetkiniz yok."}), 403
 
     rows = db.execute(
-        "SELECT id, display_code FROM question_bank WHERE organization_id = ? AND status = 'approved' "
+        "SELECT id, display_code FROM question_bank WHERE organization_id = ? AND status = 'published' "
         "ORDER BY RANDOM() LIMIT 5",
         (org_id,),
     ).fetchall()
     return jsonify({
         "placeholder": True,
         "suggestedQuestionIds": [r["id"] for r in rows],
-        "note": "Bu, onaylanmış soru bankasından rastgele bir öneri - gerçek yapay zekâ destekli eşleştirme yakında.",
+        "note": "Bu, yayınlanmış soru bankasından rastgele bir öneri - gerçek yapay zekâ destekli eşleştirme yakında.",
     })
 
 
@@ -3950,7 +4051,7 @@ def api_question_bank_batches():
         "SELECT b.id, b.source_filename, b.status, b.page_count, b.booklet_code, b.created_at, "
         "COUNT(q.id) AS question_count, "
         "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
-        "SUM(CASE WHEN q.status='approved' THEN 1 ELSE 0 END) AS approved_count "
+        "SUM(CASE WHEN q.status IN ('approved','published') THEN 1 ELSE 0 END) AS approved_count "
         "FROM question_import_batches b LEFT JOIN question_bank q ON q.batch_id = b.id "
         "WHERE b.organization_id=? GROUP BY b.id ORDER BY b.id DESC",
         (org_id,),
@@ -4114,18 +4215,25 @@ def api_question_bank_recrop(question_id):
     })
 
 
-_QUESTION_STATUSES = ("pending_review", "reviewed", "excluded", "approved")
+_QUESTION_STATUSES = ("pending_review", "reviewed", "excluded", "approved", "published", "archived")
 
 
 def _apply_question_status(db, row, status, user_id):
     """question_bank satırının durumunu değiştirir; 'approved' olduğunda
     henüz display_code atanmamışsa <DERS_KODU>-00001 kalıbıyla üretir.
+    'published'/'archived' için ayrıca published_at/archived_at damgalanır -
+    bunlar terminal, geri döndürülmesi beklenmeyen durumlar (arşivleme =
+    yumuşak silme, hard delete YOK).
     Hem tekil PATCH hem toplu bulk-update endpoint'i bu fonksiyonu kullanır."""
     now = datetime.now().isoformat()
     db.execute(
         "UPDATE question_bank SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=?",
         (status, user_id, now, now, row["id"]),
     )
+    if status == "published":
+        db.execute("UPDATE question_bank SET published_at=? WHERE id=?", (now, row["id"]))
+    if status == "archived":
+        db.execute("UPDATE question_bank SET archived_at=? WHERE id=?", (now, row["id"]))
     display_code = row["display_code"]
     if status == "approved" and not display_code:
         subject_row = db.execute("SELECT code FROM subjects WHERE id=?", (row["subject_id"],)).fetchone()
@@ -4170,6 +4278,13 @@ def api_question_bank_update(question_id):
     if status == "reviewed" and not has_permission(db, session["user_id"], "questions.submit_review"):
         return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
     if status in ("excluded", "approved") and not has_permission(db, session["user_id"], "questions.approve"):
+        return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
+    if status == "published":
+        if row["status"] != "approved":
+            return jsonify({"error": "Sadece onaylanmış bir soru yayınlanabilir."}), 400
+        if not has_permission(db, session["user_id"], "questions.publish"):
+            return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
+    if status == "archived" and not has_permission(db, session["user_id"], "questions.delete"):
         return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
 
     if not fields and not status:
@@ -4288,9 +4403,10 @@ def api_question_bank_create_learning_outcome():
 @app.route("/api/admin/question-bank/export")
 @login_required(role="admin", permission="questions.publish")
 def api_question_bank_export():
-    """Onaylanmış soruları (status='approved') resim + manifest.csv olarak
-    tek bir ZIP'te indirir - havuza kesin girmiş sorular dışındakiler
-    (pending_review/reviewed/excluded) dahil edilmez."""
+    """Yayınlanmış soruları (status='published') resim + manifest.csv olarak
+    tek bir ZIP'te indirir - sadece onaylanmış (approved) ama henüz
+    yayınlanmamış sorular DAHİL EDİLMEZ, questions.publish ile ayrıca
+    yayınlanmaları gerekir (bkz. _migrate_question_bank_lifecycle)."""
     db = get_db()
     org_id = _current_org_id(db)
     subject_code = (request.args.get("subject_code") or "").strip()
@@ -4310,7 +4426,7 @@ def api_question_bank_export():
         "LEFT JOIN topics t ON t.id = q.topic_id "
         "LEFT JOIN learning_outcomes lo ON lo.id = q.learning_outcome_id "
         "LEFT JOIN question_import_batches b ON b.id = q.batch_id "
-        "WHERE q.organization_id=? AND q.status='approved'"
+        "WHERE q.organization_id=? AND q.status='published'"
     )
     params = [org_id]
     if subject_id:
@@ -4320,7 +4436,7 @@ def api_question_bank_export():
     rows = db.execute(query, params).fetchall()
 
     if not rows:
-        return jsonify({"error": "Dışa aktarılacak onaylanmış soru bulunamadı."}), 404
+        return jsonify({"error": "Dışa aktarılacak yayınlanmış soru bulunamadı."}), 404
 
     manifest_buf = io.StringIO()
     writer = csv.writer(manifest_buf)
