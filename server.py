@@ -3340,6 +3340,71 @@ def api_parent_list_assignments():
 
 
 # ============================================================
+# API: AI (STUB) - gercek bir LLM cagrisi YAPMAZ, mevcut veriden kural
+# tabanli basit ciktilar uretir. "placeholder": true alani her zaman
+# donuyor - ileride gercek entegrasyon eklenirse frontend bunu ayirt edebilsin.
+# ============================================================
+
+@app.route("/api/teacher/ai/analyze-student/<int:student_id>", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="ai.analyze")
+def api_ai_analyze_student(student_id):
+    db = get_db()
+    if not can_view_student(db, student_id):
+        return jsonify({"error": "Bu öğrenciye erişim yetkiniz yok."}), 403
+    report = _build_student_report(db, student_id)
+    if not report:
+        return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
+
+    compass = report.get("compass") or {}
+    strong = compass.get("strong") or []
+    priority = compass.get("priority") or []
+    lines = []
+    if strong:
+        lines.append(f"Güçlü olduğu konular: {', '.join(s['kazanim'] for s in strong[:3])}.")
+    if priority:
+        lines.append(f"Öncelikli çalışması gereken konular: {', '.join(p['kazanim'] for p in priority[:3])}.")
+    if not lines:
+        lines.append("Yeterli veri birikmedi - birkaç deneme daha girildikten sonra analiz daha anlamlı olacak.")
+    return jsonify({"placeholder": True, "analysis": " ".join(lines)})
+
+
+@app.route("/api/teacher/ai/generate-assignment", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="ai.generate_assignment")
+def api_ai_generate_assignment():
+    """Sinifin en zayif konularina gore onaylanmis soru bankasindan basit,
+    kural-tabanli bir soru onerisi - gercek bir icerik URETMEZ, var olan
+    onaylanmis sorular arasindan ESLESTIRIR."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    data = request.get_json(silent=True) or {}
+    class_name = (data.get("className") or "").strip()
+    if not class_name or not _teacher_can_use_class(class_name):
+        return jsonify({"error": "Bu sınıf için öneri alma yetkiniz yok."}), 403
+
+    rows = db.execute(
+        "SELECT id, display_code FROM question_bank WHERE organization_id = ? AND status = 'approved' "
+        "ORDER BY RANDOM() LIMIT 5",
+        (org_id,),
+    ).fetchall()
+    return jsonify({
+        "placeholder": True,
+        "suggestedQuestionIds": [r["id"] for r in rows],
+        "note": "Bu, onaylanmış soru bankasından rastgele bir öneri - gerçek yapay zekâ destekli eşleştirme yakında.",
+    })
+
+
+@app.route("/api/admin/question-bank/ai-generate", methods=["POST"])
+@login_required(role="admin", permission="ai.generate_question")
+def api_ai_generate_question():
+    return jsonify({
+        "placeholder": True,
+        "message": "AI ile soru üretimi yakında gelecek. Şu an için Soru Girişi sayfasından PDF yükleyerek soru ekleyebilirsiniz.",
+    })
+
+
+# ============================================================
 # API: Veli/Öğrenci - yalnızca kendi çocuğu/çocukları + genel istatistikler
 # ============================================================
 

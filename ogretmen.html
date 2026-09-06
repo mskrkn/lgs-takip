@@ -301,6 +301,12 @@
             <button type="button" class="btn btn-primary mt-2" onclick="sendCustomMessage()">📨 Gönder</button>
             <p class="text-muted" id="message-send-status" style="margin-top:10px;font-size:13px"></p>
           </div>
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🤖</span> AI Analizi (Deneme)</h3></div>
+            <p class="text-muted" style="font-size:13px">Yukarıda seçtiğiniz öğrenci için basit, kural tabanlı bir güçlü/öncelikli konu özeti üretir.</p>
+            <button type="button" class="btn btn-secondary mt-2" onclick="analyzeSelectedStudent()">🤖 Analiz Et</button>
+            <div id="ai-analysis-box" class="text-muted" style="margin-top:10px;font-size:13px"></div>
+          </div>
         </section>
 
         <!-- ============ ÖDEVLER ============ -->

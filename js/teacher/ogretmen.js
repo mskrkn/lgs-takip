@@ -466,9 +466,11 @@
           </div>
           <div class="mt-2">
             <label class="form-label">Sorular (onaylanmış soru bankasından)</label>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:8px" onclick="suggestAssignmentQuestions()">🤖 AI Önerisi</button>
             <div id="assignment-question-picker" style="max-height:260px;overflow-y:auto;border:1px solid var(--bg-glass-border);border-radius:8px;padding:8px">
               <p class="text-muted">Yükleniyor...</p>
             </div>
+            <div id="assignment-ai-note" class="text-muted" style="margin-top:6px;font-size:12px"></div>
           </div>
           <button class="btn btn-primary mt-2" onclick="createAssignment()">Ödevi Oluştur</button>
           <div id="assignment-create-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
@@ -519,6 +521,26 @@
         `).join('');
       } catch (e) {
         picker.innerHTML = '<p class="text-muted">❌ Sorular yüklenemedi.</p>';
+      }
+    }
+
+    async function suggestAssignmentQuestions() {
+      const className = document.getElementById('assignment-class').value;
+      const note = document.getElementById('assignment-ai-note');
+      note.textContent = 'Öneri alınıyor...';
+      try {
+        const res = await fetch('/api/teacher/ai/generate-assignment', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ className }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Öneri alınamadı.');
+        document.querySelectorAll('.assignment-question-checkbox').forEach(el => {
+          el.checked = data.suggestedQuestionIds.includes(Number(el.value));
+        });
+        note.textContent = '🤖 ' + data.note;
+      } catch (err) {
+        note.textContent = '❌ ' + err.message;
       }
     }
 
@@ -584,6 +606,21 @@
           </table></div>
         </div>
       `;
+    }
+
+    async function analyzeSelectedStudent() {
+      const studentId = Number(document.getElementById('message-student-select').value);
+      const box = document.getElementById('ai-analysis-box');
+      if (!studentId) { box.textContent = '❌ Lütfen bir öğrenci seçin.'; return; }
+      box.textContent = 'Analiz ediliyor...';
+      try {
+        const res = await fetch(`/api/teacher/ai/analyze-student/${studentId}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Analiz alınamadı.');
+        box.textContent = '🤖 ' + data.analysis;
+      } catch (err) {
+        box.textContent = '❌ ' + err.message;
+      }
     }
 
     async function loadExamDetail(examId) {

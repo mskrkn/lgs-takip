@@ -2323,6 +2323,8 @@ const App = {
         </div>
         <div id="qb-status" style="margin-top:14px"></div>
         <div id="qb-results"></div>
+        <button class="btn btn-secondary btn-sm mt-2" onclick="App.tryAiGenerateQuestion()">🤖 AI ile Soru Üret</button>
+        <div id="qb-ai-note" class="text-muted" style="margin-top:8px;font-size:13px"></div>
       </div>
       <div class="card mt-2">
         <div class="card-header" style="justify-content:space-between">
@@ -2341,6 +2343,18 @@ const App = {
     const subjectCode = subjectSelect ? subjectSelect.value : '';
     const url = '/api/admin/question-bank/export' + (subjectCode ? `?subject_code=${encodeURIComponent(subjectCode)}` : '');
     window.location.href = url;
+  },
+
+  async tryAiGenerateQuestion() {
+    const note = document.getElementById('qb-ai-note');
+    note.textContent = '...';
+    try {
+      const res = await fetch('/api/admin/question-bank/ai-generate', { method: 'POST' });
+      const data = await res.json();
+      note.textContent = '🤖 ' + (data.message || 'Şu an kullanılamıyor.');
+    } catch (err) {
+      note.textContent = '❌ ' + err.message;
+    }
   },
 
   async loadQuestionBankBatches() {
