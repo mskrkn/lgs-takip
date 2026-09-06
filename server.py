@@ -956,8 +956,20 @@ def _current_org_id(db):
     org_row = db.execute(
         "SELECT organization_id FROM users WHERE id=?", (session["user_id"],)
     ).fetchone()
-    return (org_row["organization_id"] if org_row and org_row["organization_id"] else None) \
-        or _get_default_org_id(db)
+    if org_row and org_row["organization_id"]:
+        return org_row["organization_id"]
+    # Platform sahibi (organization.manage izni olan) hesaplarin sabit bir
+    # okulu OLMAYABILIR (bkz. admin'in kendi okulunun kaldirilmasi) - bu
+    # durumda varsayilan kuruma SESSIZCE dusmek, bu hesabin (_effective_org_id
+    # KULLANMAYAN eski) uclara yanlislikla eristigi durumlarda BASKA/ARSIVLI
+    # bir okula veri yazmasina yol acabilir. Bu yuzden boyle bir hesap icin
+    # None donulur - cagiran taraf zaten "okul secilmedi" seklinde ele almali.
+    # Gercek bir okulu olan TUM normal kullanicilar (admin/teacher/parent/
+    # student) icin davranis birebir ayni kalir (ilk dal her zaman onlar icin
+    # devreye girer).
+    if has_permission(db, session["user_id"], "organization.manage"):
+        return None
+    return _get_default_org_id(db)
 
 
 def _effective_org_id(db):
@@ -1054,9 +1066,20 @@ def _seed_reference_data(conn):
 
     # super_admin hicbir okula ait degildir (organization_id = NULL kalmali) -
     # aksi halde her sunucu yeniden baslatmasinda yanlislikla varsayilan
-    # okula atanir ve _current_org_id o okula sabitlenmis gibi davranir.
+    # okula atanir ve _current_org_id o okula sabitlenmis gibi davranir. Ayni
+    # istisna, "organization.manage" iznine sahip (platform sahibi) ama
+    # BILEREK kendi okulu olmayan hesaplar icin de gecerli (bkz. admin'in
+    # kendi okulunun kaldirilmasi) - bunlar da super_admin gibi her zaman
+    # NULL kalmali, aksi halde her yeniden baslatmada arsivlenmis/varsayilan
+    # okula sessizce geri baglanirlardi.
     conn.execute(
-        "UPDATE users SET organization_id = ? WHERE organization_id IS NULL AND role != 'super_admin'",
+        "UPDATE users SET organization_id = ? WHERE organization_id IS NULL AND role != 'super_admin' "
+        "AND id NOT IN ("
+        "  SELECT ur.user_id FROM user_roles ur "
+        "  JOIN role_permissions rp ON rp.role_id = ur.role_id "
+        "  JOIN permissions p ON p.id = rp.permission_id "
+        "  WHERE p.name = 'organization.manage'"
+        ")",
         (org_id,),
     )
     conn.execute("UPDATE students SET organization_id = ? WHERE organization_id IS NULL", (org_id,))
@@ -2286,6 +2309,8 @@ def api_admin_sync():
 
     db = get_db()
     org_id = _current_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
 
     # GUVENLIK KILIDI: bu uc nokta gonderilen veriyle BU OKULUN sunucudaki
     # verisinin (students/exams/results) yerini alir - bu, hicbir yerel
