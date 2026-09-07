@@ -2943,6 +2943,39 @@ const App = {
                 <label class="form-label">Açıklama / Çözüm (opsiyonel)</label>
                 <textarea class="form-control" id="qbr-explanation" rows="3"></textarea>
               </div>
+              <div class="form-group" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <label class="form-label" style="margin:0">🤖 AI Sınıflandırma</label>
+                  <button class="btn btn-secondary btn-sm" id="qbr-ai-classify-btn" onclick="App._qbAiClassify()">Bu Soruyu AI ile Sınıflandır</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">Zorluk</label>
+                    <select class="form-select" id="qbr-ai-difficulty-select">
+                      <option value="">—</option>
+                      <option value="kolay">Kolay</option>
+                      <option value="orta">Orta</option>
+                      <option value="zor">Zor</option>
+                    </select>
+                    <span id="qbr-conf-zorluk" class="text-muted" style="font-size:11px"></span>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">Soru Kalıbı</label>
+                    <select class="form-select" id="qbr-pattern-select">
+                      <option value="">—</option>
+                      <option value="islem_sorusu">İşlem Sorusu</option>
+                      <option value="problem_sorusu">Problem Sorusu</option>
+                      <option value="yorum_sorusu">Yorum Sorusu</option>
+                      <option value="yeni_nesil_soru">Yeni Nesil Soru</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0;margin-top:10px">
+                  <label class="form-label">Etiketler <span class="text-muted" style="font-weight:400">(virgülle ayırın, örn. #çok_adımlı, #negatif)</span></label>
+                  <input type="text" class="form-control" id="qbr-tags-input" placeholder="#etiket1, #etiket2">
+                </div>
+                <div id="qbr-ai-taxonomy-hint" class="text-muted mt-1" style="font-size:12px"></div>
+              </div>
               <div class="form-group">
                 <label class="form-label">Kitapçık Eşlemeleri <span class="text-muted" id="qbr-native-booklet" style="font-weight:400"></span></label>
                 <div id="qbr-booklet-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
@@ -3047,6 +3080,10 @@ const App = {
     document.getElementById('qbr-answer-select').value = q.correct_answer || '';
     document.getElementById('qbr-type-select').value = q.question_type || '';
     document.getElementById('qbr-explanation').value = q.explanation || '';
+    document.getElementById('qbr-ai-difficulty-select').value = q.difficulty || '';
+    document.getElementById('qbr-pattern-select').value = q.question_pattern || '';
+    document.getElementById('qbr-tags-input').value = q.tags || '';
+    this._qbRenderAiHints(q);
 
     await this._qbLoadTopics(q.subject_id, q.topic_id);
     await this._qbLoadOutcomes(q.topic_id, q.learning_outcome_id);
@@ -3057,6 +3094,59 @@ const App = {
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
+  },
+
+  // admin-panel-soru-havuzu-1.md tasarım önerisi #2: tek genel skor yerine
+  // alan bazlı güven - sadece <0.6 olan alanlar vurgulanır, admin her alanı
+  // tek tek kontrol etmek zorunda kalmaz.
+  _qbRenderAiHints(q) {
+    const confEl = document.getElementById('qbr-conf-zorluk');
+    const hintEl = document.getElementById('qbr-ai-taxonomy-hint');
+    const conf = q.ai_confidence || {};
+    if (confEl) {
+      const c = conf.zorluk;
+      confEl.textContent = (typeof c === 'number') ? `AI güveni: ${(c * 100).toFixed(0)}%${c < 0.6 ? ' ⚠️ düşük, kontrol edin' : ''}` : '';
+      confEl.style.color = (typeof c === 'number' && c < 0.6) ? 'var(--danger)' : '';
+    }
+    if (hintEl) {
+      const s = q.ai_suggested_json;
+      if (!s) { hintEl.innerHTML = ''; return; }
+      const lines = [];
+      if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> (henüz mevcut ünite listesinde eşleşme yoksa otomatik bağlanmaz)`);
+      if (s.konu && !q.topic_id) lines.push(`Konu önerisi: <b>${s.konu}</b>`);
+      if (s.beceri && !q.learning_outcome_id) lines.push(`Beceri önerisi: <b>${s.beceri}</b>`);
+      hintEl.innerHTML = lines.length ? lines.map(l => `<div>💡 ${l}</div>`).join('') : '';
+    }
+  },
+
+  async _qbAiClassify() {
+    const q = this._qbCurrentQuestion;
+    if (!q) return;
+    const btn = document.getElementById('qbr-ai-classify-btn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sınıflandırılıyor...';
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/ai-classify`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI sınıflandırma başarısız.');
+      // Sunucu sadece BOŞ alanları doldurur (mevcut admin girdisinin üzerine
+      // yazmaz) - bu yüzden güncel soruyu yeniden çekip formu tazelemek
+      // gerekiyor, sadece response'daki öneriyi körü körüne yazmak yerine.
+      const batchRes = await fetch(`/api/admin/question-bank/batches/${this._qbState.batchId}`);
+      const batchData = await batchRes.json();
+      const updated = (batchData.questions || []).find(item => item.id === q.id);
+      if (updated) {
+        this._qbState.questions[this._qbState.index] = updated;
+        await this._qbShowCurrent();
+      }
+      UI.toast('AI sınıflandırma tamamlandı - düşük güvenli alanları kontrol edin.', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   },
 
   // ---- Kitapçık Eşlemeleri (A kitapçığı 1.soru = B kitapçığı 5.soru gibi) ----
@@ -3324,6 +3414,9 @@ const App = {
       questionType: document.getElementById('qbr-type-select').value || null,
       correctAnswer: document.getElementById('qbr-answer-select').value || null,
       explanation: document.getElementById('qbr-explanation').value || null,
+      difficulty: document.getElementById('qbr-ai-difficulty-select').value || null,
+      questionPattern: document.getElementById('qbr-pattern-select').value || null,
+      tags: document.getElementById('qbr-tags-input').value || null,
     };
     if (status) payload.status = status;
 
@@ -3339,6 +3432,7 @@ const App = {
         topic_id: payload.topicId, learning_outcome_id: payload.learningOutcomeId,
         difficulty_level: payload.difficultyLevel, question_type: payload.questionType,
         correct_answer: payload.correctAnswer, explanation: payload.explanation,
+        difficulty: payload.difficulty, question_pattern: payload.questionPattern, tags: payload.tags,
       });
       if (status) q.status = status;
 
