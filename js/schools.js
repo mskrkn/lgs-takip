@@ -175,6 +175,8 @@ const Schools = {
 
   _renderDashboardSection(d) {
     const sc = d.schoolCounts;
+    const rb = d.userRoleBreakdown || {};
+    const roleTooltip = `Öğrenci: ${rb.students ?? 0} · Öğretmen: ${rb.teachers ?? 0} · Okul Yöneticisi: ${rb.schoolAdmins ?? 0} · Platform Admin: ${rb.platformAdmins ?? 0}`;
     return `
       <div class="stats-grid stats-grid-compact">
         <div class="stat-card">
@@ -182,11 +184,13 @@ const Schools = {
           <div class="stat-value">${sc.total}</div>
           <div class="stat-label">Toplam Okul</div>
           <div class="stat-change" style="color:var(--text-muted)">✅ ${sc.active} Aktif · 🔵 ${sc.trial} Trial · ⏸️ ${sc.inactive} Pasif</div>
+          ${d.schoolsAdded30d ? `<div class="stat-change" style="color:#4ade80">↑ Son 30 günde +${d.schoolsAdded30d} okul</div>` : ''}
         </div>
-        <div class="stat-card">
+        <div class="stat-card" title="${_schoolsEscapeHtml(roleTooltip)}" style="cursor:help">
           <div class="stat-icon blue">👥</div>
           <div class="stat-value">${d.totalStudents}</div>
           <div class="stat-label">Toplam Öğrenci (Tüm Okullar)</div>
+          <div class="stat-change" style="color:var(--text-muted)">👨‍🏫 ${rb.teachers ?? 0} öğretmen · 🏫 ${rb.schoolAdmins ?? 0} yönetici</div>
         </div>
         <div class="stat-card">
           <div class="stat-icon green">📝</div>
@@ -202,7 +206,22 @@ const Schools = {
       </div>
 
       <div class="card mt-2">
-        <div class="card-header"><h3 class="card-title"><span class="card-icon">📈</span> Deneme Aktivitesi (Son 14 Gün)</h3></div>
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <h3 class="card-title"><span class="card-icon">📈</span> Platform Büyümesi</h3>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <select id="growth-chart-metric" class="form-control" style="width:auto;padding:6px 10px;font-size:12px" onchange="Schools._reloadGrowthChart()">
+              <option value="exams">Deneme Sayısı</option>
+              <option value="activeStudents">Aktif Öğrenci</option>
+              <option value="newUsers">Yeni Kullanıcı</option>
+            </select>
+            <select id="growth-chart-range" class="form-control" style="width:auto;padding:6px 10px;font-size:12px" onchange="Schools._reloadGrowthChart()">
+              <option value="7d">Son 7 Gün</option>
+              <option value="30d" selected>Son 30 Gün</option>
+              <option value="3m">Son 3 Ay</option>
+              <option value="1y">Son 1 Yıl</option>
+            </select>
+          </div>
+        </div>
         <div class="chart-container" style="height:220px">
           <canvas id="schools-exam-chart"></canvas>
         </div>
@@ -244,7 +263,7 @@ const Schools = {
     `).join('')}</div>`;
   },
 
-  _renderExamChart(points) {
+  _renderExamChart(points, label) {
     const canvas = document.getElementById('schools-exam-chart');
     if (!canvas || typeof Chart === 'undefined') return;
     if (typeof Analysis !== 'undefined') Analysis.destroyChart('schools-exam-chart');
@@ -253,8 +272,8 @@ const Schools = {
       data: {
         labels: (points || []).map(p => p.date.slice(5)),
         datasets: [{
-          label: 'Deneme Sayısı',
-          data: (points || []).map(p => p.count),
+          label: label || 'Deneme Sayısı',
+          data: (points || []).map(p => p.value ?? p.count ?? 0),
           borderColor: '#14B8A6',
           backgroundColor: 'rgba(20,184,166,0.12)',
           borderWidth: 2,
@@ -265,6 +284,21 @@ const Schools = {
       options: (typeof Analysis !== 'undefined' && Analysis.getChartDefaults) ? Analysis.getChartDefaults() : { responsive: true, maintainAspectRatio: false },
     });
     if (typeof Analysis !== 'undefined') Analysis.chartInstances['schools-exam-chart'] = chart;
+  },
+
+  // Madde 4: tek grafik, metrik/zaman-araligi secicileriyle farkli
+  // amaclarla kullanilabilsin diye - filtre degisince SADECE bu ucu tekrar
+  // cagirir, tum dashboard'u yeniden cekmez.
+  async _reloadGrowthChart() {
+    const metric = document.getElementById('growth-chart-metric')?.value || 'exams';
+    const range = document.getElementById('growth-chart-range')?.value || '30d';
+    const labels = { exams: 'Deneme Sayısı', activeStudents: 'Aktif Öğrenci', newUsers: 'Yeni Kullanıcı' };
+    try {
+      const points = await fetch(`/api/superadmin/growth-chart?metric=${metric}&range=${range}`).then(r => r.json());
+      this._renderExamChart(points, labels[metric]);
+    } catch (e) {
+      UI.toast('Grafik yüklenemedi.', 'danger');
+    }
   },
 
   _applyFilter() {
