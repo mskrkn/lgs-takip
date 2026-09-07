@@ -30,6 +30,7 @@ import sqlite3
 import secrets
 import zipfile
 import base64
+import difflib
 import webbrowser
 from datetime import datetime, timedelta
 from functools import wraps
@@ -1053,6 +1054,35 @@ def _create_question_bank_tables(conn):
     if aq_cols and "student_id" not in aq_cols:
         conn.execute("ALTER TABLE assignment_questions ADD COLUMN student_id INTEGER REFERENCES students(id) ON DELETE CASCADE")
         conn.commit()
+
+    # admin-panel-soru-havuzu-2 bolum 10.10: deneme analizi -> kisisel calisma
+    # plani. matched_kazanim: eski deneme sisteminin serbest-metin kazanim
+    # stringi (bkz. _match_kazanim_to_topic) - hangi zayif alandan geldigini
+    # SEFFAF tutmak icin saklanir, iki ayri taksonomi arasinda tam id
+    # eslesmesi olmadigindan (bkz. o fonksiyonun yorumu) sorgulanabilir bir
+    # iz birakmak onemli.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS personal_study_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            exam_id INTEGER,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','completed','archived')),
+            generated_from TEXT NOT NULL DEFAULT 'EXAM_ANALYSIS'
+        );
+        CREATE TABLE IF NOT EXISTS personal_study_plan_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id INTEGER NOT NULL REFERENCES personal_study_plans(id) ON DELETE CASCADE,
+            question_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            skill_id INTEGER REFERENCES skills(id) ON DELETE SET NULL,
+            matched_kazanim TEXT,
+            order_index INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_psp_student ON personal_study_plans(student_id, created_at);
+        """
+    )
+    conn.commit()
 
 
 def _migrate_question_bank_lifecycle(conn):
@@ -4782,6 +4812,69 @@ def api_student_practice_answer():
     return jsonify(result)
 
 
+@app.route("/api/student/study-plan/generate", methods=["POST"])
+@login_required(role="student", permission="assignments.view")
+def api_student_generate_study_plan():
+    """admin-panel-soru-havuzu-2 bölüm 10.10: 'Deneme biter -> zayıf
+    kazanımlar -> kişisel çalışma planı' zincirini ON-DEMAND (öğrenci
+    butona bastığında) tetikler - senkron (bkz. api_admin_sync) gibi zaten
+    kırılgan/kritik bir yola OTOMATİK kanca takmak yerine (bkz. tasarım
+    kararı: bu entegrasyon isteğe bağlı bir eylem olarak başlatılıyor,
+    sync pipeline'ına dokunulmuyor)."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    data = request.get_json(silent=True) or {}
+    exam_id = data.get("examId")
+
+    plan_id, error = _generate_study_plan(db, student, exam_id)
+    if error:
+        return jsonify({"error": error}), 404
+    return jsonify({"ok": True, "planId": plan_id})
+
+
+@app.route("/api/student/study-plan/latest")
+@login_required(role="student", permission="assignments.view")
+def api_student_latest_study_plan():
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    plan = db.execute(
+        "SELECT * FROM personal_study_plans WHERE student_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+        (student_id,),
+    ).fetchone()
+    if not plan:
+        return jsonify(None)
+
+    rows = db.execute(
+        "SELECT pq.question_id, pq.matched_kazanim, pq.order_index "
+        "FROM personal_study_plan_questions pq WHERE pq.plan_id=? ORDER BY pq.order_index",
+        (plan["id"],),
+    ).fetchall()
+    attempted = {
+        r["question_id"] for r in db.execute(
+            "SELECT DISTINCT question_id FROM student_question_attempts "
+            "WHERE student_id=? AND question_id IN ({})".format(",".join("?" * len(rows)) or "NULL"),
+            (student_id, *[r["question_id"] for r in rows]),
+        ).fetchall()
+    } if rows else set()
+
+    return jsonify({
+        "planId": plan["id"], "createdAt": plan["created_at"],
+        "questions": [{
+            "questionId": r["question_id"],
+            "questionImageUrl": f"/api/student/question-image/{r['question_id']}",
+            "matchedKazanim": r["matched_kazanim"],
+            "solved": r["question_id"] in attempted,
+        } for r in rows],
+    })
+
+
 @app.route("/api/student/assignments/<int:assignment_id>/submit", methods=["POST"])
 @login_required(role="student", permission="assignments.complete")
 def api_student_submit_assignment(assignment_id):
@@ -5120,6 +5213,91 @@ def _build_error_memory(result_rows):
         "dikkatHatalari": dikkat[:10], "islemHatalari": islem[:10], "konuEksikligi": konu[:10],
         "aiComment": ai_comment,
     }
+
+
+def _match_kazanim_to_topic(db, subject_id, kazanim_text):
+    """admin-panel-soru-havuzu-2 bölüm 10.10: eski deneme sisteminin serbest-
+    metin 'kazanım'ı (bkz. _build_error_memory) ile yeni soru havuzunun
+    topics.name'i arasında BAĞIMSIZ, birbirinden habersiz iki taksonomi var
+    - aralarında id eşlemesi yok. Bu, gerçek bir metin-benzerliği köprüsü
+    (difflib) - kusursuz değil (isimler örtüşmezse eşleşme bulunamaz), bu
+    yüzden çağıran taraf None dönerse konuyu gevşetip derse düşmeli (bkz.
+    _find_similar_question zaten topic_id=None'ı destekliyor)."""
+    topics = db.execute("SELECT id, name FROM topics WHERE subject_id=?", (subject_id,)).fetchall()
+    if not topics or not kazanim_text:
+        return None
+    names = [t["name"] for t in topics]
+    matches = difflib.get_close_matches(kazanim_text, names, n=1, cutoff=0.45)
+    if not matches:
+        return None
+    return next(t["id"] for t in topics if t["name"] == matches[0])
+
+
+def _generate_study_plan(db, student, exam_id, max_questions=8):
+    """admin-panel-soru-havuzu-2 bölüm 10.10: en son (ya da belirtilen)
+    denemenin hata hafızasından ('Konu Eksikliği' + 'İşlem Hataları' -
+    'Dikkat Hataları' KASITLI OLARAK dışarıda: öğrenci konuyu zaten
+    biliyor, pratik değil dikkat gerektiriyor) zayıf kazanımları alır, her
+    birini bir konuya eşler (bulamazsa derse geri düşer) ve bölüm 10.8'in
+    aynı algoritmasıyla 'kolay' zorlukta birer telafi sorusu seçer.
+    student: sqlite3.Row (id, organization_id, class_name gerekli)."""
+    student_id = student["id"]
+    result_rows = db.execute(
+        "SELECT r.*, e.name as exam_name, e.date as exam_date, e.exam_type, e.data_json as exam_json "
+        "FROM results r JOIN exams e ON e.id = r.exam_id WHERE r.student_id = ? ORDER BY e.date ASC",
+        (student_id,),
+    ).fetchall()
+    if not result_rows:
+        return None, "Henüz bir deneme sonucunuz yok."
+
+    error_memory = _build_error_memory(result_rows)
+    if not error_memory:
+        return None, "Bu deneme için kazanım bazlı analiz mevcut değil (cevap anahtarlı/optik deneme gerekli)."
+
+    weak_items = error_memory["konuEksikligi"] + error_memory["islemHatalari"]
+    if not weak_items:
+        return None, "Şu an belirgin bir zayıf konu tespit edilmedi - harika gidiyorsunuz! 🎉"
+
+    subject_by_code = {r["code"]: r["id"] for r in db.execute("SELECT id, code FROM subjects").fetchall()}
+    grade_level = (student["class_name"] or "").split("/")[0].strip()
+
+    plan_rows = []  # (question_id, skill_id, matched_kazanim)
+    seen_qids = set()
+    for item in weak_items[:max_questions]:
+        subject_id = subject_by_code.get(item["subjectKey"])
+        if not subject_id:
+            continue
+        topic_id = _match_kazanim_to_topic(db, subject_id, item["kazanim"])
+        qid = _find_similar_question(
+            db, student["organization_id"], subject_id, grade_level, topic_id, None,
+            "kolay", exclude_ids=seen_qids,
+        )
+        if qid:
+            skill_row = db.execute(
+                "SELECT skill_id FROM question_skills WHERE question_id=? ORDER BY weight DESC LIMIT 1", (qid,)
+            ).fetchone()
+            plan_rows.append((qid, skill_row["skill_id"] if skill_row else None, item["kazanim"]))
+            seen_qids.add(qid)
+
+    if not plan_rows:
+        return None, "Zayıf konularınız için soru havuzunda uygun soru bulunamadı."
+
+    now = datetime.now().isoformat()
+    target_exam_id = exam_id or result_rows[-1]["exam_id"]
+    cur = db.execute(
+        "INSERT INTO personal_study_plans (student_id, exam_id, created_at, status, generated_from) "
+        "VALUES (?,?,?,?,?)",
+        (student_id, target_exam_id, now, "active", "EXAM_ANALYSIS"),
+    )
+    plan_id = cur.lastrowid
+    for i, (qid, skill_id, kazanim) in enumerate(plan_rows):
+        db.execute(
+            "INSERT INTO personal_study_plan_questions (plan_id, question_id, skill_id, matched_kazanim, order_index) "
+            "VALUES (?,?,?,?,?)",
+            (plan_id, qid, skill_id, kazanim, i),
+        )
+    db.commit()
+    return plan_id, None
 
 
 def _build_student_report(db, student_id, exam_id=None):
