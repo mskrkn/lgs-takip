@@ -2813,14 +2813,22 @@ const App = {
   async _qbGridBulk(status) {
     const s = this._qbGridState;
     if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
+    let rejectionReason = null;
+    if (status === 'excluded') {
+      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
+      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+    }
     try {
       const res = await fetch('/api/admin/question-bank/questions/bulk-update', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionIds: Array.from(s.selected), status }),
+        body: JSON.stringify({ questionIds: Array.from(s.selected), status, rejectionReason }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
-      UI.toast(`${data.updated} soru güncellendi.`, 'success');
+      // Dört göz prensibi (bkz. server.py _check_four_eyes): kendi girdiğiniz
+      // sorular toplu işlemden sessizce atlanır, burada admin'e bildirilir.
+      const skipMsg = data.skippedOwn ? ` (${data.skippedOwn} soru kendi sorunuz olduğu için atlandı)` : '';
+      UI.toast(`${data.updated} soru güncellendi.${skipMsg}`, 'success');
       s.selected.clear();
       await this._qbShowBatchGrid(s.batchId);
       this.loadQuestionBankBatches();
@@ -2995,8 +3003,8 @@ const App = {
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-secondary" onclick="App._qbSaveFields()">💾 Kaydet</button>
-            <button class="btn btn-danger" onclick="App._qbSaveFields('excluded')">🚫 Hariç Tut</button>
-            <button class="btn btn-primary" onclick="App._qbSaveFields('approved')">✅ Onayla</button>
+            <button class="btn btn-danger" id="qbr-reject-btn" onclick="App._qbSaveFields('excluded')">🚫 Hariç Tut</button>
+            <button class="btn btn-primary" id="qbr-approve-btn" onclick="App._qbSaveFields('approved')">✅ Onayla</button>
             <button class="btn btn-secondary" onclick="App._qbSaveFields('published')" title="Sadece onaylanmış sorular yayınlanabilir - ödevlerde kullanılabilir hale gelir">📤 Yayınla</button>
             <button class="btn btn-ghost" onclick="App._qbSaveFields('archived')" title="Soru arşivlenir, silinmez">🗄️ Arşivle</button>
           </div>
@@ -3074,7 +3082,19 @@ const App = {
       archived: ['🗄️ Arşivlendi', 'var(--text-muted)'],
     };
     const [label, color] = statusLabels[q.status] || statusLabels.pending_review;
-    document.getElementById('qbr-status-badge').innerHTML = `<span style="color:${color};font-weight:700;font-size:12.5px">${label}</span>`;
+    // admin-panel-soru-havuzu-2 bölüm 8 (dört göz): reddedilmişse gerekçe
+    // burada görünür ("girene bildirim gider" - ayrı bir bildirim kanalı
+    // yok, ama soruyu giren bunu her açtığında hemen görür).
+    const reasonHtml = (q.status === 'excluded' && q.rejection_reason)
+      ? `<div class="text-muted mt-1" style="font-size:12px">Gerekçe: ${q.rejection_reason}</div>` : '';
+    const ownHtml = q.isOwn ? `<div style="color:var(--warning);font-size:11px;margin-top:2px">👤 Bu soruyu siz girdiniz - kendi sorunuzu onaylayamaz/reddedemezsiniz</div>` : '';
+    document.getElementById('qbr-status-badge').innerHTML =
+      `<span style="color:${color};font-weight:700;font-size:12.5px">${label}</span>${reasonHtml}${ownHtml}`;
+
+    const approveBtn = document.getElementById('qbr-approve-btn');
+    const rejectBtn = document.getElementById('qbr-reject-btn');
+    if (approveBtn) { approveBtn.disabled = !!q.isOwn; approveBtn.title = q.isOwn ? 'Kendi sorunuzu onaylayamazsınız - başka bir yetkili incelemeli.' : ''; }
+    if (rejectBtn) { rejectBtn.disabled = !!q.isOwn; rejectBtn.title = q.isOwn ? 'Kendi sorunuzu reddedemezsiniz - başka bir yetkili incelemeli.' : ''; }
 
     document.getElementById('qbr-difficulty-select').value = q.difficulty_level || '';
     document.getElementById('qbr-answer-select').value = q.correct_answer || '';
@@ -3407,6 +3427,19 @@ const App = {
     const q = this._qbCurrentQuestion;
     if (!s || !q) return;
 
+    // Dört göz prensibi (bkz. server.py _check_four_eyes) - sunucu zaten
+    // 403 döner, ama isteği hiç göndermeden erken/net bir uyarı vermek
+    // daha iyi bir kullanıcı deneyimi.
+    if ((status === 'approved' || status === 'excluded') && q.isOwn) {
+      UI.toast('Kendi girdiğiniz soruyu onaylayamaz/reddedemezsiniz - başka bir yetkili incelemeli.', 'warning');
+      return;
+    }
+    let rejectionReason;
+    if (status === 'excluded') {
+      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
+      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+    }
+
     const payload = {
       topicId: parseInt(document.getElementById('qbr-topic-select').value) || null,
       learningOutcomeId: parseInt(document.getElementById('qbr-outcome-select').value) || null,
@@ -3419,6 +3452,7 @@ const App = {
       tags: document.getElementById('qbr-tags-input').value || null,
     };
     if (status) payload.status = status;
+    if (status === 'excluded') payload.rejectionReason = rejectionReason.trim();
 
     try {
       const res = await fetch(`/api/admin/question-bank/questions/${q.id}`, {
@@ -3434,7 +3468,10 @@ const App = {
         correct_answer: payload.correctAnswer, explanation: payload.explanation,
         difficulty: payload.difficulty, question_pattern: payload.questionPattern, tags: payload.tags,
       });
-      if (status) q.status = status;
+      if (status) {
+        q.status = status;
+        q.rejection_reason = status === 'excluded' ? payload.rejectionReason : null;
+      }
 
       const statusToasts = {
         approved: 'Soru onaylandı ✅', excluded: 'Soru hariç tutuldu',
