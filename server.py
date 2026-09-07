@@ -29,6 +29,7 @@ import socket
 import sqlite3
 import secrets
 import zipfile
+import base64
 import webbrowser
 from datetime import datetime, timedelta
 from functools import wraps
@@ -71,6 +72,17 @@ except ImportError as exc:
     print("   pip install -r requirements.txt")
     print("   (Taranmış PDF'lerde OCR için ayrıca Tesseract-OCR programının da kurulu olması gerekir.)\n")
     sys.exit(1)
+
+# AI destekli soru sınıflandırma (admin-panel-soru-havuzu-1.md) OPSİYONEL bir
+# özellik - paket kurulu değilse ya da ANTHROPIC_API_KEY ayarlanmamışsa sunucu
+# ÇÖKMEMELİ, sadece o tek özellik (🤖 AI ile Sınıflandır butonu) devre dışı
+# kalmalı. Bu yüzden pdf_question_extractor'ın aksine burada sys.exit YOK.
+try:
+    import anthropic
+    ANTHROPIC_SDK_AVAILABLE = True
+except ImportError:
+    anthropic = None
+    ANTHROPIC_SDK_AVAILABLE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
@@ -789,6 +801,14 @@ def _create_invite_tables(conn):
 def _create_question_bank_tables(conn):
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS units (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(subject_id, name)
+        );
+
         CREATE TABLE IF NOT EXISTS topics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
@@ -868,6 +888,28 @@ def _create_question_bank_tables(conn):
     qb_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_bank)").fetchall()]
     if qb_cols and "question_number" not in qb_cols:
         conn.execute("ALTER TABLE question_bank ADD COLUMN question_number INTEGER")
+
+    # admin-panel-soru-havuzu-1.md: ünite seviyesi (konu'nun üstünde, ders'in
+    # altında) + AI destekli otomatik etiketleme icin yeni alanlar. Hepsi
+    # NULL-varsayilanli/opsiyonel - var olan sorular hicbir sey kaybetmez,
+    # sadece yeni bir soru AI ile siniflandirildiginda doldurulur.
+    if qb_cols:
+        for col, decl in (
+            ("difficulty", "TEXT"),  # 'kolay' | 'orta' | 'zor' - eski difficulty_level (INTEGER,
+                                      # hicbir yerde okunmuyor) BİLEREK degistirilmedi/silinmedi.
+            ("question_pattern", "TEXT"),  # 'islem_sorusu' | 'problem_sorusu' | 'yorum_sorusu' | 'yeni_nesil_soru'
+            ("source", "TEXT"),  # 'pdf_import' | 'teacher' | 'ai_generated' - bugun tek yol pdf_import
+            ("ai_confidence", "TEXT"),  # JSON: {"zorluk": 0.9, "konu": 0.4, ...} - alan bazli guven
+            ("ai_suggested_json", "TEXT"),  # AI'nin HAM onerisi (taksonomiye henuz eslenmemis
+                                             # unite/konu/beceri isimleri dahil) - admin inceleme ekraninda gosterilir
+            ("ai_classified_at", "TEXT"),
+        ):
+            if col not in qb_cols:
+                conn.execute(f"ALTER TABLE question_bank ADD COLUMN {col} {decl}")
+
+    topics_cols = [r[1] for r in conn.execute("PRAGMA table_info(topics)").fetchall()]
+    if topics_cols and "unit_id" not in topics_cols:
+        conn.execute("ALTER TABLE topics ADD COLUMN unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL")
 
     # Var olan kurulumlarda booklet_code sütunu eklenmeden önce oluşturulmuş
     # question_import_batches tablosuna, çoklu kitapçık eşleştirmesinin
@@ -4818,11 +4860,11 @@ def api_question_bank_upload():
         qcur = db.execute(
             "INSERT INTO question_bank (organization_id, batch_id, subject_id, image_path, "
             "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
-            "correct_answer, correct_answer_source, status, created_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (org_id, batch_id, subject_id, f"questions/{image_filename}",
              q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
-             answer, "answer_key" if answer else None, "pending_review", user_id, now, now),
+             answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
         )
         created.append({
             "id": qcur.lastrowid, "number": q["number"], "correctAnswer": answer,
@@ -4875,7 +4917,8 @@ def api_question_bank_batch(batch_id):
     rows = db.execute(
         "SELECT id, subject_id, question_number, source_page_number, crop_x, crop_y, "
         "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
-        "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code "
+        "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code, "
+        "difficulty, question_pattern, tags, source, ai_confidence, ai_suggested_json, ai_classified_at "
         "FROM question_bank WHERE batch_id=? ORDER BY question_number, id",
         (batch_id,),
     ).fetchall()
@@ -4883,6 +4926,14 @@ def api_question_bank_batch(batch_id):
     for r in rows:
         item = dict(r)
         item["imageUrl"] = f"/api/admin/question-bank/image/{r['id']}"
+        # ai_confidence/ai_suggested_json DB'de JSON-string olarak tutulur -
+        # frontend'in tekrar parse etmesine gerek kalmasin diye burada coz.
+        for json_field in ("ai_confidence", "ai_suggested_json"):
+            if item.get(json_field):
+                try:
+                    item[json_field] = json.loads(item[json_field])
+                except (TypeError, ValueError):
+                    item[json_field] = None
         questions.append(item)
     return jsonify({"batch": dict(batch), "questions": questions})
 
@@ -4895,6 +4946,129 @@ def _get_owned_question(db, question_id, org_id):
 
 def _source_pdf_path(batch_id):
     return os.path.join(UPLOADS_DIR, "source_pdfs", f"batch_{batch_id}.pdf")
+
+
+# ============================================================
+# AI destekli soru sınıflandırma (admin-panel-soru-havuzu-1.md bölüm 3.3)
+# ============================================================
+# Tek çağrıda hem metin çıkarımı (OCR) hem sınıflandırma yapılır (hız/
+# maliyet için tercih edildi - bkz. proje notu, doğruluk için iki adımlı
+# alternatif (önce metin onayı, sonra sınıflandırma) daha sonra eklenebilir).
+# "admin serbest girsin + AI önersin" kararı geregi: unite/konu/beceri
+# SADECE mevcut taksonomiyle TAM eslesirse otomatik baglanir, aksi halde
+# oneri ai_suggested_json'da kalir ve admin'e gösterilir - AI asla sessizce
+# yeni bir taksonomi kaydı OLUŞTURMAZ.
+QUESTION_DIFFICULTIES = ("kolay", "orta", "zor")
+QUESTION_PATTERNS = ("islem_sorusu", "problem_sorusu", "yorum_sorusu", "yeni_nesil_soru")
+
+_AI_CLASSIFIER_SYSTEM_PROMPT = """Sen bir soru sınıflandırma asistanısın. Sana bir soru görseli verilecek.
+Görseldeki soruyu analiz edip SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir açıklama ekleme:
+
+{{
+  "soru_metni": "görseldeki soru metninin tam transkripsiyonu",
+  "zorluk": "kolay" | "orta" | "zor",
+  "soru_tipi": "coktan_secmeli" | "acik_uclu" | "dogru_yanlis" | "eslestirme",
+  "soru_kalibi": "islem_sorusu" | "problem_sorusu" | "yorum_sorusu" | "yeni_nesil_soru",
+  "unite": "string (aşağıdaki mevcut ünite listesinden en yakın eşleşme, hiçbiri uymuyorsa yeni bir öneri)",
+  "konu": "string (aşağıdaki mevcut konu listesinden en yakın eşleşme, hiçbiri uymuyorsa yeni bir öneri)",
+  "beceri": "string (aşağıdaki mevcut beceri listesinden en yakın eşleşme, hiçbiri uymuyorsa yeni bir öneri)",
+  "etiketler": ["#etiket1", "#etiket2"],
+  "guven_skorlari": {{
+    "soru_metni": 0.0-1.0, "zorluk": 0.0-1.0, "soru_tipi": 0.0-1.0, "soru_kalibi": 0.0-1.0,
+    "unite": 0.0-1.0, "konu": 0.0-1.0, "beceri": 0.0-1.0
+  }}
+}}
+
+Kurallar:
+- "unite/konu/beceri" alanlarını verilen mevcut liste içinden seçmeye ÇALIŞ, emin değilsen
+  en yakın tahmini yap ve o alanın güven skorunu düşük tut (<0.6).
+- Mevcut listede hiçbir uygun seçenek yoksa yeni bir isim önerebilirsin (yine düşük güvenle).
+- Ders: {subject_name}, Sınıf Seviyesi: {grade_level}
+- Mevcut Üniteler: {units_list}
+- Mevcut Konular: {topics_list}
+- Mevcut Beceriler: {outcomes_list}
+"""
+
+
+class AIClassificationError(Exception):
+    """AI sınıflandırma başarısız oldu - mesajı doğrudan kullanıcıya gösterilir."""
+
+
+def _build_question_taxonomy_context(db, subject_id):
+    units = [r["name"] for r in db.execute(
+        "SELECT name FROM units WHERE subject_id=? ORDER BY name", (subject_id,)).fetchall()]
+    topics = [r["name"] for r in db.execute(
+        "SELECT name FROM topics WHERE subject_id=? ORDER BY name", (subject_id,)).fetchall()]
+    outcomes = [r["name"] for r in db.execute(
+        "SELECT DISTINCT lo.name FROM learning_outcomes lo JOIN topics t ON t.id=lo.topic_id "
+        "WHERE t.subject_id=? ORDER BY lo.name", (subject_id,)).fetchall()]
+    return units, topics, outcomes
+
+
+def _classify_question_with_ai(db, question_row):
+    if not ANTHROPIC_SDK_AVAILABLE:
+        raise AIClassificationError("AI sınıflandırma için gerekli kütüphane sunucuda kurulu değil.")
+
+    image_full_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(question_row["image_path"]))
+    if not os.path.isfile(image_full_path):
+        raise AIClassificationError("Soru görseli bulunamadı.")
+    with open(image_full_path, "rb") as f:
+        image_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+
+    subject_row = db.execute("SELECT name FROM subjects WHERE id=?", (question_row["subject_id"],)).fetchone()
+    subject_name = subject_row["name"] if subject_row else "Bilinmiyor"
+    units, topics, outcomes = _build_question_taxonomy_context(db, question_row["subject_id"])
+    system_prompt = _AI_CLASSIFIER_SYSTEM_PROMPT.format(
+        subject_name=subject_name,
+        grade_level=question_row["grade_level"] or "belirtilmemiş",
+        units_list=", ".join(units) or "(henüz yok)",
+        topics_list=", ".join(topics) or "(henüz yok)",
+        outcomes_list=", ".join(outcomes) or "(henüz yok)",
+    )
+
+    client = anthropic.Anthropic()
+    try:
+        response = client.messages.create(
+            model="claude-opus-5",
+            max_tokens=2048,
+            system=system_prompt,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
+                    {"type": "text", "text": "Bu soruyu analiz et ve JSON formatında sınıflandır."},
+                ],
+            }],
+        )
+    except anthropic.AuthenticationError:
+        raise AIClassificationError("AI sınıflandırma yapılandırılmamış (ANTHROPIC_API_KEY eksik veya geçersiz).")
+    except anthropic.RateLimitError:
+        raise AIClassificationError("AI servisi şu an yoğun (rate limit). Birazdan tekrar deneyin.")
+    except anthropic.APIConnectionError:
+        raise AIClassificationError("AI servisine bağlanılamadı. İnternet bağlantısını kontrol edin.")
+    except anthropic.APIStatusError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message}")
+    except TypeError as exc:
+        # Ortamda HİÇBİR kimlik bilgisi (ne ANTHROPIC_API_KEY ne ant CLI
+        # profili) yoksa SDK, bir istek bile göndermeden header oluşturma
+        # aşamasında düz bir TypeError fırlatır (AuthenticationError DEĞİL -
+        # o sadece sunucu 401 döndüğünde oluşur). Aynı "yapılandırılmamış"
+        # mesajını burada da vermek için ayrıca yakalanır.
+        if "authentication" in str(exc).lower():
+            raise AIClassificationError("AI sınıflandırma yapılandırılmamış (ANTHROPIC_API_KEY ayarlanmamış).")
+        raise
+
+    text_content = next((b.text for b in response.content if b.type == "text"), "")
+    cleaned = text_content.strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```")
+        cleaned = parts[1] if len(parts) > 1 else cleaned
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+    try:
+        return json.loads(cleaned)
+    except ValueError:
+        raise AIClassificationError("AI yanıtı ayrıştırılamadı (beklenmeyen format).")
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
@@ -5017,6 +5191,76 @@ def api_question_bank_recrop(question_id):
     })
 
 
+@app.route("/api/admin/question-bank/questions/<int:question_id>/ai-classify", methods=["POST"])
+@login_required(role="admin", permission="questions.update")
+def api_question_bank_ai_classify(question_id):
+    """Bir soru görselini AI'ya gönderip metin çıkarımı + metadata önerisi
+    alır (bkz. yukarısı - _classify_question_with_ai). Taksonomiye (ünite/
+    konu/beceri) sadece mevcut bir kayıtla TAM eşleşirse otomatik bağlanır;
+    eşleşmeyen öneriler sadece ai_suggested_json'da saklanıp admin'e
+    gösterilir - admin panelinde onaylanana/düzeltilene kadar hiçbir yeni
+    taksonomi kaydı sessizce oluşturulmaz."""
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    try:
+        suggestion = _classify_question_with_ai(db, row)
+    except AIClassificationError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    def _match_id(table, name_col, where_col, where_val, suggested_name):
+        if not suggested_name:
+            return None
+        r = db.execute(
+            f"SELECT id FROM {table} WHERE {where_col}=? AND LOWER({name_col})=LOWER(?)",
+            (where_val, suggested_name),
+        ).fetchone()
+        return r["id"] if r else None
+
+    topic_id = _match_id("topics", "name", "subject_id", row["subject_id"], suggestion.get("konu"))
+    outcome_id = (
+        _match_id("learning_outcomes", "name", "topic_id", topic_id, suggestion.get("beceri"))
+        if topic_id else None
+    )
+
+    difficulty = suggestion.get("zorluk") if suggestion.get("zorluk") in QUESTION_DIFFICULTIES else None
+    question_pattern = suggestion.get("soru_kalibi") if suggestion.get("soru_kalibi") in QUESTION_PATTERNS else None
+    tags = ",".join(suggestion.get("etiketler") or []) or None
+    question_text = (suggestion.get("soru_metni") or "").strip() or None
+    now = datetime.now().isoformat()
+
+    fields = ["ai_confidence=?", "ai_suggested_json=?", "ai_classified_at=?", "updated_at=?"]
+    params = [
+        json.dumps(suggestion.get("guven_skorlari") or {}, ensure_ascii=False),
+        json.dumps(suggestion, ensure_ascii=False), now, now,
+    ]
+    if difficulty and not row["difficulty"]:
+        fields.append("difficulty=?"); params.append(difficulty)
+    if question_pattern and not row["question_pattern"]:
+        fields.append("question_pattern=?"); params.append(question_pattern)
+    if tags and not row["tags"]:
+        fields.append("tags=?"); params.append(tags)
+    if question_text and not row["question_text"]:
+        fields.append("question_text=?"); params.append(question_text)
+    if topic_id and not row["topic_id"]:
+        fields.append("topic_id=?"); params.append(topic_id)
+    if outcome_id and not row["learning_outcome_id"]:
+        fields.append("learning_outcome_id=?"); params.append(outcome_id)
+
+    params.append(question_id)
+    db.execute(f"UPDATE question_bank SET {', '.join(fields)} WHERE id=?", params)
+    db.commit()
+    log_audit(db, "QUESTION_AI_CLASSIFIED", resource_type="question", resource_id=question_id)
+
+    return jsonify({
+        "ok": True,
+        "suggestion": suggestion,
+        "matched": {"topicId": topic_id, "learningOutcomeId": outcome_id},
+    })
+
+
 _QUESTION_STATUSES = ("pending_review", "reviewed", "excluded", "approved", "published", "archived")
 
 
@@ -5060,10 +5304,21 @@ def api_question_bank_update(question_id):
         ("topicId", "topic_id"), ("learningOutcomeId", "learning_outcome_id"),
         ("difficultyLevel", "difficulty_level"), ("questionType", "question_type"),
         ("explanation", "explanation"),
+        # admin-panel-soru-havuzu-1.md: admin AI önerisini burada düzeltebilir/
+        # onaylayabilir - düzeltme, sonraki AI çağrılarının kalibrasyonu için
+        # ayrıca loglanmıyor henüz (bkz. tasarım önerisi #3, ayrı bir iş).
+        ("difficulty", "difficulty"), ("questionPattern", "question_pattern"),
     ):
         if key in data:
             fields.append(f"{column}=?")
             params.append(data[key] or None)
+
+    if "tags" in data:
+        tags_value = data["tags"]
+        if isinstance(tags_value, list):
+            tags_value = ",".join(t.strip() for t in tags_value if str(t).strip())
+        fields.append("tags=?")
+        params.append((tags_value or "").strip() or None)
 
     if "correctAnswer" in data:
         fields.append("correct_answer=?")
@@ -5134,16 +5389,61 @@ def api_question_bank_bulk_update():
     return jsonify({"updated": updated})
 
 
-@app.route("/api/admin/question-bank/topics")
+@app.route("/api/admin/question-bank/units")
 @login_required(role="admin", permission="questions.view")
-def api_question_bank_topics():
+def api_question_bank_units():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
     if not subject_id:
         return jsonify({"error": "subject_id gerekli."}), 400
     rows = db.execute(
-        "SELECT id, name FROM topics WHERE subject_id=? ORDER BY name", (subject_id,)
+        "SELECT id, name FROM units WHERE subject_id=? ORDER BY name", (subject_id,)
     ).fetchall()
+    return jsonify({"units": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/units", methods=["POST"])
+@login_required(role="admin", permission="questions.create")
+def api_question_bank_create_unit():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    subject_id = data.get("subjectId")
+    name = (data.get("name") or "").strip()
+    if not subject_id or not name:
+        return jsonify({"error": "subjectId ve name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "INSERT OR IGNORE INTO units (subject_id, name, created_at) VALUES (?,?,?)",
+        (subject_id, name, now),
+    )
+    db.commit()
+    row = db.execute(
+        "SELECT id, name FROM units WHERE subject_id=? AND name=?", (subject_id, name)
+    ).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/admin/question-bank/topics")
+@login_required(role="admin", permission="questions.view")
+def api_question_bank_topics():
+    db = get_db()
+    subject_id = request.args.get("subject_id", type=int)
+    unit_id = request.args.get("unit_id", type=int)
+    if not subject_id:
+        return jsonify({"error": "subject_id gerekli."}), 400
+    # unit_id verilmemisse (unite henuz secilmemis/atanmamis sorular icin)
+    # o dersin TUM konularini doner - unite alani opsiyonel oldugu icin
+    # (bkz. admin-panel-soru-havuzu-1.md "admin serbest girsin") bu geriye
+    # donuk uyumluluk icin de gerekli.
+    if unit_id:
+        rows = db.execute(
+            "SELECT id, name, unit_id FROM topics WHERE subject_id=? AND unit_id=? ORDER BY name",
+            (subject_id, unit_id),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT id, name, unit_id FROM topics WHERE subject_id=? ORDER BY name", (subject_id,)
+        ).fetchall()
     return jsonify({"topics": [dict(r) for r in rows]})
 
 
@@ -5153,17 +5453,26 @@ def api_question_bank_create_topic():
     db = get_db()
     data = request.get_json(silent=True) or {}
     subject_id = data.get("subjectId")
+    unit_id = data.get("unitId") or None
     name = (data.get("name") or "").strip()
     if not subject_id or not name:
         return jsonify({"error": "subjectId ve name gerekli."}), 400
     now = datetime.now().isoformat()
-    db.execute(
-        "INSERT OR IGNORE INTO topics (subject_id, name, created_at) VALUES (?,?,?)",
-        (subject_id, name, now),
-    )
-    db.commit()
+    existing = db.execute(
+        "SELECT id FROM topics WHERE subject_id=? AND name=?", (subject_id, name)
+    ).fetchone()
+    if existing:
+        if unit_id:
+            db.execute("UPDATE topics SET unit_id=? WHERE id=?", (unit_id, existing["id"]))
+            db.commit()
+    else:
+        db.execute(
+            "INSERT INTO topics (subject_id, unit_id, name, created_at) VALUES (?,?,?,?)",
+            (subject_id, unit_id, name, now),
+        )
+        db.commit()
     row = db.execute(
-        "SELECT id, name FROM topics WHERE subject_id=? AND name=?", (subject_id, name)
+        "SELECT id, name, unit_id FROM topics WHERE subject_id=? AND name=?", (subject_id, name)
     ).fetchone()
     return jsonify(dict(row))
 
