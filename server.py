@@ -2007,6 +2007,102 @@ def _external_base_url():
     return f"{scheme}://{request.host}"
 
 
+@app.route("/api/superadmin/dashboard")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_dashboard():
+    """Platform geneli ozet (admin-panel-prompt.md bolum 2) - okul durum
+    kirilimi, toplam ogrenci, limite yaklasan okul sayisi, bugun/bu hafta
+    yapilan deneme sayisi, son denemeler + zaman icindeki deneme grafigi,
+    ve TUM okullari kapsayan bir aktivite akisi.
+
+    Aktivite akisi icin BILEREK /api/superadmin/audit-logs'u (ve onun
+    _effective_org_id filtresini) yeniden KULLANMIYORUZ - o uc "bu okulun
+    KENDI personelinin yaptigi islemler" anlamina gelir ve saf platform
+    hesaplari (organization_id NULL, ?school_id= verilmemis) icin 400 doner
+    (bkz. _effective_org_id yorumu). Platform ozetinin amaci tam tersi:
+    TUM okullari kapsayan tek bir akis - bu yuzden burada ayri, filtresiz
+    bir sorgu kullaniyoruz."""
+    db = get_db()
+    _process_trial_lifecycle(db)
+
+    status_rows = db.execute("SELECT status, COUNT(*) AS c FROM organizations GROUP BY status").fetchall()
+    school_counts = {"active": 0, "trial": 0, "inactive": 0}
+    for r in status_rows:
+        if r["status"] in school_counts:
+            school_counts[r["status"]] = r["c"]
+    school_counts["total"] = sum(school_counts.values())
+
+    total_students = db.execute("SELECT COUNT(*) AS c FROM students").fetchone()["c"]
+
+    schools_near_limit = db.execute(
+        "SELECT COUNT(*) AS c FROM organizations o WHERE o.user_limit IS NOT NULL "
+        "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id = o.id) >= o.user_limit * 0.8"
+    ).fetchone()["c"]
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_ago = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    exams_today = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date = ?", (today,)).fetchone()["c"]
+    exams_this_week = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date >= ?", (week_ago,)).fetchone()["c"]
+
+    recent_exams = db.execute(
+        "SELECT e.id, e.name, e.date, o.name AS org_name, "
+        "(SELECT COUNT(DISTINCT r.student_id) FROM results r WHERE r.exam_id = e.id) AS participant_count "
+        "FROM exams e LEFT JOIN organizations o ON o.id = e.organization_id "
+        "ORDER BY e.date DESC, e.id DESC LIMIT 10"
+    ).fetchall()
+
+    chart_start = (datetime.now() - timedelta(days=13)).strftime("%Y-%m-%d")
+    chart_rows = db.execute(
+        "SELECT date, COUNT(*) AS c FROM exams WHERE date >= ? AND date <= ? GROUP BY date ORDER BY date",
+        (chart_start, today),
+    ).fetchall()
+
+    # audit_logs.organization_id ISLEMI YAPAN kisinin okulunu tutar, ETKILENEN
+    # kaynagin okulunu DEGIL (bkz. api_superadmin_audit_logs yorumu) - platform
+    # sahibi baska bir okulu duzenlediginde/o okula admin eklediginde bu satir
+    # olmadan HER ZAMAN platform sahibinin KENDI okulunun adi gorunurdu. Bu
+    # yuzden resource_type'a gore GERCEKTEN etkilenen okulu coz: 'organization'
+    # ise resource_id DOGRUDAN bir organizations.id'dir; 'user' ise resource_id
+    # bir users.id'dir, o kullanicinin organization_id'sinden okula ulasilir.
+    # Diger resource_type'lar (student/exam/result/admin_sync - hepsi
+    # platform-admin dogrudan yazma ya da senkron kaynakli) icin bu coz ume
+    # yapilmiyor, actor'un kendi okulu fallback olarak kalir (bkz. asagisi -
+    # ayri, gelecekteki bir is: bu id'ler ORG_ID_BLOCK_SIZE ile kodlanmis,
+    # coz mek ayri bir yardimci fonksiyon gerektirir).
+    activity_rows = db.execute(
+        "SELECT al.id, al.action, al.resource_type, al.resource_id, al.created_at, "
+        "u.username, u.display_name, "
+        "COALESCE(res_org.name, target_user_org.name, actor_org.name) AS org_name "
+        "FROM audit_logs al "
+        "LEFT JOIN users u ON u.id = al.user_id "
+        "LEFT JOIN organizations actor_org ON actor_org.id = al.organization_id "
+        "LEFT JOIN organizations res_org ON al.resource_type = 'organization' AND res_org.id = al.resource_id "
+        "LEFT JOIN users target_user ON al.resource_type = 'user' AND target_user.id = al.resource_id "
+        "LEFT JOIN organizations target_user_org ON target_user_org.id = target_user.organization_id "
+        "WHERE al.action != 'LOGIN_SUCCESS' "
+        "ORDER BY al.id DESC LIMIT 20"
+    ).fetchall()
+
+    return jsonify({
+        "schoolCounts": school_counts,
+        "totalStudents": total_students,
+        "schoolsNearLimit": schools_near_limit,
+        "examsToday": exams_today,
+        "examsThisWeek": exams_this_week,
+        "recentExams": [{
+            "id": r["id"], "name": r["name"], "date": r["date"],
+            "organizationName": r["org_name"], "participantCount": r["participant_count"],
+        } for r in recent_exams],
+        "examChart": [{"date": r["date"], "count": r["c"]} for r in chart_rows],
+        "recentActivity": [{
+            "id": r["id"], "action": r["action"], "resourceType": r["resource_type"],
+            "resourceId": r["resource_id"], "createdAt": r["created_at"],
+            "actorDisplayName": r["display_name"] or r["username"],
+            "organizationName": r["org_name"],
+        } for r in activity_rows],
+    })
+
+
 @app.route("/api/superadmin/organizations", methods=["GET"])
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_list_organizations():
