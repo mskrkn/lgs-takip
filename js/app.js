@@ -56,6 +56,10 @@ const App = {
     }
 
     this.renderRoleBadge();
+    // Bildirim Merkezi (Ana Sayfa Geliştirme Önerileri madde 9) - şu an
+    // sadece platform (okul yönetimi) yetkisi olan hesaplar için, Dikkat
+    // Gerekenler ile aynı veri kümesinden türetiliyor.
+    if (this.currentUser?.canManageSchools) this.initNotifications();
 
     // Initialize Cloud Sync Module
     if (typeof SyncModule !== 'undefined') {
@@ -187,6 +191,69 @@ const App = {
     el.textContent = label;
     el.title = title;
     el.style.cssText = 'display:inline-flex;cursor:default;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.3);color:#c4b5fd';
+  },
+
+  // Bildirim Merkezi (Ana Sayfa Geliştirme Önerileri madde 9) - Dikkat
+  // Gerekenler ile aynı veri kümesinden türer (bkz. server.py
+  // _sync_notifications), okundu/okunmadı/arşivlendi kalıcı durumla.
+  initNotifications() {
+    const wrap = document.getElementById('notification-bell-wrap');
+    const btn = document.getElementById('notification-bell-btn');
+    const panel = document.getElementById('notification-panel');
+    if (!wrap || !btn || !panel) return;
+    wrap.style.display = '';
+    this.loadNotifications();
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = panel.style.display !== 'none';
+      panel.style.display = isOpen ? 'none' : '';
+      if (!isOpen) this.loadNotifications();
+    });
+    document.addEventListener('click', (e) => {
+      if (!wrap.contains(e.target)) panel.style.display = 'none';
+    });
+  },
+
+  async loadNotifications() {
+    const badge = document.getElementById('notification-badge');
+    const panel = document.getElementById('notification-panel');
+    try {
+      const data = await fetch('/api/superadmin/notifications').then(r => r.json());
+      if (badge) {
+        if (data.unreadCount > 0) { badge.style.display = 'flex'; badge.textContent = data.unreadCount; }
+        else badge.style.display = 'none';
+      }
+      if (!panel) return;
+      if (!data.notifications.length) {
+        panel.innerHTML = '<p style="color:var(--text-muted);font-size:13px;padding:10px;margin:0">Bildirim yok.</p>';
+        return;
+      }
+      const severityColor = { critical: '#fb7185', warning: '#fbbf24', info: '#60a5fa' };
+      panel.innerHTML = data.notifications.map(n => `
+        <div style="padding:8px;border-radius:8px;margin-bottom:4px;background:${n.status === 'unread' ? 'rgba(255,255,255,0.04)' : 'transparent'};border-left:3px solid ${severityColor[n.severity] || '#60a5fa'}">
+          <div style="font-size:13px;cursor:pointer" onclick="App.navigateTo('${n.page}');App.markNotificationRead(${n.id})">${n.text}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <span style="color:var(--text-muted);font-size:11px">${(n.createdAt || '').replace('T', ' ').slice(0, 16)}</span>
+            <span style="display:flex;gap:8px">
+              ${n.status === 'unread' ? `<a href="#" style="font-size:11px;color:#60a5fa" onclick="event.preventDefault();App.markNotificationRead(${n.id})">Okundu işaretle</a>` : ''}
+              <a href="#" style="font-size:11px;color:var(--text-muted)" onclick="event.preventDefault();App.archiveNotification(${n.id})">Arşivle</a>
+            </span>
+          </div>
+        </div>
+      `).join('');
+    } catch (e) {
+      if (panel) panel.innerHTML = '<p style="color:var(--text-muted);font-size:13px;padding:10px;margin:0">❌ Bildirimler yüklenemedi.</p>';
+    }
+  },
+
+  async markNotificationRead(id) {
+    await fetch(`/api/superadmin/notifications/${id}/read`, { method: 'POST' });
+    this.loadNotifications();
+  },
+
+  async archiveNotification(id) {
+    await fetch(`/api/superadmin/notifications/${id}/archive`, { method: 'POST' });
+    this.loadNotifications();
   },
 
   // Trigger PWA installation dialog

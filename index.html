@@ -159,7 +159,14 @@
             <input type="text" placeholder="Ara... (yakında)" disabled>
             <span class="search-icon">🔍</span>
           </div>
-          <button class="menu-toggle" onclick="UI.toast('Bildirimler çok yakında burada olacak! 🚀','info')" title="Bildirimler">🔔</button>
+          <div id="notification-bell-wrap" style="position:relative;display:none">
+            <button class="menu-toggle" id="notification-bell-btn" title="Bildirimler" style="position:relative">
+              🔔
+              <span id="notification-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:16px;height:16px;border-radius:99px;background:#EF4444;color:#fff;font-size:9px;font-weight:800;align-items:center;justify-content:center;padding:0 3px"></span>
+            </button>
+            <div id="notification-panel" style="display:none;position:absolute;top:44px;right:0;width:340px;max-height:420px;overflow-y:auto;background:var(--bg-card,#0f1420);border:1px solid var(--bg-glass-border,rgba(255,255,255,0.1));border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.4);z-index:200;padding:10px"></div>
+          </div>
+          <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
           <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
           <!-- Hesap Turu Rozeti: hangi yetki seviyesinde oturum acildigini
                her zaman gorunur kilar (bkz. App.init() -> App.renderRoleBadge) -->
