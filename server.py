@@ -903,6 +903,11 @@ def _create_question_bank_tables(conn):
             ("ai_suggested_json", "TEXT"),  # AI'nin HAM onerisi (taksonomiye henuz eslenmemis
                                              # unite/konu/beceri isimleri dahil) - admin inceleme ekraninda gosterilir
             ("ai_classified_at", "TEXT"),
+            # admin-panel-soru-havuzu-2 bolum 8: "dort goz" onay sureci -
+            # reddedilirken gerekce ZORUNLU, girene gosterilir. Yeniden
+            # incelemeye/onaya girildiginde (status pending_review/approved)
+            # temizlenir - bkz. _apply_question_status.
+            ("rejection_reason", "TEXT"),
         ):
             if col not in qb_cols:
                 conn.execute(f"ALTER TABLE question_bank ADD COLUMN {col} {decl}")
@@ -4918,7 +4923,8 @@ def api_question_bank_batch(batch_id):
         "SELECT id, subject_id, question_number, source_page_number, crop_x, crop_y, "
         "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
         "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code, "
-        "difficulty, question_pattern, tags, source, ai_confidence, ai_suggested_json, ai_classified_at "
+        "difficulty, question_pattern, tags, source, ai_confidence, ai_suggested_json, ai_classified_at, "
+        "created_by, rejection_reason "
         "FROM question_bank WHERE batch_id=? ORDER BY question_number, id",
         (batch_id,),
     ).fetchall()
@@ -4926,6 +4932,11 @@ def api_question_bank_batch(batch_id):
     for r in rows:
         item = dict(r)
         item["imageUrl"] = f"/api/admin/question-bank/image/{r['id']}"
+        # admin-panel-soru-havuzu-2 bolum 8 (dort goz): frontend'in "Onayla/
+        # Hariç Tut" butonlarını gizleyebilmesi için - ham created_by (başka
+        # bir kullanıcının id'si) yerine sadece "bu SORU BENİM Mİ" bilgisi
+        # gönderilir.
+        item["isOwn"] = (item.pop("created_by", None) == session.get("user_id"))
         # ai_confidence/ai_suggested_json DB'de JSON-string olarak tutulur -
         # frontend'in tekrar parse etmesine gerek kalmasin diye burada coz.
         for json_field in ("ai_confidence", "ai_suggested_json"):
@@ -5264,7 +5275,19 @@ def api_question_bank_ai_classify(question_id):
 _QUESTION_STATUSES = ("pending_review", "reviewed", "excluded", "approved", "published", "archived")
 
 
-def _apply_question_status(db, row, status, user_id):
+def _check_four_eyes(row, user_id, status):
+    """'Dört göz prensibi' (admin-panel-soru-havuzu-2 bölüm 8): bir soruyu
+    approved/excluded yapacak kişi, o soruyu GİREN kişiyle AYNI olamaz -
+    başka bir yetkili incelemeli. Sadece nihai karar adımlarında (approved/
+    excluded) uygulanır; pending_review/reviewed/published/archived bu
+    kısıtın dışında (published zaten approved sonrası ayrı bir yetki
+    istiyor, archived bir "silme" kararı, sahiplik burada önemsiz)."""
+    if status in ("approved", "excluded") and row["created_by"] == user_id:
+        return jsonify({"error": "Kendi girdiğiniz soruyu onaylayamaz/reddedemezsiniz - başka bir yetkili incelemeli."}), 403
+    return None
+
+
+def _apply_question_status(db, row, status, user_id, rejection_reason=None):
     """question_bank satırının durumunu değiştirir; 'approved' olduğunda
     henüz display_code atanmamışsa <DERS_KODU>-00001 kalıbıyla üretir.
     'published'/'archived' için ayrıca published_at/archived_at damgalanır -
@@ -5280,6 +5303,13 @@ def _apply_question_status(db, row, status, user_id):
         db.execute("UPDATE question_bank SET published_at=? WHERE id=?", (now, row["id"]))
     if status == "archived":
         db.execute("UPDATE question_bank SET archived_at=? WHERE id=?", (now, row["id"]))
+    # Reddedilirken gerekce kaydedilir; onaylanirken (yeniden inceleme sonrasi
+    # duzeltilip tekrar gonderilmis olabilir) bir onceki red gerekcesi artik
+    # gecerli olmadigi icin temizlenir.
+    if status == "excluded":
+        db.execute("UPDATE question_bank SET rejection_reason=? WHERE id=?", (rejection_reason, row["id"]))
+    elif status in ("approved", "pending_review"):
+        db.execute("UPDATE question_bank SET rejection_reason=NULL WHERE id=?", (row["id"],))
     display_code = row["display_code"]
     if status == "approved" and not display_code:
         subject_row = db.execute("SELECT code FROM subjects WHERE id=?", (row["subject_id"],)).fetchone()
@@ -5344,6 +5374,16 @@ def api_question_bank_update(question_id):
     if status == "archived" and not has_permission(db, session["user_id"], "questions.delete"):
         return jsonify({"error": "Bu işlem için yetkiniz yok."}), 403
 
+    four_eyes_error = _check_four_eyes(row, session["user_id"], status) if status else None
+    if four_eyes_error:
+        return four_eyes_error
+
+    rejection_reason = None
+    if status == "excluded":
+        rejection_reason = (data.get("rejectionReason") or "").strip()
+        if not rejection_reason:
+            return jsonify({"error": "Reddetme gerekçesi zorunlu."}), 400
+
     if not fields and not status:
         return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400
 
@@ -5355,7 +5395,7 @@ def api_question_bank_update(question_id):
 
     display_code = row["display_code"]
     if status:
-        display_code = _apply_question_status(db, row, status, session["user_id"])
+        display_code = _apply_question_status(db, row, status, session["user_id"], rejection_reason)
 
     db.commit()
     return jsonify({"ok": True, "displayCode": display_code})
@@ -5374,19 +5414,30 @@ def api_question_bank_bulk_update():
         return jsonify({"error": "Geçersiz durum."}), 400
     if not isinstance(question_ids, list) or not question_ids:
         return jsonify({"error": "questionIds gerekli."}), 400
+    rejection_reason = (data.get("rejectionReason") or "").strip()
+    if status == "excluded" and not rejection_reason:
+        return jsonify({"error": "Reddetme gerekçesi zorunlu."}), 400
 
     db = get_db()
     org_id = _current_org_id(db)
     user_id = session["user_id"]
     updated = 0
+    skipped_own = 0
     for qid in question_ids:
         row = _get_owned_question(db, qid, org_id)
         if not row:
             continue
-        _apply_question_status(db, row, status, user_id)
+        # Dort goz: kendi sordugu sorulari toplu onay/red'den SESSIZCE
+        # atlar - tek tek PATCH gibi 403 ile tum istegi durdurmaz, aksi
+        # halde bir admin karisik bir secimde tek bir kendi sorusu yuzunden
+        # butun toplu islemi kaybederdi.
+        if status in ("approved", "excluded") and row["created_by"] == user_id:
+            skipped_own += 1
+            continue
+        _apply_question_status(db, row, status, user_id, rejection_reason if status == "excluded" else None)
         updated += 1
     db.commit()
-    return jsonify({"updated": updated})
+    return jsonify({"updated": updated, "skippedOwn": skipped_own})
 
 
 @app.route("/api/admin/question-bank/units")
