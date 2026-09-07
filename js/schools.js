@@ -48,8 +48,14 @@ function _dashboardActivityLabel(row) {
 
 const Schools = {
 
-  async render() {
-    const container = document.getElementById('page-schools');
+  // containerId: Faz I - Platform Sahibi/Admin Yardımcısı için bu içerik
+  // artık "Anasayfa" (page-dashboard) olarak da render edilebiliyor (bkz.
+  // js/app.js navigateTo 'dashboard' case) - kullanıcının kendi okulunun
+  // öğrenci/sınıf detaylı ESKİ Anasayfa'sı yerine platform kontrol paneli
+  // görmek istemesi üzerine. Varsayılan (parametre verilmezse) hâlâ
+  // 'page-schools' - saf platform hesapları için değişmedi.
+  async render(containerId = 'page-schools') {
+    const container = document.getElementById(containerId);
     if (!container) return;
 
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
@@ -542,11 +548,15 @@ const Schools = {
     const schoolId = Number(btn.dataset.schoolId);
     // Platform sahibi admin kendi okuluna "girerse" (Okullar listesinde
     // kendi okulu da gorunur) - salt-okunur SchoolView yerine normal (tam
-    // yetkili) admin paneline dondur, actingSchool'i set ETME.
+    // yetkili) admin paneline dondur, actingSchool'i set ETME. Faz I'den
+    // ONCE bu 'dashboard'a yonlendirirdi (o zaman kendi okulunun tam
+    // yetkili paneliydi) - artik 'dashboard' Komuta Merkezi oldugu icin
+    // dogrudan 'students'e (nav'da zaten gorunur, actingSchool null iken
+    // normal/tam yetkili render eder) yonlendiriyoruz.
     if (App.currentUser?.organizationId && schoolId === App.currentUser.organizationId) {
       App.actingSchool = null;
       UI.toast('Bu zaten sizin okulunuz - normal panelden yönetebilirsiniz.', 'info');
-      App.navigateTo('dashboard');
+      App.navigateTo('students');
       return;
     }
     App.actingSchool = { id: schoolId, name: btn.dataset.schoolName };
