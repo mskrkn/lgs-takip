@@ -142,11 +142,17 @@ const App = {
     // Platform sahibi bir admin (legacy role='admin' kalir, ek olarak
     // "organization.manage" izni verilmis - bkz. grant_platform_admin.py):
     // normal admin panelinin TAMAMINI (kendi okulu, senkron, soru bankası,
-    // vs.) bugünküyle birebir aynı şekilde kullanmaya devam eder, EK OLARAK
-    // "Okullar" sekmesini de görür ve oradan başka okullara "girebilir".
+    // vs.) bugünküyle birebir aynı şekilde kullanmaya devam eder. Faz I
+    // ONCESI "Okullar" ayrı bir sekme olarak da görünürdü - kullanıcı
+    // geri bildiriminde "Anasayfa'da kendi okulumun öğrenci detaylarını
+    // değil, platform kontrol panelini görmek istiyorum" dediği için artık
+    // AYRI bir "Okullar" sekmesi YOK: o içerik "Anasayfa"nın kendisi oldu
+    // (bkz. navigateTo() 'dashboard'/'schools' case'leri) - burada
+    // 'nav-schools' BİLEREK gösterilmiyor, aksi halde aynı içerik iki
+    // sekmede tekrar ederdi.
     const demoNav = document.getElementById('nav-demo-talepleri');
     if (this.currentUser?.canManageSchools) {
-      const platformNavIds = ['nav-schools', 'nav-system-logs'];
+      const platformNavIds = ['nav-system-logs'];
       if (this.currentUser?.canManageAdmins) platformNavIds.push('nav-admins');
       platformNavIds.forEach(id => {
         const el = document.getElementById(id);
@@ -343,7 +349,17 @@ const App = {
     // Render page content
     switch (page) {
       case 'dashboard':
-        await this.renderDashboard();
+        // Faz I: Platform Sahibi/Admin Yardımcısı için "Anasayfa" artık
+        // kendi okulunun öğrenci/sınıf detaylı eski panosu DEĞİL, platform
+        // kontrol paneli (Okullar sayfasıyla aynı içerik) - bkz. yukarısı
+        // 'nav-schools' yorumu. Kendi okullarının öğrenci/sınıf detayına
+        // ulaşmak isterlerse Okullar tablosundan "Okula Gir" kullanırlar,
+        // tıpkı başka bir okula girdikleri gibi.
+        if (this.currentUser?.canManageSchools) {
+          await Schools.render('page-dashboard');
+        } else {
+          await this.renderDashboard();
+        }
         break;
       case 'students':
         // Süper admin bir okula "girmişken" bu sayfa tarayıcının yerel
@@ -399,7 +415,18 @@ const App = {
         await DemoRequests.render();
         break;
       case 'schools':
-        await Schools.render();
+        // Faz I: Platform Sahibi/Admin Yardımcısı (kendi okulu VAR) için
+        // 'schools' artık ayrı bir sayfa değil, 'dashboard'un takma adı -
+        // aynı içeriği İKİ farklı container'a (page-schools + page-dashboard)
+        // basıp aynı id'leri (örn. #new-school-card) tekrarlamamak için
+        // buraya düşen eski çağrılar (bkz. js/adminUsers.js) 'dashboard'a
+        // yönlendirilir. Saf platform hesabı (kendi okulu YOK) için
+        // değişmedi - onlar hâlâ doğrudan 'page-schools'a render eder.
+        if (this.currentUser?.canManageSchools && this.currentUser?.organizationId) {
+          await this.navigateTo('dashboard');
+        } else {
+          await Schools.render();
+        }
         break;
       case 'admins':
         await Admins.render();
