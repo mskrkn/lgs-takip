@@ -1082,6 +1082,25 @@ def _create_question_bank_tables(conn):
             order_index INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_psp_student ON personal_study_plans(student_id, created_at);
+
+        -- Ana Sayfa Geliştirme Önerileri madde 9 (Bildirim Merkezi). notif_key
+        -- SABİT bir tanımlayıcı (bkz. _compute_attention_items'taki 'key'
+        -- alanı) - aynı olayı (ör. 'near_limit') tekrar tekrar YENİ bildirim
+        -- olarak oluşturmamak için UNIQUE(user_id, notif_key). 'archived'
+        -- durumundaki bir bildirim BİLİNÇLİ OLARAK bir daha güncellenmez
+        -- (kullanıcı kapattı, tekrar tekrar geri gelmesin).
+        CREATE TABLE IF NOT EXISTS platform_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            notif_key TEXT NOT NULL,
+            text TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'info',
+            page TEXT,
+            status TEXT NOT NULL DEFAULT 'unread' CHECK(status IN ('unread','read','archived')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, notif_key)
+        );
         """
     )
     conn.commit()
@@ -2556,16 +2575,14 @@ def api_superadmin_pusi_insights():
     return jsonify(insights)
 
 
-@app.route("/api/superadmin/attention-items")
-@login_required(role=("admin", "super_admin"), permission="organizations.view")
-def api_superadmin_attention_items():
+def _compute_attention_items(db):
     """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri, madde 2): 'şu an
     ilgilenmem gereken ne var' sorusunu tek bir listede cevaplar. Her satır
     zaten var olan bir sinyalin (limit/trial/inceleme/giriş/hatalı dosya)
     üzerine kurulu - burada YENİ bir hesaplama yok, sadece toplama +
-    önceliklendirme (severity). Frontend her satırı kendi 'page' ipucuna
-    göre tıklanabilir yapar."""
-    db = get_db()
+    önceliklendirme (severity). 'key' alanı SABİT (madde 9 - Bildirim
+    Merkezi'nin bu listeyi bildirime çevirirken tekrar tekrar aynı olayı
+    YENİ bildirim olarak oluşturmaması için, bkz. _sync_notifications)."""
     _process_trial_lifecycle(db)
     items = []
 
@@ -2577,7 +2594,7 @@ def api_superadmin_attention_items():
     ).fetchall()
     if near_limit_schools:
         items.append({
-            "severity": "critical", "icon": "🔴",
+            "key": "near_limit", "severity": "critical", "icon": "🔴",
             "text": f"{len(near_limit_schools)} okulun kullanıcı limiti %90'a ulaştı",
             "page": "schools", "count": len(near_limit_schools),
             "detail": [{"id": r["id"], "name": r["name"], "usage": f"{r['c']}/{r['user_limit']}"} for r in near_limit_schools],
@@ -2591,7 +2608,7 @@ def api_superadmin_attention_items():
     ).fetchall()
     if expiring_trials:
         items.append({
-            "severity": "warning", "icon": "🟡",
+            "key": "expiring_trial", "severity": "warning", "icon": "🟡",
             "text": f"{len(expiring_trials)} okulun aboneliği 7 gün içinde bitecek",
             "page": "schools", "count": len(expiring_trials),
             "detail": [{"id": r["id"], "name": r["name"], "trialEndsAt": r["trial_ends_at"]} for r in expiring_trials],
@@ -2602,7 +2619,7 @@ def api_superadmin_attention_items():
     ).fetchone()["c"]
     if pending_questions:
         items.append({
-            "severity": "info", "icon": "🟠",
+            "key": "pending_questions", "severity": "info", "icon": "🟠",
             "text": f"{pending_questions} soru incelenmeyi bekliyor",
             "page": "question-bank", "count": pending_questions,
         })
@@ -2617,7 +2634,7 @@ def api_superadmin_attention_items():
     ).fetchall()
     if dormant_schools:
         items.append({
-            "severity": "critical", "icon": "🔴",
+            "key": "dormant_schools", "severity": "critical", "icon": "🔴",
             "text": f"{len(dormant_schools)} okul son 30 gündür sisteme giriş yapmadı",
             "page": "schools", "count": len(dormant_schools),
             "detail": [{"id": r["id"], "name": r["name"]} for r in dormant_schools],
@@ -2628,14 +2645,104 @@ def api_superadmin_attention_items():
     ).fetchone()["c"]
     if failed_batches:
         items.append({
-            "severity": "warning", "icon": "🟡",
+            "key": "failed_batches", "severity": "warning", "icon": "🟡",
             "text": f"{failed_batches} dosya hatalı format nedeniyle işlenemedi",
             "page": "question-bank", "count": failed_batches,
         })
 
     severity_order = {"critical": 0, "warning": 1, "info": 2}
     items.sort(key=lambda it: severity_order.get(it["severity"], 3))
-    return jsonify(items)
+    return items
+
+
+@app.route("/api/superadmin/attention-items")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_attention_items():
+    return jsonify(_compute_attention_items(get_db()))
+
+
+def _sync_notifications(db, user_id):
+    """Dikkat Gerekenler listesini (_compute_attention_items) bu adminin
+    bildirimlerine yansıtır. 'archived' bir bildirime DOKUNULMAZ (kullanıcı
+    kapattı - aynı olay devam ediyor diye tekrar tekrar geri gelmesin).
+    'unread'/'read' bir bildirimin METNİ güncellenir (ör. sayı değişmişse)
+    ama durumu KORUNUR. Artık gerçekleşmeyen (attention-items'ta olmayan)
+    unread/read bildirimler otomatik 'read' yapılır - sorun kendiliğinden
+    çözülmüş demektir, bildirim merkezinde eski/yanıltıcı kalmasın."""
+    now = datetime.now().isoformat()
+    items = _compute_attention_items(db)
+    active_keys = set()
+    for item in items:
+        active_keys.add(item["key"])
+        existing = db.execute(
+            "SELECT id, status FROM platform_notifications WHERE user_id=? AND notif_key=?",
+            (user_id, item["key"]),
+        ).fetchone()
+        if existing and existing["status"] == "archived":
+            continue
+        if existing:
+            db.execute(
+                "UPDATE platform_notifications SET text=?, severity=?, page=?, updated_at=? WHERE id=?",
+                (item["text"], item["severity"], item["page"], now, existing["id"]),
+            )
+        else:
+            db.execute(
+                "INSERT INTO platform_notifications (user_id, notif_key, text, severity, page, status, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (user_id, item["key"], item["text"], item["severity"], item["page"], "unread", now, now),
+            )
+    # artik gecerli olmayan (cozulmus) unread/read bildirimleri sessizce 'read' yap
+    stale = db.execute(
+        "SELECT id, notif_key FROM platform_notifications WHERE user_id=? AND status != 'archived'", (user_id,)
+    ).fetchall()
+    for row in stale:
+        if row["notif_key"] not in active_keys:
+            db.execute("UPDATE platform_notifications SET status='read', updated_at=? WHERE id=?", (now, row["id"]))
+    db.commit()
+
+
+@app.route("/api/superadmin/notifications")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_list_notifications():
+    db = get_db()
+    _sync_notifications(db, session["user_id"])
+    rows = db.execute(
+        "SELECT * FROM platform_notifications WHERE user_id=? AND status != 'archived' ORDER BY "
+        "CASE status WHEN 'unread' THEN 0 ELSE 1 END, created_at DESC",
+        (session["user_id"],),
+    ).fetchall()
+    unread_count = sum(1 for r in rows if r["status"] == "unread")
+    return jsonify({
+        "unreadCount": unread_count,
+        "notifications": [{
+            "id": r["id"], "text": r["text"], "severity": r["severity"], "page": r["page"],
+            "status": r["status"], "createdAt": r["created_at"],
+        } for r in rows],
+    })
+
+
+@app.route("/api/superadmin/notifications/<int:notif_id>/read", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_read_notification(notif_id):
+    db = get_db()
+    db.execute(
+        "UPDATE platform_notifications SET status='read', updated_at=? WHERE id=? AND user_id=?",
+        (datetime.now().isoformat(), notif_id, session["user_id"]),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/superadmin/notifications/<int:notif_id>/archive", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_archive_notification(notif_id):
+    db = get_db()
+    db.execute(
+        "UPDATE platform_notifications SET status='archived', updated_at=? WHERE id=? AND user_id=?",
+        (datetime.now().isoformat(), notif_id, session["user_id"]),
+    )
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/superadmin/organizations", methods=["GET"])
