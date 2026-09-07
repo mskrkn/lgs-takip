@@ -101,8 +101,10 @@ const App = {
     const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
       (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
     if (isPurePlatformAccount) {
+      const visiblePages = ['schools', 'system-logs'];
+      if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
+        item.style.display = visiblePages.includes(item.dataset.page) ? '' : 'none';
       });
       // Mobil alt navigasyon çubuğu (Anasayfa/Öğrenciler/Denemeler/Giriş/
       // Ayarlar) yukarıdaki .nav-item filtresine dahil değil - hiçbiri bu
@@ -139,7 +141,9 @@ const App = {
     // "Okullar" sekmesini de görür ve oradan başka okullara "girebilir".
     const demoNav = document.getElementById('nav-demo-talepleri');
     if (this.currentUser?.canManageSchools) {
-      ['nav-schools', 'nav-system-logs'].forEach(id => {
+      const platformNavIds = ['nav-schools', 'nav-system-logs'];
+      if (this.currentUser?.canManageAdmins) platformNavIds.push('nav-admins');
+      platformNavIds.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
@@ -162,9 +166,16 @@ const App = {
     const el = document.getElementById('role-badge');
     if (!el || !this.currentUser?.authenticated) return;
     let label, title;
-    if (this.currentUser.role === 'super_admin' || (this.currentUser.canManageSchools && !this.currentUser.organizationId)) {
+    const isPureplatform = this.currentUser.role === 'super_admin' || (this.currentUser.canManageSchools && !this.currentUser.organizationId);
+    if (isPureplatform && !this.currentUser.canManageAdmins) {
+      label = '🧭 Admin Yardımcısı';
+      title = 'Süper Admin ile aynı yetkilere sahipsiniz, admin oluşturma/silme HARİÇ.';
+    } else if (isPureplatform) {
       label = '🧭 Platform (Saf)';
-      title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları yönetir.';
+      title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları/Adminler yönetir.';
+    } else if (this.currentUser.canManageSchools && !this.currentUser.canManageAdmins) {
+      label = '🧭 Admin Yardımcısı';
+      title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz, admin oluşturma/silme HARİÇ.';
     } else if (this.currentUser.canManageSchools) {
       label = '🧭 Platform Sahibi';
       title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz.';
@@ -251,6 +262,7 @@ const App = {
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
       'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
       schools: ['Okullar', 'Okul Yönetimi'],
+      admins: ['Adminler', 'Admin Hesapları Yönetimi'],
       'system-logs': ['Sistem Logları', 'Denetim Kaydı'],
     };
 
@@ -320,6 +332,9 @@ const App = {
         break;
       case 'schools':
         await Schools.render();
+        break;
+      case 'admins':
+        await Admins.render();
         break;
       case 'system-logs':
         await SystemLogs.render();

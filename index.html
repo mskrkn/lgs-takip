@@ -99,6 +99,10 @@
           <span class="nav-icon">🏫</span>
           <span>Okullar</span>
         </div>
+        <div class="nav-item" data-page="admins" id="nav-admins" style="display:none">
+          <span class="nav-icon">🔐</span>
+          <span>Adminler</span>
+        </div>
         <div class="nav-item" data-page="system-logs" id="nav-system-logs" style="display:none">
           <span class="nav-icon">📜</span>
           <span>Sistem Logları</span>
@@ -202,6 +206,9 @@
         <!-- Okullar (sadece süper admin) -->
         <section class="page-section" id="page-schools"></section>
 
+        <!-- Adminler (sadece admins.manage iznine sahip hesaplar) -->
+        <section class="page-section" id="page-admins"></section>
+
         <!-- Sistem Logları (sadece platform sahibi) -->
         <section class="page-section" id="page-system-logs"></section>
 
@@ -260,6 +267,7 @@
   <script src="js/export.js"></script>
   <script src="js/adminUsers.js"></script>
   <script src="js/schools.js"></script>
+  <script src="js/admins.js"></script>
   <script src="js/schoolView.js"></script>
   <script src="js/systemLogs.js"></script>
   <script src="js/demoRequests.js"></script>
