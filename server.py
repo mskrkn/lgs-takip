@@ -2312,6 +2312,27 @@ def api_superadmin_dashboard():
 
     total_students = db.execute("SELECT COUNT(*) AS c FROM students").fetchone()["c"]
 
+    # Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 1): KPI kartlarına
+    # "son 30 günde +N okul" gibi bir trend eklemek için.
+    trend_cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+    schools_added_30d = db.execute(
+        "SELECT COUNT(*) c FROM organizations WHERE created_at >= ?", (trend_cutoff,)
+    ).fetchone()["c"]
+
+    # Madde 1: KPI kartındaki toplam kullanıcı sayısının rol dağılımı
+    # (tooltip/modal için) - 4 kategori: öğrenci/öğretmen/okul yöneticisi
+    # (kendi okuluna atanmış admin)/platform admin (organization_id NULL).
+    role_breakdown = {
+        "students": total_students,
+        "teachers": db.execute("SELECT COUNT(*) c FROM users WHERE role='teacher'").fetchone()["c"],
+        "schoolAdmins": db.execute(
+            "SELECT COUNT(*) c FROM users WHERE role IN ('admin','super_admin') AND organization_id IS NOT NULL"
+        ).fetchone()["c"],
+        "platformAdmins": db.execute(
+            "SELECT COUNT(*) c FROM users WHERE role IN ('admin','super_admin') AND organization_id IS NULL"
+        ).fetchone()["c"],
+    }
+
     schools_near_limit = db.execute(
         "SELECT COUNT(*) AS c FROM organizations o WHERE o.user_limit IS NOT NULL "
         "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id = o.id) >= o.user_limit * 0.8"
@@ -2363,7 +2384,9 @@ def api_superadmin_dashboard():
 
     return jsonify({
         "schoolCounts": school_counts,
+        "schoolsAdded30d": schools_added_30d,
         "totalStudents": total_students,
+        "userRoleBreakdown": role_breakdown,
         "schoolsNearLimit": schools_near_limit,
         "examsToday": exams_today,
         "examsThisWeek": exams_this_week,
@@ -2379,6 +2402,49 @@ def api_superadmin_dashboard():
             "organizationName": r["org_name"],
         } for r in activity_rows],
     })
+
+
+@app.route("/api/superadmin/growth-chart")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_growth_chart():
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 4): tek grafiğin
+    zaman aralığı ve metriği sorgu parametreleriyle değişir - ayrı bir uç,
+    çünkü filtre her değiştiğinde ana dashboard'un tamamını yeniden çekmeye
+    gerek yok. 1y'de günlük 365 nokta yerine aya göre gruplanır (okunabilirlik)."""
+    db = get_db()
+    range_key = request.args.get("range", "30d")
+    metric = request.args.get("metric", "exams")
+    range_days = {"7d": 7, "30d": 30, "3m": 90, "1y": 365}.get(range_key, 30)
+    by_month = range_key == "1y"
+    now = datetime.now()
+    start = (now - timedelta(days=range_days - 1)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    date_expr = "substr(date, 1, 7)" if by_month else "date"
+
+    if metric == "exams":
+        rows = db.execute(
+            f"SELECT {date_expr} AS bucket, COUNT(*) AS c FROM exams "
+            "WHERE date >= ? AND date <= ? GROUP BY bucket ORDER BY bucket",
+            (start, end),
+        ).fetchall()
+    elif metric == "activeStudents":
+        rows = db.execute(
+            f"SELECT {date_expr.replace('date', 'e.date')} AS bucket, COUNT(DISTINCT r.student_id) AS c "
+            "FROM results r JOIN exams e ON e.id = r.exam_id "
+            "WHERE e.date >= ? AND e.date <= ? GROUP BY bucket ORDER BY bucket",
+            (start, end),
+        ).fetchall()
+    elif metric == "newUsers":
+        date_expr_created = "substr(created_at, 1, 7)" if by_month else "substr(created_at, 1, 10)"
+        rows = db.execute(
+            f"SELECT {date_expr_created} AS bucket, COUNT(*) AS c FROM users "
+            "WHERE created_at >= ? AND created_at <= ? GROUP BY bucket ORDER BY bucket",
+            (start, end + "T23:59:59"),
+        ).fetchall()
+    else:
+        return jsonify({"error": "Geçersiz metrik."}), 400
+
+    return jsonify([{"date": r["bucket"], "value": r["c"]} for r in rows])
 
 
 @app.route("/api/superadmin/attention-items")
