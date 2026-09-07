@@ -464,7 +464,17 @@
             <label class="form-label">Açıklama (opsiyonel)</label>
             <textarea id="assignment-description" class="form-control" rows="2"></textarea>
           </div>
+
           <div class="mt-2">
+            <label class="form-label">Ödev Modu</label>
+            <select id="assignment-mode" class="form-control" onchange="onAssignmentModeChange()">
+              <option value="manual">📝 Manuel — soruları kendim seçerim</option>
+              <option value="auto">🎯 Otomatik — filtre veririm, sistem seçer (tüm sınıfa aynı sorular)</option>
+              <option value="smart">🧠 Akıllı — her öğrenciye kendi zayıf becerisine göre farklı sorular</option>
+            </select>
+          </div>
+
+          <div id="assignment-manual-fields" class="mt-2">
             <label class="form-label">Sorular (onaylanmış soru bankasından)</label>
             <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:8px" onclick="suggestAssignmentQuestions()">🤖 AI Önerisi</button>
             <div id="assignment-question-picker" style="max-height:260px;overflow-y:auto;border:1px solid var(--bg-glass-border);border-radius:8px;padding:8px">
@@ -472,12 +482,82 @@
             </div>
             <div id="assignment-ai-note" class="text-muted" style="margin-top:6px;font-size:12px"></div>
           </div>
+
+          <div id="assignment-auto-fields" class="mt-2" style="display:none">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:14px">
+              <div>
+                <label class="form-label">Ders</label>
+                <select id="assignment-auto-subject" class="form-control" onchange="onAssignmentAutoSubjectChange()"></select>
+              </div>
+              <div>
+                <label class="form-label">Konu (opsiyonel)</label>
+                <select id="assignment-auto-topic" class="form-control"><option value="">Fark etmez</option></select>
+              </div>
+              <div>
+                <label class="form-label">Zorluk (opsiyonel)</label>
+                <select id="assignment-auto-difficulty" class="form-control">
+                  <option value="">Fark etmez</option>
+                  <option value="kolay">Kolay</option><option value="orta">Orta</option><option value="zor">Zor</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Soru Sayısı</label>
+                <input type="number" id="assignment-auto-count" class="form-control" min="1" value="10">
+              </div>
+            </div>
+          </div>
+
+          <div id="assignment-smart-fields" class="mt-2" style="display:none">
+            <p class="text-muted" style="font-size:12px">Her öğrenciye, o dersteki (varsa) en zayıf becerisine göre KİŞİYE ÖZEL, farklı sorular verilir - henüz hiç veri olmayan öğrenciler için rastgele sorularla başlanır.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:14px">
+              <div>
+                <label class="form-label">Ders</label>
+                <select id="assignment-smart-subject" class="form-control"></select>
+              </div>
+              <div>
+                <label class="form-label">Soru Sayısı (öğrenci başına)</label>
+                <input type="number" id="assignment-smart-count" class="form-control" min="1" value="5">
+              </div>
+            </div>
+          </div>
+
           <button class="btn btn-primary mt-2" onclick="createAssignment()">Ödevi Oluştur</button>
           <div id="assignment-create-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
         </div>
         <div id="assignment-results-card"></div>
       `;
       loadQuestionPicker();
+    }
+
+    function onAssignmentModeChange() {
+      const mode = document.getElementById('assignment-mode').value;
+      document.getElementById('assignment-manual-fields').style.display = mode === 'manual' ? '' : 'none';
+      document.getElementById('assignment-auto-fields').style.display = mode === 'auto' ? '' : 'none';
+      document.getElementById('assignment-smart-fields').style.display = mode === 'smart' ? '' : 'none';
+      if (mode === 'auto' || mode === 'smart') populateAssignmentSubjectSelects();
+    }
+
+    // Ders (ve otomatik modda konu) seçeneklerini onaylanmış soru havuzu
+    // önbelleğinden (approvedQuestionsCache) türetir - ayrı bir uç GEREKMEZ.
+    async function populateAssignmentSubjectSelects() {
+      if (!approvedQuestionsCache) {
+        approvedQuestionsCache = await fetch('/api/teacher/question-bank/approved').then(r => r.json());
+      }
+      const subjects = [...new Map(approvedQuestionsCache.filter(q => q.subjectId).map(q => [q.subjectId, q.subjectName])).entries()];
+      const optionsHtml = subjects.map(([id, name]) => `<option value="${id}">${escapeHtml(name)}</option>`).join('');
+      const autoSel = document.getElementById('assignment-auto-subject');
+      const smartSel = document.getElementById('assignment-smart-subject');
+      if (autoSel && !autoSel.options.length) { autoSel.innerHTML = optionsHtml; onAssignmentAutoSubjectChange(); }
+      if (smartSel && !smartSel.options.length) smartSel.innerHTML = optionsHtml;
+    }
+
+    function onAssignmentAutoSubjectChange() {
+      const subjectId = Number(document.getElementById('assignment-auto-subject').value);
+      const topics = [...new Map(
+        (approvedQuestionsCache || []).filter(q => q.subjectId === subjectId && q.topicId).map(q => [q.topicId, q.topicName])
+      ).entries()];
+      document.getElementById('assignment-auto-topic').innerHTML =
+        '<option value="">Fark etmez</option>' + topics.map(([id, name]) => `<option value="${id}">${escapeHtml(name)}</option>`).join('');
     }
 
     function renderAssignmentsTable(list) {
@@ -487,9 +567,10 @@
           <th style="padding:8px">Başlık</th><th style="padding:8px">Sınıf</th>
           <th style="padding:8px">Tamamlanma</th><th style="padding:8px">Durum</th><th style="padding:8px"></th>
         </tr>`;
+      const modeLabels = { manual: '📝 Manuel', auto: '🎯 Otomatik', smart: '🧠 Akıllı' };
       list.forEach(a => {
         html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
-          <td style="padding:8px">${escapeHtml(a.title)}</td>
+          <td style="padding:8px">${escapeHtml(a.title)}<br><span style="color:var(--text-muted);font-size:11px">${modeLabels[a.assignmentType] || '📝 Manuel'}</span></td>
           <td style="padding:8px">${escapeHtml(a.className)}</td>
           <td style="padding:8px">${a.submittedStudents}/${a.totalStudents}</td>
           <td style="padding:8px">${a.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● İptal</span>'}</td>
@@ -549,18 +630,35 @@
       const title = document.getElementById('assignment-title').value.trim();
       const description = document.getElementById('assignment-description').value.trim();
       const dueDate = document.getElementById('assignment-due').value;
-      const questionIds = [...document.querySelectorAll('.assignment-question-checkbox:checked')].map(el => Number(el.value));
+      const mode = document.getElementById('assignment-mode').value;
       const statusEl = document.getElementById('assignment-create-status');
 
       if (!className) { statusEl.textContent = '❌ Sınıf seçin.'; return; }
       if (!title) { statusEl.textContent = '❌ Başlık girin.'; return; }
-      if (!questionIds.length) { statusEl.textContent = '❌ En az bir soru seçin.'; return; }
+
+      const payload = { className, title, description, dueDate, mode };
+      if (mode === 'manual') {
+        payload.questionIds = [...document.querySelectorAll('.assignment-question-checkbox:checked')].map(el => Number(el.value));
+        if (!payload.questionIds.length) { statusEl.textContent = '❌ En az bir soru seçin.'; return; }
+      } else if (mode === 'auto') {
+        payload.subjectId = Number(document.getElementById('assignment-auto-subject').value) || null;
+        payload.topicId = Number(document.getElementById('assignment-auto-topic').value) || null;
+        payload.difficulty = document.getElementById('assignment-auto-difficulty').value || null;
+        payload.questionCount = Number(document.getElementById('assignment-auto-count').value) || 0;
+        if (!payload.subjectId) { statusEl.textContent = '❌ Ders seçin.'; return; }
+        if (!payload.questionCount) { statusEl.textContent = '❌ Soru sayısı girin.'; return; }
+      } else { // smart
+        payload.subjectId = Number(document.getElementById('assignment-smart-subject').value) || null;
+        payload.questionCount = Number(document.getElementById('assignment-smart-count').value) || 0;
+        if (!payload.subjectId) { statusEl.textContent = '❌ Ders seçin.'; return; }
+        if (!payload.questionCount) { statusEl.textContent = '❌ Soru sayısı girin.'; return; }
+      }
 
       statusEl.textContent = 'Oluşturuluyor...';
       try {
         const res = await fetch('/api/teacher/assignments', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ className, title, description, dueDate, questionIds }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Ödev oluşturulamadı.');

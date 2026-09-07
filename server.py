@@ -1039,6 +1039,21 @@ def _create_question_bank_tables(conn):
         conn.execute("ALTER TABLE audit_logs ADD COLUMN metadata TEXT")
         conn.commit()
 
+    # admin-panel-soru-havuzu-2 bolum 10.7 (ogretmen odev sistemi: manuel/
+    # otomatik/akilli). assignment_type: eski satirlar NULL kalir (mevcut
+    # davranis zaten "manuel" ile ozdes, geriye donuk kod NULL/'manual'
+    # ayrimini yapmiyor). assignment_questions.student_id: NULL = paylasimli
+    # (manuel/otomatik - tum sinif AYNI sorulari gorur), dolu = akilli modda
+    # SADECE o ogrenciye ozel soru (bkz. api_teacher_create_assignment).
+    assignments_cols = [r[1] for r in conn.execute("PRAGMA table_info(assignments)").fetchall()]
+    if assignments_cols and "assignment_type" not in assignments_cols:
+        conn.execute("ALTER TABLE assignments ADD COLUMN assignment_type TEXT NOT NULL DEFAULT 'manual'")
+        conn.commit()
+    aq_cols = [r[1] for r in conn.execute("PRAGMA table_info(assignment_questions)").fetchall()]
+    if aq_cols and "student_id" not in aq_cols:
+        conn.execute("ALTER TABLE assignment_questions ADD COLUMN student_id INTEGER REFERENCES students(id) ON DELETE CASCADE")
+        conn.commit()
+
 
 def _migrate_question_bank_lifecycle(conn):
     """question_bank.status'un CHECK kisitina 'published'/'archived' ekler
@@ -3995,9 +4010,10 @@ def api_teacher_approved_questions():
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
-        "SELECT qb.id, qb.display_code, qb.question_text, qb.image_path, "
-        "s.name as subject_name "
+        "SELECT qb.id, qb.display_code, qb.question_text, qb.image_path, qb.subject_id, "
+        "qb.topic_id, qb.difficulty, s.name as subject_name, t.name as topic_name "
         "FROM question_bank qb LEFT JOIN subjects s ON s.id = qb.subject_id "
+        "LEFT JOIN topics t ON t.id = qb.topic_id "
         "WHERE qb.organization_id = ? AND qb.status = 'published' "
         "ORDER BY s.name, qb.display_code",
         (org_id,),
@@ -4005,7 +4021,8 @@ def api_teacher_approved_questions():
     return jsonify([{
         "id": r["id"], "displayCode": r["display_code"],
         "questionText": r["question_text"], "hasImage": bool(r["image_path"]),
-        "subjectName": r["subject_name"],
+        "subjectId": r["subject_id"], "subjectName": r["subject_name"],
+        "topicId": r["topic_id"], "topicName": r["topic_name"], "difficulty": r["difficulty"],
     } for r in rows])
 
 
@@ -4020,51 +4037,155 @@ def _teacher_can_use_class(class_name):
     return allowed is None or class_name in allowed
 
 
+def _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, count, exclude_ids=None):
+    """admin-panel-soru-havuzu-2 bölüm 10.7 (Otomatik ödev): öğretmenin
+    verdiği filtrelere uyan `count` kadar yayınlanmış soru seçer. Yeterli
+    soru yoksa BULUNAN kadarıyla döner (çağıran taraf sayıyı kontrol eder) -
+    sessizce eksik bir ödev oluşturmak yerine."""
+    exclude_ids = exclude_ids or set()
+    query = "SELECT id FROM question_bank WHERE organization_id=? AND status='published' "
+    params = [org_id]
+    if subject_id:
+        query += "AND subject_id=? "
+        params.append(subject_id)
+    if topic_id:
+        query += "AND topic_id=? "
+        params.append(topic_id)
+    if difficulty:
+        query += "AND difficulty=? "
+        params.append(difficulty)
+    if exclude_ids:
+        query += f"AND id NOT IN ({','.join('?' * len(exclude_ids))}) "
+        params += list(exclude_ids)
+    query += "ORDER BY RANDOM() LIMIT ?"
+    params.append(count)
+    return [r["id"] for r in db.execute(query, params).fetchall()]
+
+
+def _smart_select_questions_for_student(db, org_id, student_id, subject_id, grade_level, count):
+    """admin-panel-soru-havuzu-2 bölüm 10.7 (Akıllı ödev): bu öğrencinin
+    (varsa) en zayıf becerilerinden başlayarak, her biri için bölüm 10.8'in
+    aynı gevşeme algoritmasıyla bir soru seçer - mastery verisi olmayan bir
+    öğrenci için (henüz hiç çözüm geçmişi yok) rastgele/filtre gevşetilmiş
+    seçime düşer (bkz. _auto_select_questions çağrısı en sonda)."""
+    weak_skills = db.execute(
+        "SELECT ss.skill_id FROM student_skills ss "
+        "JOIN question_skills qs ON qs.skill_id = ss.skill_id "
+        "JOIN question_bank qb ON qb.id = qs.question_id AND qb.subject_id = ? AND qb.organization_id = ? "
+        "WHERE ss.student_id = ? GROUP BY ss.skill_id ORDER BY ss.mastery_percentage ASC LIMIT ?",
+        (subject_id, org_id, student_id, count),
+    ).fetchall()
+
+    selected = []
+    seen = set()
+    for row in weak_skills:
+        qid = _find_similar_question(
+            db, org_id, subject_id, grade_level, None, row["skill_id"], "orta", exclude_ids=seen,
+        )
+        if qid:
+            selected.append(qid)
+            seen.add(qid)
+    if len(selected) < count:
+        filler = _auto_select_questions(
+            db, org_id, subject_id, None, None, count - len(selected), exclude_ids=seen,
+        )
+        selected.extend(filler)
+    return selected
+
+
 @app.route("/api/teacher/assignments", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="assignments.create")
 def api_teacher_create_assignment():
+    """Üç mod (bölüm 10.7, 'hepsi aynı anda' geliştirilir):
+    - manual: öğretmen questionIds ile soruları tek tek seçer (mevcut/
+      değişmemiş davranış) - tüm sınıf AYNI soruları görür (student_id NULL).
+    - auto: öğretmen filtre (subjectId/topicId/difficulty) + questionCount
+      verir, sistem _auto_select_questions ile seçer - yine sınıf geneli
+      PAYLAŞIMLI tek bir set (student_id NULL).
+    - smart: öğretmen sadece subjectId + questionCount verir, sistem HER
+      öğrenci için AYRI, kişiselleştirilmiş bir set üretir (assignment_
+      questions.student_id = o öğrenci) - bkz. _smart_select_questions_for_student."""
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
 
     data = request.get_json(silent=True) or {}
+    mode = (data.get("mode") or "manual").strip().lower()
+    if mode not in ("manual", "auto", "smart"):
+        return jsonify({"error": "Geçersiz ödev modu."}), 400
     class_name = (data.get("className") or "").strip()
     title = (data.get("title") or "").strip()
     description = (data.get("description") or "").strip() or None
     due_date = (data.get("dueDate") or "").strip() or None
-    question_ids = data.get("questionIds") or []
 
     if not class_name or not title:
         return jsonify({"error": "Sınıf ve başlık gerekli."}), 400
-    if not isinstance(question_ids, list) or not question_ids:
-        return jsonify({"error": "En az bir soru seçilmeli."}), 400
     if not _teacher_can_use_class(class_name):
         return jsonify({"error": "Bu sınıfa ödev verme yetkiniz yok."}), 403
 
-    # Sadece YAYINLANMIS (published) sorular odeve eklenebilir - "approved"
-    # tek basina yeterli degil, bkz. questions.publish/_migrate_question_bank_lifecycle.
-    placeholders = ",".join("?" * len(question_ids))
-    valid_rows = db.execute(
-        f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'published'",
-        (*question_ids, org_id),
-    ).fetchall()
-    valid_ids = {r["id"] for r in valid_rows}
-    if len(valid_ids) != len(set(question_ids)):
-        return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz yayınlanmamış."}), 400
+    # (student_id, question_id) çiftleri - manual/auto'da tüm liste tek bir
+    # None student_id (paylaşımlı) taşır, smart'ta öğrenci başına ayrı liste.
+    assignments_to_insert = []  # [(student_id_or_None, [question_id, ...])]
+
+    if mode == "manual":
+        question_ids = data.get("questionIds") or []
+        if not isinstance(question_ids, list) or not question_ids:
+            return jsonify({"error": "En az bir soru seçilmeli."}), 400
+        placeholders = ",".join("?" * len(question_ids))
+        valid_rows = db.execute(
+            f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'published'",
+            (*question_ids, org_id),
+        ).fetchall()
+        if len({r["id"] for r in valid_rows}) != len(set(question_ids)):
+            return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz yayınlanmamış."}), 400
+        assignments_to_insert.append((None, question_ids))
+
+    elif mode == "auto":
+        subject_id = data.get("subjectId")
+        topic_id = data.get("topicId")
+        difficulty = (data.get("difficulty") or "").strip() or None
+        count = data.get("questionCount")
+        if not subject_id or not count or int(count) < 1:
+            return jsonify({"error": "Ders ve soru sayısı gerekli."}), 400
+        question_ids = _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, int(count))
+        if not question_ids:
+            return jsonify({"error": "Bu filtrelerle eşleşen yayınlanmış soru bulunamadı."}), 404
+        assignments_to_insert.append((None, question_ids))
+
+    else:  # smart
+        subject_id = data.get("subjectId")
+        count = data.get("questionCount")
+        if not subject_id or not count or int(count) < 1:
+            return jsonify({"error": "Ders ve soru sayısı gerekli."}), 400
+        students = db.execute(
+            "SELECT id, class_name FROM students WHERE organization_id=? AND class_name=?",
+            (org_id, class_name),
+        ).fetchall()
+        if not students:
+            return jsonify({"error": "Bu sınıfta öğrenci bulunamadı."}), 404
+        for s in students:
+            grade_level = (s["class_name"] or "").split("/")[0].strip()
+            qids = _smart_select_questions_for_student(db, org_id, s["id"], subject_id, grade_level, int(count))
+            if qids:
+                assignments_to_insert.append((s["id"], qids))
+        if not assignments_to_insert:
+            return jsonify({"error": "Bu ders için hiçbir öğrenciye uygun soru bulunamadı."}), 404
 
     now = datetime.now().isoformat()
     cur = db.execute(
         "INSERT INTO assignments (organization_id, teacher_id, class_name, title, description, due_date, "
-        "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (org_id, session["user_id"], class_name, title, description, due_date, "active", now, now),
+        "status, assignment_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (org_id, session["user_id"], class_name, title, description, due_date, "active", mode, now, now),
     )
     assignment_id = cur.lastrowid
-    for i, qid in enumerate(question_ids):
-        db.execute(
-            "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index) VALUES (?,?,?)",
-            (assignment_id, qid, i),
-        )
+    for student_id, question_ids in assignments_to_insert:
+        for i, qid in enumerate(question_ids):
+            db.execute(
+                "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index, student_id) "
+                "VALUES (?,?,?,?)",
+                (assignment_id, qid, i, student_id),
+            )
     db.commit()
     log_audit(db, "ASSIGNMENT_CREATED", resource_type="assignment", resource_id=assignment_id)
     return jsonify({"ok": True, "id": assignment_id})
@@ -4092,9 +4213,20 @@ def api_teacher_list_assignments():
             "SELECT COUNT(*) c FROM students WHERE organization_id = ? AND class_name = ?",
             (org_id, a["class_name"]),
         ).fetchone()["c"]
-        total_questions = db.execute(
-            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
-        ).fetchone()["c"]
+        # Akilli modda her ogrencinin soru sayisi farkli olabilir (bkz.
+        # _smart_select_questions_for_student) - liste gorunumu icin "ogrenci
+        # basina ortalama" gosterilir, manuel/otomatikte zaten tek bir
+        # paylasimli (student_id IS NULL) set oldugu icin bu ortalama = tam sayi.
+        if a["assignment_type"] == "smart":
+            avg_row = db.execute(
+                "SELECT CAST(COUNT(*) AS REAL) / COUNT(DISTINCT student_id) c FROM assignment_questions "
+                "WHERE assignment_id=? AND student_id IS NOT NULL", (a["id"],),
+            ).fetchone()
+            total_questions = round(avg_row["c"], 1) if avg_row["c"] else 0
+        else:
+            total_questions = db.execute(
+                "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+            ).fetchone()["c"]
         submitted_students = db.execute(
             "SELECT COUNT(DISTINCT student_id) c FROM assignment_submissions WHERE assignment_id = ?", (a["id"],)
         ).fetchone()["c"]
@@ -4103,6 +4235,7 @@ def api_teacher_list_assignments():
             "description": a["description"], "dueDate": a["due_date"], "status": a["status"],
             "createdAt": a["created_at"], "totalStudents": total_students,
             "totalQuestions": total_questions, "submittedStudents": submitted_students,
+            "assignmentType": a["assignment_type"],
         })
     return jsonify(out)
 
@@ -4122,12 +4255,22 @@ def api_teacher_assignment_results(assignment_id):
     if session.get("role") == "teacher" and assignment["teacher_id"] != session["user_id"]:
         return jsonify({"error": "Bu ödeve erişim yetkiniz yok."}), 403
 
-    questions = db.execute(
-        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.correct_answer "
+    # student_id IS NULL: paylasimli sorular (manuel/otomatik - HERKESE ait).
+    # dolu: akilli moddaki kisisellestirilmis sorular (SADECE o ogrenciye ait) -
+    # bkz. api_teacher_create_assignment. Asagida her ogrenci icin kendi
+    # gecerli soru kumesi (paylasimli + varsa kendine ozel) ayri hesaplanir.
+    all_questions = db.execute(
+        "SELECT aq.student_id, aq.question_bank_id, qb.display_code, qb.question_text, qb.correct_answer "
         "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
         "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
         (assignment_id,),
     ).fetchall()
+    shared_questions = [q for q in all_questions if q["student_id"] is None]
+    personal_questions = {}
+    for q in all_questions:
+        if q["student_id"] is not None:
+            personal_questions.setdefault(q["student_id"], []).append(q)
+
     students = db.execute(
         "SELECT id, first_name, last_name, school_number FROM students "
         "WHERE organization_id = ? AND class_name = ? ORDER BY last_name, first_name",
@@ -4141,6 +4284,7 @@ def api_teacher_assignment_results(assignment_id):
 
     student_results = []
     for s in students:
+        questions = shared_questions + personal_questions.get(s["id"], [])
         answers = []
         correct_count = 0
         submitted = False
@@ -4214,7 +4358,8 @@ def api_student_list_assignments():
     out = []
     for a in rows:
         total_questions = db.execute(
-            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ?", (a["id"],)
+            "SELECT COUNT(*) c FROM assignment_questions WHERE assignment_id = ? AND (student_id IS NULL OR student_id = ?)",
+            (a["id"], student_id),
         ).fetchone()["c"]
         answered = db.execute(
             "SELECT COUNT(*) c FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?",
@@ -4243,11 +4388,14 @@ def api_student_assignment_detail(assignment_id):
     if not assignment:
         return jsonify({"error": "Ödev bulunamadı."}), 404
 
+    # student_id IS NULL: paylasimli (manuel/otomatik) - herkes ayni soruyu
+    # gorur. dolu: akilli moddaki KISISELLESTIRILMIS set - SADECE o ogrenciye
+    # ait olanlar (bkz. api_teacher_create_assignment mode='smart').
     questions = db.execute(
         "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.image_path, qb.question_type "
         "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
-        "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
-        (assignment_id,),
+        "WHERE aq.assignment_id = ? AND (aq.student_id IS NULL OR aq.student_id = ?) ORDER BY aq.order_index",
+        (assignment_id, student_id),
     ).fetchall()
     my_submissions = {
         r["question_bank_id"]: dict(r) for r in db.execute(
@@ -4658,9 +4806,15 @@ def api_student_submit_assignment(assignment_id):
     if not isinstance(answers, list) or not answers:
         return jsonify({"error": "En az bir cevap gerekli."}), 400
 
+    # Akilli modda (bkz. api_teacher_create_assignment) her ogrencinin
+    # KENDINE ozel bir soru seti vardir - student_id filtresi olmadan bu
+    # ogrenci, ayni odevdeki BASKA bir ogrenciye ozel bir soruyu da
+    # cevaplayabilir/kaydedebilirdi.
     valid_question_ids = {
         r["question_bank_id"] for r in db.execute(
-            "SELECT question_bank_id FROM assignment_questions WHERE assignment_id = ?", (assignment_id,)
+            "SELECT question_bank_id FROM assignment_questions WHERE assignment_id = ? "
+            "AND (student_id IS NULL OR student_id = ?)",
+            (assignment_id, student_id),
         ).fetchall()
     }
     now = datetime.now().isoformat()
