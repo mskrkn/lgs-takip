@@ -4165,6 +4165,44 @@ def api_student_submit_assignment(assignment_id):
     return jsonify({"ok": True, "saved": saved})
 
 
+@app.route("/api/student/question-image/<int:question_id>")
+@login_required(role="student", permission="assignments.view")
+def api_student_question_image(question_id):
+    """Bir ödev sorusunun kırpılmış görselini öğrenciye sunar. Admin'in
+    /api/admin/question-bank/image ucunun ogrenci-guvenli esdegeri - o uc
+    role='admin' ister ve bu yuzden ogrenciler icin her zaman 403 dondururdu
+    (bkz. js/student/ogrenci.js'teki "(Görsel soru - öğretmeninize danışın)"
+    yer tutucusu - gorsel sorular ODEV SISTEMININ ANA icerik turu oldugu icin
+    bu ogrenciler icin odevleri fiilen kullanilmaz kiliyordu).
+
+    IDOR korumasi: ID tahmin ederek BASKA bir sorunun (ya da baska bir
+    okulun/sinifin) gorselini gormeyi engellemek icin, sorunun GERCEKTEN bu
+    ogrencinin kendi okulundaki, kendi sinifini hedefleyen bir odevin
+    parcasi olmasi sart - assignment_questions -> assignments uzerinden
+    dogrulanir (bkz. api_student_assignment_detail'deki ayni desen)."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    row = db.execute(
+        "SELECT qb.image_path FROM question_bank qb "
+        "JOIN assignment_questions aq ON aq.question_bank_id = qb.id "
+        "JOIN assignments a ON a.id = aq.assignment_id "
+        "WHERE qb.id = ? AND a.organization_id = ? AND a.class_name = ? LIMIT 1",
+        (question_id, student["organization_id"], student["class_name"]),
+    ).fetchone()
+    if not row or not row["image_path"]:
+        return jsonify({"error": "Bulunamadı."}), 404
+    filename = os.path.basename(row["image_path"])
+    resp = send_from_directory(QUESTION_IMAGES_DIR, filename)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.route("/api/parent/assignments")
 @login_required(role="parent", permission="assignments.view")
 def api_parent_list_assignments():
