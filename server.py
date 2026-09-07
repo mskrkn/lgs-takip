@@ -2490,6 +2490,72 @@ def api_superadmin_school_rankings():
     return jsonify({"topActive": top_active, "declining": declining[:5]})
 
 
+@app.route("/api/superadmin/pusi-insights")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_pusi_insights():
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 5): 'Pusi'nin
+    Günlük Analizi' - KURAL TABANLI (gerçek bir LLM çağrısı YOK, bkz.
+    server.py'deki mevcut AI-STUB yorumu, ai.analyze/generate_* ile aynı
+    yaklaşım). Faz A-D'nin ürettiği verilerin üzerine ek bir sorgu katmanı
+    değil, çoğunlukla onların BASİT bir yeniden özetlemesi."""
+    db = get_db()
+    now = datetime.now()
+    this_week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+    last_week_start = (now - timedelta(days=13)).strftime("%Y-%m-%d")
+    last_week_end = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    insights = []
+
+    exams_this_week = db.execute(
+        "SELECT COUNT(*) c FROM exams WHERE date >= ?", (this_week_start,)
+    ).fetchone()["c"]
+    exams_last_week = db.execute(
+        "SELECT COUNT(*) c FROM exams WHERE date >= ? AND date < ?", (last_week_start, last_week_end)
+    ).fetchone()["c"]
+    if exams_last_week > 0:
+        change_pct = round((exams_this_week - exams_last_week) / exams_last_week * 100)
+        if change_pct > 0:
+            insights.append(f"📈 Bu hafta platform kullanımı geçen haftaya göre %{change_pct} arttı.")
+        elif change_pct < 0:
+            insights.append(f"📉 Bu hafta platform kullanımı geçen haftaya göre %{abs(change_pct)} azaldı.")
+
+    declining_count = db.execute(
+        "SELECT COUNT(*) c FROM ("
+        "  SELECT e.organization_id, "
+        "  SUM(CASE WHEN e.date >= ? THEN 1 ELSE 0 END) AS cur_c, "
+        "  SUM(CASE WHEN e.date >= ? AND e.date < ? THEN 1 ELSE 0 END) AS prev_c "
+        "  FROM exams e GROUP BY e.organization_id"
+        ") t WHERE t.prev_c >= 3 AND t.cur_c < t.prev_c * 0.7",
+        (this_week_start, last_week_start, last_week_end),
+    ).fetchone()["c"]
+    if declining_count > 0:
+        insights.append(f"⚠️ {declining_count} okulda deneme girişleri geçen haftaya göre ciddi şekilde azaldı.")
+
+    new_school_cutoff = (now - timedelta(days=30)).isoformat()
+    new_schools = db.execute(
+        "SELECT COUNT(*) c FROM organizations WHERE created_at >= ?", (new_school_cutoff,)
+    ).fetchone()["c"]
+    new_schools_with_exam = db.execute(
+        "SELECT COUNT(DISTINCT o.id) c FROM organizations o JOIN exams e ON e.organization_id = o.id "
+        "WHERE o.created_at >= ?", (new_school_cutoff,)
+    ).fetchone()["c"]
+    if new_schools > 0:
+        completion_pct = round(new_schools_with_exam / new_schools * 100)
+        insights.append(f"🟢 Son 30 günde kayıt olan okulların %{completion_pct}'i ilk denemesini tamamladı.")
+
+    near_limit_count = db.execute(
+        "SELECT COUNT(*) c FROM organizations o WHERE o.user_limit IS NOT NULL "
+        "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id=o.id) >= o.user_limit * 0.9 "
+        "AND o.status != 'inactive'"
+    ).fetchone()["c"]
+    if near_limit_count > 0:
+        insights.append(f"💡 {near_limit_count} okulun kullanıcı limiti dolmak üzere - paket yükseltme önerisi yapılabilir.")
+
+    if not insights:
+        insights.append("✅ Platform genelinde dikkat çeken bir değişiklik yok, her şey yolunda görünüyor.")
+
+    return jsonify(insights)
+
+
 @app.route("/api/superadmin/attention-items")
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_attention_items():

@@ -54,19 +54,21 @@ const Schools = {
 
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
 
-    let schools = [], dashboard = null, attentionItems = [], rankings = null;
+    let schools = [], dashboard = null, attentionItems = [], rankings = null, pusiInsights = [];
     try {
-      const [schoolsRes, dashRes, attnRes, rankRes] = await Promise.all([
+      const [schoolsRes, dashRes, attnRes, rankRes, pusiRes] = await Promise.all([
         fetch('/api/superadmin/organizations'),
         fetch('/api/superadmin/dashboard'),
         fetch('/api/superadmin/attention-items'),
         fetch('/api/superadmin/school-rankings'),
+        fetch('/api/superadmin/pusi-insights'),
       ]);
       if (!schoolsRes.ok) throw new Error((await schoolsRes.json()).error || 'Okullar yüklenemedi.');
       schools = await schoolsRes.json();
       dashboard = dashRes.ok ? await dashRes.json() : null;
       attentionItems = attnRes.ok ? await attnRes.json() : [];
       rankings = rankRes.ok ? await rankRes.json() : null;
+      pusiInsights = pusiRes.ok ? await pusiRes.json() : [];
     } catch (err) {
       container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
       return;
@@ -75,6 +77,7 @@ const Schools = {
 
     container.innerHTML = `
       ${this._renderAttentionPanel(attentionItems)}
+      ${this._renderPusiPanel(pusiInsights)}
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
       ${rankings ? this._renderRankings(rankings) : ''}
 
@@ -171,6 +174,22 @@ const Schools = {
               <span style="color:var(--text-muted);font-size:12px">→</span>
             </div>
           `).join('')}
+        </div>
+      </div>
+    `;
+  },
+
+  // Madde 5: "Pusi'nin Günlük Analizi" - kural tabanlı (LLM değil, mevcut
+  // AI-stub'larla aynı yaklaşım), Faz A-D verisinin basit bir özeti.
+  _renderPusiPanel(insights) {
+    if (!insights || !insights.length) return '';
+    return `
+      <div class="card mt-2" style="border:1px solid rgba(139,92,246,0.3);background:rgba(139,92,246,0.04)">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">🧭</span> Pusi'nin Günlük Analizi</h3>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${insights.map(text => `<p style="margin:0;font-size:13px">${_schoolsEscapeHtml(text)}</p>`).join('')}
         </div>
       </div>
     `;
