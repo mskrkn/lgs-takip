@@ -223,6 +223,8 @@ def _migrate_users_table(conn):
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
     if "phone" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+    if "last_login" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT")
     if "subject" not in cols:
         # Ogretmenin branşı (admin-panel-prompt.md bölüm 6 filtreleri icin) -
         # diger roller icin anlamsiz, NULL kalir.
@@ -2083,6 +2085,12 @@ def api_login():
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), user["id"]))
         db.commit()
 
+    # Komuta Merkezi (Ana Sayfa Geliştirme Önerileri) faz A: "son giriş"
+    # okul sağlığı skorunun ve "30 gündür giriş yok" uyarısının temel girdisi -
+    # her başarılı girişte güncellenir.
+    db.execute("UPDATE users SET last_login = ? WHERE id = ?", (datetime.now().isoformat(), user["id"]))
+    db.commit()
+
     session.clear()
     session["user_id"] = user["id"]
     session["role"] = user["role"]
@@ -2207,6 +2215,76 @@ def _external_base_url():
     return f"{scheme}://{request.host}"
 
 
+def _compute_school_health(db, org_id):
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri, madde 3/6/7) - bir
+    okulun platformu ne kadar aktif/verimli kullandığını 0-100 arası tek bir
+    skora indirger. Ağırlıklar kasıtlı basit/açıklanabilir (uydurma bir "AI
+    skoru" değil):
+      - Son giriş yakınlığı (30p): 7 gün içinde=30, 30 gün içinde=15, sonrası/hiç=0
+      - Deneme yükleme sıklığı (25p): son 30 günde >=5 deneme=25, >=1=15, 0=0
+      - Aktif öğretmen oranı (20p): son 30 günde giriş yapan öğretmen / toplam öğretmen
+      - Aktif öğrenci oranı (15p): son 30 günde sonucu olan öğrenci / toplam öğrenci
+      - Veri kalitesi (10p): question_import_batches'te başarısız oran düşükse tam puan
+    Öğretmen/öğrenci/batch hiç yoksa o bileşen için tam puan verilir (henüz
+    veri üretme fırsatı olmamış yeni bir okulu cezalandırmamak için)."""
+    now = datetime.now()
+    d7 = (now - timedelta(days=7)).isoformat()
+    d30 = (now - timedelta(days=30)).isoformat()
+
+    last_login_row = db.execute(
+        "SELECT MAX(last_login) AS ml FROM users WHERE organization_id=?", (org_id,)
+    ).fetchone()
+    last_login = last_login_row["ml"] if last_login_row else None
+    if last_login and last_login >= d7:
+        login_score = 30
+    elif last_login and last_login >= d30:
+        login_score = 15
+    else:
+        login_score = 0
+
+    exam_count_30d = db.execute(
+        "SELECT COUNT(*) c FROM exams WHERE organization_id=? AND date >= ?", (org_id, d30[:10])
+    ).fetchone()["c"]
+    exam_score = 25 if exam_count_30d >= 5 else (15 if exam_count_30d >= 1 else 0)
+
+    teacher_total = db.execute(
+        "SELECT COUNT(*) c FROM users WHERE organization_id=? AND role='teacher'", (org_id,)
+    ).fetchone()["c"]
+    teacher_active = db.execute(
+        "SELECT COUNT(*) c FROM users WHERE organization_id=? AND role='teacher' AND last_login >= ?",
+        (org_id, d30),
+    ).fetchone()["c"]
+    teacher_score = 20 if teacher_total == 0 else round((teacher_active / teacher_total) * 20, 1)
+
+    student_total = db.execute(
+        "SELECT COUNT(*) c FROM students WHERE organization_id=?", (org_id,)
+    ).fetchone()["c"]
+    student_active = db.execute(
+        "SELECT COUNT(DISTINCT r.student_id) c FROM results r JOIN exams e ON e.id=r.exam_id "
+        "WHERE r.organization_id=? AND e.date >= ?", (org_id, d30[:10]),
+    ).fetchone()["c"]
+    student_score = 15 if student_total == 0 else round(min(student_active / student_total, 1.0) * 15, 1)
+
+    batch_total = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE organization_id=?", (org_id,)
+    ).fetchone()["c"]
+    batch_failed = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE organization_id=? AND status='failed'", (org_id,)
+    ).fetchone()["c"]
+    quality_score = 10 if batch_total == 0 else round((1 - batch_failed / batch_total) * 10, 1)
+
+    total = round(login_score + exam_score + teacher_score + student_score + quality_score, 1)
+    band = "healthy" if total >= 70 else ("warning" if total >= 40 else "risky")
+    return {
+        "score": total, "band": band,
+        "breakdown": {
+            "loginRecency": login_score, "examActivity": exam_score,
+            "teacherActivity": teacher_score, "studentActivity": student_score,
+            "dataQuality": quality_score,
+        },
+    }
+
+
 @app.route("/api/superadmin/dashboard")
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_dashboard():
@@ -2301,6 +2379,88 @@ def api_superadmin_dashboard():
             "organizationName": r["org_name"],
         } for r in activity_rows],
     })
+
+
+@app.route("/api/superadmin/attention-items")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_attention_items():
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri, madde 2): 'şu an
+    ilgilenmem gereken ne var' sorusunu tek bir listede cevaplar. Her satır
+    zaten var olan bir sinyalin (limit/trial/inceleme/giriş/hatalı dosya)
+    üzerine kurulu - burada YENİ bir hesaplama yok, sadece toplama +
+    önceliklendirme (severity). Frontend her satırı kendi 'page' ipucuna
+    göre tıklanabilir yapar."""
+    db = get_db()
+    _process_trial_lifecycle(db)
+    items = []
+
+    near_limit_schools = db.execute(
+        "SELECT o.id, o.name, o.user_limit, (SELECT COUNT(*) FROM students s WHERE s.organization_id=o.id) AS c "
+        "FROM organizations o WHERE o.user_limit IS NOT NULL "
+        "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id=o.id) >= o.user_limit * 0.9 "
+        "AND o.status != 'inactive'"
+    ).fetchall()
+    if near_limit_schools:
+        items.append({
+            "severity": "critical", "icon": "🔴",
+            "text": f"{len(near_limit_schools)} okulun kullanıcı limiti %90'a ulaştı",
+            "page": "schools", "count": len(near_limit_schools),
+            "detail": [{"id": r["id"], "name": r["name"], "usage": f"{r['c']}/{r['user_limit']}"} for r in near_limit_schools],
+        })
+
+    soon_cutoff = (datetime.now() + timedelta(days=7)).isoformat()
+    expiring_trials = db.execute(
+        "SELECT id, name, trial_ends_at FROM organizations "
+        "WHERE status='trial' AND trial_ends_at IS NOT NULL AND trial_ends_at <= ?",
+        (soon_cutoff,),
+    ).fetchall()
+    if expiring_trials:
+        items.append({
+            "severity": "warning", "icon": "🟡",
+            "text": f"{len(expiring_trials)} okulun aboneliği 7 gün içinde bitecek",
+            "page": "schools", "count": len(expiring_trials),
+            "detail": [{"id": r["id"], "name": r["name"], "trialEndsAt": r["trial_ends_at"]} for r in expiring_trials],
+        })
+
+    pending_questions = db.execute(
+        "SELECT COUNT(*) c FROM question_bank WHERE status IN ('pending_review','reviewed')"
+    ).fetchone()["c"]
+    if pending_questions:
+        items.append({
+            "severity": "info", "icon": "🟠",
+            "text": f"{pending_questions} soru incelenmeyi bekliyor",
+            "page": "question-bank", "count": pending_questions,
+        })
+
+    # created_at < 30 gun kosulu: yeni olusturulmus (henuz giris yapma
+    # firsati olmamis) bir okulu yanlislikla "hareketsiz" diye isaretlememek icin.
+    inactive_cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+    dormant_schools = db.execute(
+        "SELECT o.id, o.name FROM organizations o WHERE o.status != 'inactive' AND o.created_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM users u WHERE u.organization_id=o.id AND u.last_login >= ?)",
+        (inactive_cutoff, inactive_cutoff),
+    ).fetchall()
+    if dormant_schools:
+        items.append({
+            "severity": "critical", "icon": "🔴",
+            "text": f"{len(dormant_schools)} okul son 30 gündür sisteme giriş yapmadı",
+            "page": "schools", "count": len(dormant_schools),
+            "detail": [{"id": r["id"], "name": r["name"]} for r in dormant_schools],
+        })
+
+    failed_batches = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE status='failed'"
+    ).fetchone()["c"]
+    if failed_batches:
+        items.append({
+            "severity": "warning", "icon": "🟡",
+            "text": f"{failed_batches} dosya hatalı format nedeniyle işlenemedi",
+            "page": "question-bank", "count": failed_batches,
+        })
+
+    severity_order = {"critical": 0, "warning": 1, "info": 2}
+    items.sort(key=lambda it: severity_order.get(it["severity"], 3))
+    return jsonify(items)
 
 
 @app.route("/api/superadmin/organizations", methods=["GET"])
