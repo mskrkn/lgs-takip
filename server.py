@@ -4364,6 +4364,157 @@ def _recompute_student_skill_mastery(db, student_id, skill_id):
     )
 
 
+_DIFFICULTY_ORDER = ["kolay", "orta", "zor"]
+
+
+def _next_difficulty(current_difficulty, recent_is_correct_desc):
+    """admin-panel-soru-havuzu-2 bölüm 10.5 (zorluk otomatik ayarlama).
+    recent_is_correct_desc: en YENİDEN en ESKİYE sıralı, en az son 3 denemenin
+    doğru/yanlış (bool) listesi. Sadece 2 ardışık yanlış / 3 ardışık yanlış /
+    3 ardışık doğru zorluğu DEĞİŞTİRİR - 1 yanlış, 1 doğru, 2 doğru aynı
+    zorlukta kalır (sadece farklı soru kalıbı önerilir, bkz. çağıran yer).
+    Tavanda/tabanda taşma yok. Döner: (yeni_zorluk, destek_gerekiyor_mu)."""
+    idx = _DIFFICULTY_ORDER.index(current_difficulty) if current_difficulty in _DIFFICULTY_ORDER else 1
+    if not recent_is_correct_desc:
+        return _DIFFICULTY_ORDER[idx], False
+
+    consecutive_wrong = 0
+    for correct in recent_is_correct_desc:
+        if correct is False:
+            consecutive_wrong += 1
+        else:
+            break
+    consecutive_right = 0
+    for correct in recent_is_correct_desc:
+        if correct is True:
+            consecutive_right += 1
+        else:
+            break
+
+    if consecutive_wrong >= 3:
+        return _DIFFICULTY_ORDER[0], True
+    if consecutive_wrong == 2:
+        return _DIFFICULTY_ORDER[max(0, idx - 1)], False
+    if consecutive_right >= 3:
+        return _DIFFICULTY_ORDER[min(len(_DIFFICULTY_ORDER) - 1, idx + 1)], False
+    return _DIFFICULTY_ORDER[idx], False
+
+
+def _find_similar_question(db, org_id, subject_id, grade_level, topic_id, skill_id,
+                            difficulty, exclude_ids=None, exclude_pattern=None):
+    """admin-panel-soru-havuzu-2 bölüm 10.8 (benzer soru bulma). Sıralı
+    gevşetme: bulunamazsa EN SONDAKİ (en az önemli) kısıtlamadan başlayarak
+    düşürülür - Ders/Sınıf (organization_id/subject_id/grade_level) HİÇBİR
+    AŞAMADA gevşetilmez. 'Farklı soru kalıbı' bir filtre değil ÖNCELİKtir -
+    her aşamada bulunan aday kümesi içinde varsa tercih edilir, yoksa
+    aday kümesinin ilk sorusuna düşülür."""
+    exclude_ids = exclude_ids or set()
+    stages = [
+        {"topic": True,  "skill": True,  "difficulty": True,  "avoid_recent": True},
+        {"topic": True,  "skill": True,  "difficulty": True,  "avoid_recent": False},
+        {"topic": True,  "skill": True,  "difficulty": False, "avoid_recent": False},
+        {"topic": True,  "skill": False, "difficulty": False, "avoid_recent": False},
+        {"topic": False, "skill": False, "difficulty": False, "avoid_recent": False},
+    ]
+    for stage in stages:
+        query = "SELECT DISTINCT qb.id, qb.question_pattern FROM question_bank qb "
+        params = []
+        if stage["skill"] and skill_id:
+            query += "JOIN question_skills qs ON qs.question_id = qb.id AND qs.skill_id = ? "
+            params.append(skill_id)
+        query += "WHERE qb.organization_id=? AND qb.status='published' AND qb.subject_id=? AND qb.grade_level=? "
+        params += [org_id, subject_id, grade_level]
+        if stage["topic"] and topic_id:
+            query += "AND qb.topic_id=? "
+            params.append(topic_id)
+        if stage["difficulty"] and difficulty:
+            query += "AND qb.difficulty=? "
+            params.append(difficulty)
+        if stage["avoid_recent"] and exclude_ids:
+            query += f"AND qb.id NOT IN ({','.join('?' * len(exclude_ids))}) "
+            params += list(exclude_ids)
+        rows = db.execute(query, params).fetchall()
+        if not rows:
+            continue
+        if exclude_pattern:
+            preferred = [r for r in rows if r["question_pattern"] != exclude_pattern]
+            if preferred:
+                return preferred[0]["id"]
+        return rows[0]["id"]
+    return None
+
+
+@app.route("/api/student/next-question/<int:question_id>")
+@login_required(role="student", permission="assignments.view")
+def api_student_next_question(question_id):
+    """admin-panel-soru-havuzu-2 bölüm 10.5+10.8: öğrenci bir soruyu
+    çözdükten SONRA (question_id = az önce çözülen soru) performansına göre
+    önerilen bir sonraki soruyu döner. Yetkilendirme: bu öğrencinin bu soru
+    için GERÇEKTEN en az bir denemesi olması şart (student_question_attempts) -
+    aksi halde rastgele question_id deneyerek başka konulara/becerilere ait
+    soru/zorluk bilgisi sızdırılabilirdi (IDOR)."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    attempt = db.execute(
+        "SELECT 1 FROM student_question_attempts WHERE student_id=? AND question_id=? LIMIT 1",
+        (student_id, question_id),
+    ).fetchone()
+    if not attempt:
+        return jsonify({"error": "Bu soruya ait bir çözüm kaydınız yok."}), 404
+
+    q = db.execute(
+        "SELECT subject_id, grade_level, topic_id, difficulty, question_pattern, explanation "
+        "FROM question_bank WHERE id=? AND organization_id=?",
+        (question_id, student["organization_id"]),
+    ).fetchone()
+    if not q:
+        return jsonify({"error": "Soru bulunamadı."}), 404
+
+    skill_row = db.execute(
+        "SELECT skill_id FROM question_skills WHERE question_id=? ORDER BY weight DESC LIMIT 1",
+        (question_id,),
+    ).fetchone()
+    skill_id = skill_row["skill_id"] if skill_row else None
+
+    recent_rows = db.execute(
+        "SELECT is_correct FROM student_question_attempts "
+        "WHERE student_id=? AND question_id=? AND is_correct IS NOT NULL "
+        "ORDER BY answered_at DESC LIMIT 5",
+        (student_id, question_id),
+    ).fetchall()
+    recent_is_correct = [bool(r["is_correct"]) for r in recent_rows]
+
+    next_difficulty, needs_support = _next_difficulty(q["difficulty"], recent_is_correct)
+
+    recent_solved_ids = {
+        r["question_id"] for r in db.execute(
+            "SELECT DISTINCT question_id FROM student_question_attempts "
+            "WHERE student_id=? AND answered_at >= ?",
+            (student_id, (datetime.now() - timedelta(days=7)).isoformat()),
+        ).fetchall()
+    }
+    recent_solved_ids.add(question_id)
+
+    next_id = _find_similar_question(
+        db, student["organization_id"], q["subject_id"], q["grade_level"], q["topic_id"], skill_id,
+        next_difficulty, exclude_ids=recent_solved_ids, exclude_pattern=q["question_pattern"],
+    )
+
+    return jsonify({
+        "recommendedDifficulty": next_difficulty,
+        "needsSupport": needs_support,
+        "supportExplanation": q["explanation"] if needs_support else None,
+        "nextQuestionId": next_id,
+        "nextQuestionImageUrl": f"/api/student/question-image/{next_id}" if next_id else None,
+    })
+
+
 @app.route("/api/student/assignments/<int:assignment_id>/submit", methods=["POST"])
 @login_required(role="student", permission="assignments.complete")
 def api_student_submit_assignment(assignment_id):
@@ -4441,7 +4592,15 @@ def api_student_question_image(question_id):
     okulun/sinifin) gorselini gormeyi engellemek icin, sorunun GERCEKTEN bu
     ogrencinin kendi okulundaki, kendi sinifini hedefleyen bir odevin
     parcasi olmasi sart - assignment_questions -> assignments uzerinden
-    dogrulanir (bkz. api_student_assignment_detail'deki ayni desen)."""
+    dogrulanir (bkz. api_student_assignment_detail'deki ayni desen).
+
+    Bolum 10.5+10.8 (adaptif motor, bkz. api_student_next_question) BUNA EK
+    olarak, herhangi bir odevin parcasi OLMAYAN (adaptif olarak onerilen)
+    'published' bir soruyu da - SADECE kendi okuluna ait olmak sartiyla -
+    gosterebilir. 'published' zaten dort-goz onayindan gecmis, okul-genelinde
+    (herhangi bir sinifin herhangi bir odevinde) her an kullanilabilir nihai
+    durum oldugu icin bu, sinif-bazli gizliligi BOZMAZ - sadece odeve
+    eklenmeden ONCE de erisilebilir kilar."""
     student_id = session.get("student_id")
     if not student_id:
         return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
@@ -4457,6 +4616,11 @@ def api_student_question_image(question_id):
         "WHERE qb.id = ? AND a.organization_id = ? AND a.class_name = ? LIMIT 1",
         (question_id, student["organization_id"], student["class_name"]),
     ).fetchone()
+    if not row:
+        row = db.execute(
+            "SELECT image_path FROM question_bank WHERE id = ? AND organization_id = ? AND status = 'published'",
+            (question_id, student["organization_id"]),
+        ).fetchone()
     if not row or not row["image_path"]:
         return jsonify({"error": "Bulunamadı."}), 404
     filename = os.path.basename(row["image_path"])
