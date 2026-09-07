@@ -91,6 +91,7 @@ SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
 PORT = int(os.environ.get("PORT", 8080))
+_SERVER_STARTED_AT = datetime.now()
 
 # development / staging / production - her checkout kendi ortamini
 # EDUPUSULA_ENV ortam degiskeniyle bildirir (systemd servis dosyasinda
@@ -2659,6 +2660,49 @@ def _compute_attention_items(db):
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_attention_items():
     return jsonify(_compute_attention_items(get_db()))
+
+
+@app.route("/api/superadmin/system-health")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_system_health():
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri, Faz H): basitleştirilmiş
+    sistem sağlığı sinyali - gerçek altyapı izleme (CPU/RAM/ağ) DEĞİL, zaten
+    var olan DB üzerinden ölçülebilen üç sinyal: bağlantı gecikmesi, dosya
+    boyutu, ve son 24 saatteki başarısız soru-havuzu içe aktarmaları (bkz.
+    _compute_attention_items'taki 'failed_batches' ile aynı kaynak, burada
+    platform genelinde ve zaman pencereli)."""
+    db = get_db()
+
+    db_start = datetime.now()
+    db.execute("SELECT 1").fetchone()
+    db_latency_ms = round((datetime.now() - db_start).total_seconds() * 1000, 1)
+
+    page_count = db.execute("PRAGMA page_count").fetchone()[0]
+    page_size = db.execute("PRAGMA page_size").fetchone()[0]
+    db_size_mb = round(page_count * page_size / (1024 * 1024), 1)
+
+    cutoff_24h = (datetime.now() - timedelta(hours=24)).isoformat()
+    failed_24h = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE status='failed' AND created_at >= ?",
+        (cutoff_24h,),
+    ).fetchone()["c"]
+
+    uptime_seconds = int((datetime.now() - _SERVER_STARTED_AT).total_seconds())
+
+    if db_latency_ms > 200 or failed_24h >= 5:
+        status = "critical"
+    elif db_latency_ms > 50 or failed_24h > 0:
+        status = "warning"
+    else:
+        status = "ok"
+
+    return jsonify({
+        "status": status,
+        "dbLatencyMs": db_latency_ms,
+        "dbSizeMb": db_size_mb,
+        "failedImportsLast24h": failed_24h,
+        "uptimeSeconds": uptime_seconds,
+    })
 
 
 def _sync_notifications(db, user_id):

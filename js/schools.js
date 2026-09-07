@@ -54,14 +54,15 @@ const Schools = {
 
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
 
-    let schools = [], dashboard = null, attentionItems = [], rankings = null, pusiInsights = [];
+    let schools = [], dashboard = null, attentionItems = [], rankings = null, pusiInsights = [], systemHealth = null;
     try {
-      const [schoolsRes, dashRes, attnRes, rankRes, pusiRes] = await Promise.all([
+      const [schoolsRes, dashRes, attnRes, rankRes, pusiRes, healthRes] = await Promise.all([
         fetch('/api/superadmin/organizations'),
         fetch('/api/superadmin/dashboard'),
         fetch('/api/superadmin/attention-items'),
         fetch('/api/superadmin/school-rankings'),
         fetch('/api/superadmin/pusi-insights'),
+        fetch('/api/superadmin/system-health'),
       ]);
       if (!schoolsRes.ok) throw new Error((await schoolsRes.json()).error || 'Okullar yüklenemedi.');
       schools = await schoolsRes.json();
@@ -69,6 +70,7 @@ const Schools = {
       attentionItems = attnRes.ok ? await attnRes.json() : [];
       rankings = rankRes.ok ? await rankRes.json() : null;
       pusiInsights = pusiRes.ok ? await pusiRes.json() : [];
+      systemHealth = healthRes.ok ? await healthRes.json() : null;
     } catch (err) {
       container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
       return;
@@ -79,6 +81,7 @@ const Schools = {
       ${this._renderAttentionPanel(attentionItems)}
       ${this._renderQuickActions()}
       ${this._renderPusiPanel(pusiInsights)}
+      ${this._renderSystemHealthPanel(systemHealth)}
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
       ${rankings ? this._renderRankings(rankings) : ''}
 
@@ -218,6 +221,43 @@ const Schools = {
         </div>
       </div>
     `;
+  },
+
+  // Faz H: "Sistem Sağlığı" - basitleştirilmiş sinyal (gerçek CPU/RAM/ağ
+  // izleme DEĞİL, server.py'deki /api/superadmin/system-health'in DB
+  // gecikmesi + dosya boyutu + son 24s başarısız içe aktarma üzerinden
+  // hesapladığı 3 sinyal).
+  _renderSystemHealthPanel(health) {
+    if (!health) return '';
+    const statusMeta = {
+      ok: { color: '#22C55E', label: 'İyi', icon: '🟢' },
+      warning: { color: '#F59E0B', label: 'Dikkat', icon: '🟡' },
+      critical: { color: '#EF4444', label: 'Kritik', icon: '🔴' },
+    };
+    const meta = statusMeta[health.status] || statusMeta.ok;
+    return `
+      <div class="card mt-2">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+          <h3 class="card-title"><span class="card-icon">🩺</span> Sistem Sağlığı</h3>
+          <span style="font-size:12px;font-weight:700;color:${meta.color}">${meta.icon} ${meta.label}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:14px;font-size:13px">
+          <div><div class="text-muted">Veritabanı Gecikmesi</div><div style="font-weight:700">${health.dbLatencyMs} ms</div></div>
+          <div><div class="text-muted">Veritabanı Boyutu</div><div style="font-weight:700">${health.dbSizeMb} MB</div></div>
+          <div><div class="text-muted">Son 24s Başarısız İçe Aktarma</div><div style="font-weight:700">${health.failedImportsLast24h}</div></div>
+          <div><div class="text-muted">Çalışma Süresi</div><div style="font-weight:700">${this._formatUptime(health.uptimeSeconds)}</div></div>
+        </div>
+      </div>
+    `;
+  },
+
+  _formatUptime(seconds) {
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}g ${h}s`;
+    if (h > 0) return `${h}s ${m}dk`;
+    return `${m}dk`;
   },
 
   // Madde 6+7: "En Aktif Okullar" (haftalık liderlik tablosu) + "Aktivitesi
