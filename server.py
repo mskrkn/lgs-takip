@@ -206,6 +206,10 @@ def _migrate_users_table(conn):
     cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "active" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+    if "email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    if "phone" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
 
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -258,8 +262,11 @@ def _migrate_users_table(conn):
     if row and "'super_admin'" not in row[0]:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         has_org = "organization_id" in cols
+        has_contact = "email" in cols and "phone" in cols
         org_col_def = ",\n                organization_id INTEGER REFERENCES organizations(id)" if has_org else ""
         org_col_name = ", organization_id" if has_org else ""
+        contact_col_def = ",\n                email TEXT,\n                phone TEXT" if has_contact else ""
+        contact_col_name = ", email, phone" if has_contact else ""
         conn.executescript(
             f"""
             CREATE TABLE users_new (
@@ -271,12 +278,12 @@ def _migrate_users_table(conn):
                 class_name TEXT,
                 student_id INTEGER,
                 active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT{org_col_def}
+                created_at TEXT{org_col_def}{contact_col_def}
             );
             INSERT INTO users_new (id, username, password_hash, role, display_name,
-                                    class_name, student_id, active, created_at{org_col_name})
+                                    class_name, student_id, active, created_at{org_col_name}{contact_col_name})
                 SELECT id, username, password_hash, role, display_name,
-                       class_name, student_id, active, created_at{org_col_name} FROM users;
+                       class_name, student_id, active, created_at{org_col_name}{contact_col_name} FROM users;
             DROP TABLE users;
             ALTER TABLE users_new RENAME TO users;
             """
@@ -353,8 +360,8 @@ SUBJECT_SEED = [
     ("ayt_cografya2", "Coğrafya-2"), ("ayt_felsefe", "Felsefe Grubu"), ("ayt_din", "Din Kültürü (Seçmeli)"),
 ]
 
-ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "SCHOOL_ADMIN_DELEGATE",
-             "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
+ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "ASSISTANT_ADMIN", "INSTITUTION_ADMIN",
+             "SCHOOL_ADMIN_DELEGATE", "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
 
 PERMISSION_SEED = [
     "students.view", "students.create", "students.update", "students.delete",
@@ -364,6 +371,7 @@ PERMISSION_SEED = [
     "exams.import", "exams.view_results",
     "results.view", "results.create", "analytics.view", "organization.manage", "users.manage",
     "users.view", "users.create", "users.update", "users.deactivate", "users.assign_role",
+    "admins.manage",
     "organizations.view", "organizations.create", "organizations.update", "organizations.archive",
     "teachers.view", "teachers.create", "teachers.update", "teachers.manage_assignments",
     "questions.view", "questions.create", "questions.update", "questions.delete",
@@ -381,11 +389,16 @@ PERMISSION_SEED = [
 # VERISINI goruntule/yonet" (_effective_org_id'nin ?school_id= override
 # gate'i). organizations.* = "organizations TABLOSUNUN kendisini (ad/
 # iletisim/durum) yonet". analytics.global/system.*/ai.manage = platform
-# geneli, tek bir okulla sinirli olmayan yetkiler. Hepsi sadece
-# SUPER_ADMIN/PLATFORM_ADMIN'de.
+# geneli, tek bir okulla sinirli olmayan yetkiler. admins.manage = admin
+# hesabi olusturma/duzenleme/pasiflestirme (bkz. ASSIGNABLE_ADMIN_SUBROLES) -
+# KRITIK: bu listede olmasi sart, aksi halde INSTITUTION_ADMIN'in izin kumesi
+# (= PERMISSION_SEED - PLATFORM_ONLY_PERMISSIONS) admins.manage'i SESSIZCE
+# icerir ve herhangi bir okul admini baska admin hesaplari olusturabilir/
+# silebilir hale gelir (IDOR/yetki yukseltme). Hepsi SUPER_ADMIN/PLATFORM_ADMIN'de;
+# admins.manage HARIC hepsi ayrica ASSISTANT_ADMIN'de de (bkz. asagisi).
 PLATFORM_ONLY_PERMISSIONS = [
     "organization.manage", "organizations.view", "organizations.create",
-    "organizations.update", "organizations.archive",
+    "organizations.update", "organizations.archive", "admins.manage",
     "analytics.global", "system.settings", "system.logs", "system.manage", "ai.manage",
 ]
 
@@ -398,6 +411,14 @@ ROLE_PERMISSIONS_SEED = {
     # (bu liste PERMISSION_SEED'in tamami olsaydi) her okul admini bir
     # digerinin school_id'sini enjekte edip/organizations ucuna erisip
     # baska okulun verisine ulasabilirdi (IDOR).
+    #
+    # Admin Yardimcisi (admin-panel-prompt.md bolum 1) - PLATFORM_ADMIN ile
+    # AYNI kapsam (tum okullar, sistem loglari, vs.) ama "admins.manage"
+    # HARIC: yeni admin hesabi olusturamaz/silemez/duzenleyemez. PLATFORM_ADMIN
+    # bilerek degistirilmedi (bugunku platform sahibi hesabi zaten o v2 rolu
+    # tasiyor, admins.manage'i PERMISSION_SEED'e eklemek ona otomatik gecti);
+    # bu yuzden ayri, katilimci bir rol.
+    "ASSISTANT_ADMIN": [p for p in PERMISSION_SEED if p != "admins.manage"],
     "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p not in PLATFORM_ONLY_PERMISSIONS],
     # Veri girisi personeli (Excel/optik/PDF aktarimi, ogrenci kaydi) -
     # organizasyon ayarlarina/kullanici yetkilerine dokunamaz. NOT: legacy
@@ -1107,6 +1128,14 @@ def _seed_reference_data(conn):
         "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
         "AND permission_id = (SELECT id FROM permissions WHERE name='organization.manage')"
     )
+    # Ayni sekilde: "admins.manage" ilk eklendiginde PLATFORM_ONLY_PERMISSIONS'a
+    # dahil edilmemis olabilir (yukaridaki INSERT OR IGNORE bu satiri o zaman
+    # eklemis olabilir) - okul adminlerinin baska admin hesabi olusturabilmesi
+    # gibi bir yetki yukselmesine yol acmamasi icin idempotent temizlik.
+    conn.execute(
+        "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
+        "AND permission_id = (SELECT id FROM permissions WHERE name='admins.manage')"
+    )
 
     for code, name in SUBJECT_SEED:
         conn.execute("INSERT OR IGNORE INTO subjects (code, name) VALUES (?,?)", (code, name))
@@ -1810,6 +1839,7 @@ def api_login():
     # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
     # verilmis olabilir. /api/me'deki ayni mantik (bkz. orada).
     can_manage_schools = has_permission(db, user["id"], "organization.manage")
+    can_manage_admins = has_permission(db, user["id"], "admins.manage")
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
@@ -1817,6 +1847,7 @@ def api_login():
         "studentId": user["student_id"],
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
+        "canManageAdmins": can_manage_admins,
         "organizationId": user["organization_id"],
     })
 
@@ -1845,6 +1876,7 @@ def api_me():
     # verilmis olabilir - bu durumda normal admin panelinin YANI SIRA
     # "Okullar" sekmesini de gorur (bkz. js/app.js init()).
     can_manage_schools = has_permission(db, session["user_id"], "organization.manage")
+    can_manage_admins = has_permission(db, session["user_id"], "admins.manage")
     own_org_row = db.execute(
         "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
     ).fetchone()
@@ -1855,6 +1887,7 @@ def api_me():
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
+        "canManageAdmins": can_manage_admins,
         "organizationId": own_org_row["organization_id"] if own_org_row else None,
     })
 
@@ -2019,6 +2052,233 @@ def api_superadmin_toggle_organization_status(org_id):
     db.commit()
     log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
     return jsonify({"ok": True, "status": new_status})
+
+
+# ============================================================
+# API: Süper admin - admin hesapları yönetimi (admin-panel-prompt.md bölüm 1)
+# ============================================================
+# "Admin oluşturma/silme" SADECE admins.manage iznine sahip hesaplara açık
+# (bugün: PLATFORM_ADMIN - platform sahibi). ASSISTANT_ADMIN (Admin
+# Yardımcısı) kasıtlı olarak bu izne sahip DEĞİL - PERMISSION_SEED'in geri
+# kalanının tamamına sahip olsa da bu uçlara giremez (bkz. ROLE_PERMISSIONS_SEED).
+ADMIN_SUBROLES = {
+    "PLATFORM_ADMIN": {"label": "Süper Admin", "requiresOrg": False},
+    "ASSISTANT_ADMIN": {"label": "Admin Yardımcısı", "requiresOrg": False},
+    "INSTITUTION_ADMIN": {"label": "Okul Admini", "requiresOrg": True},
+    "DATA_ADMIN": {"label": "Veri Giriş Admini", "requiresOrg": True},
+}
+# Bu ekrandan doğrudan oluşturulabilen/atanabilen roller - PLATFORM_ADMIN
+# (Süper Admin) kasıtlı olarak dışarıda: platform sahipliği kadar hassas bir
+# atama bugün sadece grant_platform_admin.py script'i (doğrudan sunucu
+# erişimi) üzerinden yapılabilir.
+ASSIGNABLE_ADMIN_SUBROLES = ("ASSISTANT_ADMIN", "INSTITUTION_ADMIN", "DATA_ADMIN")
+
+
+def _admin_subrole(db, user_id, legacy_role):
+    """role IN ('admin','super_admin') olan bir kullanıcının v2 rollerinden
+    admin-panel-prompt.md'deki 4 rolden hangisine karşılık geldiğini türetir.
+    NOT: DATA_ADMIN, legacy role='admin' + organization_id üzerine EK bir v2
+    rol olarak verilir - ama organization_id'si olan her 'admin' otomatik
+    olarak INSTITUTION_ADMIN'i de taşır (bkz. LEGACY_ROLE_TO_NEW_ROLE), bu
+    yüzden DATA_ADMIN önce kontrol edilir (varsa "Veri Giriş Admini" olarak
+    gösterilir) ama bugün itibarıyla bu hesap fiilen INSTITUTION_ADMIN'in tüm
+    izinlerini de taşımaya devam eder - has_permission() OR mantığıyla
+    çalıştığı için (bkz. exams.create ile ilgili yorum, admin-panel-prompt.md
+    bölüm 7 - ayrı, gelecekteki bir iş)."""
+    if legacy_role == "super_admin":
+        return "PLATFORM_ADMIN"
+    names = {r["name"] for r in db.execute(
+        "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?",
+        (user_id,),
+    ).fetchall()}
+    if "PLATFORM_ADMIN" in names:
+        return "PLATFORM_ADMIN"
+    if "DATA_ADMIN" in names:
+        return "DATA_ADMIN"
+    if "ASSISTANT_ADMIN" in names:
+        return "ASSISTANT_ADMIN"
+    return "INSTITUTION_ADMIN"
+
+
+@app.route("/api/superadmin/admins", methods=["GET"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_list_admins():
+    db = get_db()
+    rows = db.execute(
+        "SELECT u.id, u.username, u.display_name, u.email, u.phone, u.role, "
+        "u.organization_id, u.active, u.created_at, o.name AS org_name "
+        "FROM users u LEFT JOIN organizations o ON o.id = u.organization_id "
+        "WHERE u.role IN ('admin', 'super_admin') ORDER BY u.created_at DESC"
+    ).fetchall()
+    result = []
+    for r in rows:
+        sub_role = _admin_subrole(db, r["id"], r["role"])
+        result.append({
+            "id": r["id"], "username": r["username"], "displayName": r["display_name"],
+            "email": r["email"], "phone": r["phone"], "active": bool(r["active"]),
+            "createdAt": r["created_at"], "organizationId": r["organization_id"],
+            "organizationName": r["org_name"], "subRole": sub_role,
+            "subRoleLabel": ADMIN_SUBROLES[sub_role]["label"],
+            "isSelf": r["id"] == session["user_id"],
+        })
+    return jsonify(result)
+
+
+@app.route("/api/superadmin/admins", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_create_admin():
+    """Yeni bir admin-katmanı hesabı oluşturur - Admin Yardımcısı / Okul
+    Admini / Veri Girişi Admini (bkz. ASSIGNABLE_ADMIN_SUBROLES)."""
+    data = request.get_json(silent=True) or {}
+    sub_role = (data.get("subRole") or "").strip().upper()
+    if sub_role not in ASSIGNABLE_ADMIN_SUBROLES:
+        return jsonify({"error": "Geçersiz rol."}), 400
+
+    display_name = (data.get("displayName") or "").strip()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    email = (data.get("email") or "").strip() or None
+    phone = (data.get("phone") or "").strip() or None
+
+    if not display_name or not username or not password:
+        return jsonify({"error": "Ad soyad, kullanıcı adı ve şifre gerekli."}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
+
+    db = get_db()
+    requires_org = ADMIN_SUBROLES[sub_role]["requiresOrg"]
+    org_id = None
+    if requires_org:
+        org_id = data.get("organizationId")
+        if not org_id:
+            return jsonify({"error": "Bu rol için bir okul seçilmeli."}), 400
+        org_id = int(org_id)
+        if not db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone():
+            return jsonify({"error": "Okul bulunamadı."}), 404
+
+    if db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
+        return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO users (username, password_hash, role, display_name, email, phone, organization_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (username, hash_password(password), "admin", display_name, email, phone, org_id, now),
+    )
+    user_id = cur.lastrowid
+    db.commit()
+    # ONEMLI SIRA: ASSISTANT_ADMIN/DATA_ADMIN'in ek v2 rolu run_v2_migration'dan
+    # ONCE atanmali. run_v2_migration -> _seed_reference_data, organization_id
+    # NULL olan ve "organization.manage" izni VERMEYEN her admin'i varsayilan
+    # okula geri baglar (bkz. o fonksiyondaki NOT IN alt sorgusu) - eger once
+    # migration calisip SONRA rol verilseydi, org_id=NULL kalmasi gereken bir
+    # Admin Yardimcisi bu backfill tarafindan yanlislikla varsayilan okula
+    # atanirdi (grant_platform_admin.py'nin de zaten bu sirayla calismasinin
+    # nedeni ayni).
+    if sub_role in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+        role_row = db.execute("SELECT id FROM roles WHERE name = ?", (sub_role,)).fetchone()
+        db.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, role_row["id"]))
+        db.commit()
+    # legacy role='admin' -> organization_id varsa INSTITUTION_ADMIN'i otomatik eşitler.
+    run_v2_migration(db)
+    log_audit(db, "ADMIN_CREATED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "id": user_id, "username": username})
+
+
+@app.route("/api/superadmin/admins/<int:user_id>", methods=["PATCH"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_update_admin(user_id):
+    db = get_db()
+    user = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role IN ('admin','super_admin')", (user_id,)
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "Admin bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, values = [], []
+    if "displayName" in data:
+        display_name = (data.get("displayName") or "").strip()
+        if not display_name:
+            return jsonify({"error": "Ad soyad boş olamaz."}), 400
+        fields.append("display_name = ?")
+        values.append(display_name)
+    if "email" in data:
+        fields.append("email = ?")
+        values.append((data.get("email") or "").strip() or None)
+    if "phone" in data:
+        fields.append("phone = ?")
+        values.append((data.get("phone") or "").strip() or None)
+
+    if "subRole" in data:
+        if user_id == session["user_id"]:
+            return jsonify({"error": "Kendi rolünüzü değiştiremezsiniz."}), 400
+        sub_role = (data.get("subRole") or "").strip().upper()
+        if sub_role not in ASSIGNABLE_ADMIN_SUBROLES:
+            return jsonify({"error": "Geçersiz rol."}), 400
+        requires_org = ADMIN_SUBROLES[sub_role]["requiresOrg"]
+        org_id = None
+        if requires_org:
+            org_id = data.get("organizationId")
+            if not org_id:
+                return jsonify({"error": "Bu rol için bir okul seçilmeli."}), 400
+            org_id = int(org_id)
+            if not db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone():
+                return jsonify({"error": "Okul bulunamadı."}), 404
+        fields.append("organization_id = ?")
+        values.append(org_id)
+        # eski ASSISTANT_ADMIN/DATA_ADMIN ek v2 rolünü temizleyip yenisini ver
+        # (INSTITUTION_ADMIN kasıtlı olarak silinmiyor - kaldırılsa bile
+        # ASSISTANT_ADMIN/PLATFORM_ADMIN'in izin kümesi zaten onu kapsıyor,
+        # bkz. _admin_subrole yorumu).
+        for extra in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+            role_row = db.execute("SELECT id FROM roles WHERE name = ?", (extra,)).fetchone()
+            db.execute("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", (user_id, role_row["id"]))
+        if sub_role in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+            role_row = db.execute("SELECT id FROM roles WHERE name = ?", (sub_role,)).fetchone()
+            db.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, role_row["id"]))
+
+    if not fields:
+        return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
+
+    fields_sql = ", ".join(fields)
+    db.execute(f"UPDATE users SET {fields_sql} WHERE id = ?", values + [user_id])
+    db.commit()
+    log_audit(db, "ADMIN_UPDATED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/superadmin/admins/<int:user_id>/toggle-status", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_toggle_admin_status(user_id):
+    if user_id == session["user_id"]:
+        return jsonify({"error": "Kendi hesabınızı pasifleştiremezsiniz."}), 400
+    db = get_db()
+    user = db.execute(
+        "SELECT id, active FROM users WHERE id = ? AND role IN ('admin','super_admin')", (user_id,)
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "Admin bulunamadı."}), 404
+
+    new_active = 0 if user["active"] else 1
+    if not new_active:
+        # Platformun kilitlenmemesi icin en az bir aktif admins.manage
+        # sahibi (Süper Admin) her zaman kalmali.
+        others = db.execute(
+            "SELECT COUNT(*) AS c FROM users u "
+            "JOIN user_roles ur ON ur.user_id = u.id "
+            "JOIN role_permissions rp ON rp.role_id = ur.role_id "
+            "JOIN permissions p ON p.id = rp.permission_id "
+            "WHERE p.name = 'admins.manage' AND u.active = 1 AND u.id != ?",
+            (user_id,),
+        ).fetchone()["c"]
+        if others == 0:
+            return jsonify({"error": "Son aktif Süper Admin hesabı pasifleştirilemez."}), 400
+
+    db.execute("UPDATE users SET active = ? WHERE id = ?", (new_active, user_id))
+    db.commit()
+    log_audit(db, "ADMIN_STATUS_CHANGED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "active": bool(new_active)})
 
 
 @app.route("/api/superadmin/audit-logs")
