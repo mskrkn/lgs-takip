@@ -74,6 +74,16 @@ class Database {
     // etkilesimiyle tetiklenen sayfa/islem kodu) bundan SONRA calisir.
     this.db = null;
     this._openOrgId = undefined;
+    // Okulun kullanıcı (öğrenci koltuğu) limiti - bkz. admin-panel-prompt.md
+    // bölüm 3. null = sınırsız. App.init() /api/me'den okunca setUserLimit
+    // ile burada set edilir; addStudent/batchImportResults YENİ bir öğrenci
+    // eklerken buna bakar (mevcut öğrenciyi güncellemek/eşleştirmek
+    // ETKİLENMEZ - sadece gerçekten yeni bir koltuk dolduran işlemler).
+    this._userLimit = null;
+  }
+
+  setUserLimit(limit) {
+    this._userLimit = (limit === null || limit === undefined) ? null : Number(limit);
   }
 
   _defineSchema(dexieInstance) {
@@ -170,12 +180,16 @@ class Database {
   }
 
   // ---- Students ----
-  async addStudent(student) {
-    return await this.findOrMatchStudent(student);
+  // enforceLimit=false SADECE veri geri yükleme/senkron (importData) gibi
+  // "bu öğrenci zaten var olmalıydı" senaryolarında kullanılır - aksi halde
+  // limit sonradan düşürülürse ya da bir yedek geri yüklenirse cihazlar
+  // arasında sessizce farklı öğrenci kümeleri oluşurdu.
+  async addStudent(student, { enforceLimit = true } = {}) {
+    return await this.findOrMatchStudent(student, { enforceLimit });
   }
 
   // Smart student matcher: checks school number first, then normalized full name
-  async findOrMatchStudent(student) {
+  async findOrMatchStudent(student, { enforceLimit = true } = {}) {
     const rawSNum = String(student.schoolNumber || '').trim();
     const cleanSNum = normalizeSchoolNo(rawSNum);
     const isAutoSNum = !rawSNum || rawSNum.startsWith('AUTO-');
@@ -232,6 +246,11 @@ class Database {
     }
 
     // 3. No match found -> Add new student
+    if (enforceLimit && this._userLimit != null && allStudents.length >= this._userLimit) {
+      const err = new Error(`Kullanıcı limitinize ulaştınız (${this._userLimit}/${this._userLimit}). Yeni öğrenci eklemek için limitinizi artırmanız gerekir.`);
+      err.code = 'USER_LIMIT_REACHED';
+      throw err;
+    }
     const finalSchoolNo = rawSNum || `AUTO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newId = await this.db.students.add({
       schoolNumber: finalSchoolNo,
@@ -450,6 +469,10 @@ class Database {
 
     let imported = 0;
     let errors = 0;
+    let skippedForLimit = 0;
+    // allStudents.length'ten baslayip her YENI ogrenci olusturulunca artan
+    // canli sayac - bkz. setUserLimit/findOrMatchStudent'taki ayni kontrol.
+    let liveStudentCount = allStudents.length;
 
     await this.db.transaction('rw', [this.db.students, this.db.results], async () => {
       // 1. First pass: find or prepare all students
@@ -491,7 +514,11 @@ class Database {
               await this.db.students.update(studentId, updates);
             }
           } else {
-            // Create new student
+            // Create new student - once limite tabi (bkz. setUserLimit)
+            if (this._userLimit != null && liveStudentCount >= this._userLimit) {
+              skippedForLimit++;
+              continue;
+            }
             const newStudent = {
               schoolNumber: rawSNum || `AUTO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               firstName: fn || 'Öğrenci',
@@ -499,6 +526,7 @@ class Database {
               className: String(studentData.className || '').trim(),
             };
             studentId = await this.db.students.add(newStudent);
+            liveStudentCount++;
             newStudent.id = studentId;
             if (!isAuto && cleanSNum) schoolNoMap.set(cleanSNum, newStudent);
             if (cleanName) fullNameMap.set(cleanName, newStudent);
@@ -544,7 +572,7 @@ class Database {
     });
 
     this._notifyChange();
-    return { imported, errors };
+    return { imported, errors, skippedForLimit };
   }
 
   // Automatic Data Repair & Deduplication Utility
@@ -954,7 +982,7 @@ class Database {
         if (s && s.id) {
           await this.db.students.put(s);
         } else if (s) {
-          await this.addStudent(s);
+          await this.addStudent(s, { enforceLimit: false });
         }
       }
     }

@@ -67,6 +67,14 @@ const Schools = {
             <label class="form-label">Adres (opsiyonel)</label>
             <input type="text" id="new-school-address" class="form-control" placeholder="Adres">
           </div>
+          <div>
+            <label class="form-label">Kullanıcı Limiti (opsiyonel)</label>
+            <input type="number" min="1" id="new-school-limit" class="form-control" placeholder="Boş = sınırsız">
+          </div>
+          <div>
+            <label class="form-label">Trial Bitiş Tarihi (opsiyonel)</label>
+            <input type="date" id="new-school-trial-end" class="form-control">
+          </div>
         </div>
         <p class="text-muted mt-2" style="font-size:13px">İlk Yönetici Hesabı</p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px">
@@ -100,19 +108,74 @@ const Schools = {
     schools.forEach(s => {
       html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
         <td style="padding:8px">${_schoolsEscapeHtml(s.name)}<br><span style="color:var(--text-muted);font-size:11px">${_schoolsEscapeHtml(s.slug)}</span></td>
-        <td style="padding:8px">${s.studentCount}</td>
+        <td style="padding:8px">${this._studentCountCell(s)}</td>
         <td style="padding:8px">${s.adminCount}</td>
-        <td style="padding:8px">${s.status === 'active' ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
+        <td style="padding:8px">${this._statusCell(s)}</td>
         <td style="padding:8px">${(s.createdAt || '').slice(0, 10)}</td>
         <td style="padding:8px;text-align:right;white-space:nowrap">
           <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.enterSchool(this)">🚪 Okula Gir</button>
           <button class="btn btn-secondary btn-sm" onclick="Schools.editSchool(${s.id})">✏️ Düzenle</button>
-          <button class="btn btn-secondary btn-sm" onclick="Schools.toggleStatus(${s.id})">${s.status === 'active' ? '⏸️ Pasifleştir' : '▶️ Aktifleştir'}</button>
+          <button class="btn btn-secondary btn-sm" onclick="Schools.toggleStatus(${s.id})">${s.status === 'inactive' ? '▶️ Aktifleştir' : '⏸️ Pasifleştir'}</button>
+          <button class="btn btn-secondary btn-sm" onclick="Schools.promptExtendTrial(${s.id})">⏳ Trial Ayarla</button>
         </td>
       </tr>`;
     });
     html += '</table></div>';
     return html;
+  },
+
+  // %80'e kadar noral, %80-95 sari, %95+ kirmizi (bkz. admin-panel-prompt.md
+  // bolum 3 "limite %80-90 yaklastiginda uyari rengi").
+  _limitColor(count, limit) {
+    if (!limit) return 'var(--text-primary)';
+    const ratio = count / limit;
+    if (ratio >= 0.95) return '#fb7185';
+    if (ratio >= 0.8) return '#fbbf24';
+    return 'var(--text-primary)';
+  },
+
+  _studentCountCell(s) {
+    if (!s.userLimit) return `${s.studentCount}`;
+    return `<span style="color:${this._limitColor(s.studentCount, s.userLimit)}">${s.studentCount} / ${s.userLimit}</span>`;
+  },
+
+  _statusCell(s) {
+    if (s.status === 'trial') {
+      const daysLeft = s.trialEndsAt ? Math.ceil((new Date(s.trialEndsAt) - new Date()) / 86400000) : null;
+      const label = daysLeft != null ? `${daysLeft >= 0 ? daysLeft : 0} gün kaldı` : '';
+      return `<span style="color:#60a5fa">● Trial</span>${label ? `<br><span style="color:var(--text-muted);font-size:11px">${label}</span>` : ''}`;
+    }
+    if (s.status === 'active') return '<span style="color:#4ade80">● Aktif</span>';
+    return '<span style="color:#fb7185">● Pasif</span>';
+  },
+
+  promptExtendTrial(schoolId) {
+    const school = (this._schools || []).find(s => s.id === schoolId);
+    if (!school) return;
+    const current = school.trialEndsAt ? school.trialEndsAt.slice(0, 10) : '';
+    const input = prompt(
+      `"${school.name}" için trial bitiş tarihi (YYYY-AA-GG). Bugünden ileri bir tarih girin - okul Trial durumuna geçer/trial süresi uzar.`,
+      current
+    );
+    if (!input) return;
+    const trialEndsAt = `${input.trim()}T23:59:59`;
+    this.extendTrial(schoolId, trialEndsAt);
+  },
+
+  async extendTrial(schoolId, trialEndsAt) {
+    try {
+      const res = await fetch(`/api/superadmin/organizations/${schoolId}/extend-trial`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trialEndsAt }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'İşlem başarısız.');
+      UI.toast('Trial süresi güncellendi.', 'success');
+      await this.render();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   // Bu okulu super_admin adina "acar": Kullanicilar (hesap yonetimi,
@@ -166,6 +229,10 @@ const Schools = {
           <label class="form-label">Adres (opsiyonel)</label>
           <input type="text" id="edit-school-address" class="form-control" value="${_schoolsEscapeHtml(school.address || '')}">
         </div>
+        <div>
+          <label class="form-label">Kullanıcı Limiti (opsiyonel)</label>
+          <input type="number" min="1" id="edit-school-limit" class="form-control" value="${school.userLimit != null ? school.userLimit : ''}" placeholder="Boş = sınırsız">
+        </div>
       </div>
       <div class="mt-2">
         <button class="btn btn-primary" onclick="Schools.saveSchoolEdit(${school.id})">Kaydet</button>
@@ -187,13 +254,14 @@ const Schools = {
     const email = document.getElementById('edit-school-email').value.trim();
     const phone = document.getElementById('edit-school-phone').value.trim();
     const address = document.getElementById('edit-school-address').value.trim();
+    const userLimit = document.getElementById('edit-school-limit').value.trim() || null;
     const statusEl = document.getElementById('edit-school-status');
     statusEl.textContent = 'Kaydediliyor...';
     try {
       const res = await fetch(`/api/superadmin/organizations/${schoolId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, phone, address }),
+        body: JSON.stringify({ name, email, phone, address, userLimit }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Güncellenemedi.');
@@ -222,6 +290,9 @@ const Schools = {
     const email = document.getElementById('new-school-email').value.trim();
     const phone = document.getElementById('new-school-phone').value.trim();
     const address = document.getElementById('new-school-address').value.trim();
+    const userLimit = document.getElementById('new-school-limit').value.trim() || null;
+    const trialEndDate = document.getElementById('new-school-trial-end').value;
+    const trialEndsAt = trialEndDate ? `${trialEndDate}T23:59:59` : null;
     const adminDisplayName = document.getElementById('new-school-admin-displayname').value.trim();
     const adminUsername = document.getElementById('new-school-admin-username').value.trim();
     const adminPassword = document.getElementById('new-school-admin-password').value;
@@ -233,7 +304,7 @@ const Schools = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name, email, phone, address,
+          name, email, phone, address, userLimit, trialEndsAt,
           adminDisplayName, adminUsername, adminPassword,
         }),
       });

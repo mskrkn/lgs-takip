@@ -1089,7 +1089,11 @@ const ImportOptical = {
       this._opticalTopicMap = null;
     }
 
-    UI.toast(`${res.imported} öğrencinin sınav sonucu başarıyla kaydedildi!${res.errors > 0 ? ` (${res.errors} hata)` : ''}`, res.errors > 0 ? 'warning' : 'success');
+    const extra = [
+      res.errors > 0 ? `${res.errors} hata` : null,
+      res.skippedForLimit > 0 ? `${res.skippedForLimit} öğrenci kullanıcı limiti nedeniyle eklenemedi` : null,
+    ].filter(Boolean).join(', ');
+    UI.toast(`${res.imported} öğrencinin sınav sonucu başarıyla kaydedildi!${extra ? ` (${extra})` : ''}`, (res.errors > 0 || res.skippedForLimit > 0) ? 'warning' : 'success');
     this.clearOpticalPreview();
     this.loadExamSelects();
 
