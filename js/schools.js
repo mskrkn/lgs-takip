@@ -77,6 +77,7 @@ const Schools = {
 
     container.innerHTML = `
       ${this._renderAttentionPanel(attentionItems)}
+      ${this._renderQuickActions()}
       ${this._renderPusiPanel(pusiInsights)}
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
       ${rankings ? this._renderRankings(rankings) : ''}
@@ -99,7 +100,7 @@ const Schools = {
 
       <div class="card mt-2" id="edit-school-card" style="display:none"></div>
 
-      <div class="card mt-2">
+      <div class="card mt-2" id="new-school-card">
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">➕</span> Yeni Okul Ekle</h3>
         </div>
@@ -177,6 +178,30 @@ const Schools = {
         </div>
       </div>
     `;
+  },
+
+  // Madde 10: Hızlı İşlemler - rol bazlı (Süper Admin/Admin Yardımcısı bu
+  // sayfayı görür; admin oluşturma butonu SADECE canManageAdmins'te çıkar,
+  // bkz. server.py ASSIGNABLE_ADMIN_SUBROLES ile aynı ayrım).
+  _renderQuickActions() {
+    const canManageAdmins = App.currentUser?.canManageAdmins;
+    return `
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">⚡</span> Hızlı İşlemler</h3></div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <button class="btn btn-secondary btn-sm" onclick="Schools._scrollToNewSchoolForm()">➕ Yeni Okul Ekle</button>
+          ${canManageAdmins ? `<button class="btn btn-secondary btn-sm" onclick="App.navigateTo('admins')">🔐 Admin Ekle</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('system-logs')">📜 Sistem Logları</button>
+        </div>
+      </div>
+    `;
+  },
+
+  _scrollToNewSchoolForm() {
+    const card = document.getElementById('new-school-card');
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('new-school-name')?.focus();
   },
 
   // Madde 5: "Pusi'nin Günlük Analizi" - kural tabanlı (LLM değil, mevcut
