@@ -96,34 +96,109 @@ const SchoolView = {
     }
   },
 
+  _studentsTableHtml(rows) {
+    return `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
+      <tr style="text-align:left;color:var(--text-muted)">
+        <th style="padding:8px">Ad Soyad</th><th style="padding:8px">Sınıf</th>
+        <th style="padding:8px">Son Net</th><th style="padding:8px">Sıra</th><th style="padding:8px">Durum</th>
+      </tr>
+      ${rows.map(s => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('student-profile', {studentId: ${s.id}})">
+        <td style="padding:8px">${_svEscapeHtml(s.first_name)} ${_svEscapeHtml(s.last_name)}</td>
+        <td style="padding:8px">${_svEscapeHtml(s.class_name || '-')}</td>
+        <td style="padding:8px">${s.latestNet ?? '-'}</td>
+        <td style="padding:8px">${s.rank ?? '-'}</td>
+        <td style="padding:8px">${_svEscapeHtml(s.status || '-')}</td>
+      </tr>`).join('')}
+    </table></div>`;
+  },
+
+  // admin-panel-prompt.md bölüm 5: Kademe → Şube hiyerarşisi, sayılarla.
+  // "Okul seç" adımı bu görünüme zaten App.actingSchool set edilmeden
+  // ulaşılamadığı için ayrıca gerekmiyor (bkz. Schools.enterSchool).
+  _gradeCardsHtml(students) {
+    const counts = {};
+    students.forEach(s => {
+      const grade = App.parseClassName(s.class_name).grade;
+      const key = grade || '__none__';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const grades = Object.keys(counts).filter(k => k !== '__none__').sort((a, b) => Number(a) - Number(b));
+    const cards = grades.map(g => `
+      <div class="stat-card" style="cursor:pointer" onclick="SchoolView.drillIntoGrade('${g}')">
+        <div class="stat-icon purple">📚</div>
+        <div class="stat-value">${counts[g]}</div>
+        <div class="stat-label">${g}. Sınıf</div>
+      </div>`).join('');
+    const noneCard = counts.__none__ ? `
+      <div class="stat-card" style="cursor:pointer" onclick="SchoolView.drillIntoGrade('')">
+        <div class="stat-icon orange">❔</div>
+        <div class="stat-value">${counts.__none__}</div>
+        <div class="stat-label">Sınıfı Belirsiz</div>
+      </div>` : '';
+    return `<p class="text-muted" style="margin-bottom:12px">Listelemek için bir sınıf kademesi seçin.</p>
+      <div class="stats-grid">${cards}${noneCard}</div>`;
+  },
+
+  _branchCardsHtml(grade) {
+    const students = (this._studentsCache || []).filter(s => App.parseClassName(s.class_name).grade === grade);
+    const counts = {};
+    students.forEach(s => {
+      const branch = App.parseClassName(s.class_name).branch;
+      const key = branch || '__none__';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const branches = Object.keys(counts).filter(k => k !== '__none__').sort();
+    const cards = branches.map(b => `
+      <div class="stat-card" style="cursor:pointer" onclick="SchoolView.drillIntoBranch('${grade}', '${b}')">
+        <div class="stat-icon blue">🏷️</div>
+        <div class="stat-value">${counts[b]}</div>
+        <div class="stat-label">${grade}/${b}</div>
+      </div>`).join('');
+    const noneCard = counts.__none__ ? `
+      <div class="stat-card" style="cursor:pointer" onclick="SchoolView.drillIntoBranch('${grade}', '')">
+        <div class="stat-icon orange">❔</div>
+        <div class="stat-value">${counts.__none__}</div>
+        <div class="stat-label">Şubesi Belirsiz</div>
+      </div>` : '';
+    return `<button class="btn btn-secondary btn-sm mb-2" onclick="SchoolView.resetStudentsHierarchy()">◀ Kademelere Dön</button>
+      <p class="text-muted" style="margin-bottom:12px">${grade}. Sınıf - bir şube seçin.</p>
+      <div class="stats-grid">${cards}${noneCard}</div>`;
+  },
+
+  drillIntoGrade(grade) {
+    document.getElementById('sv-students-body').innerHTML = this._branchCardsHtml(grade);
+  },
+
+  drillIntoBranch(grade, branch) {
+    const rows = (this._studentsCache || []).filter(s => {
+      const p = App.parseClassName(s.class_name);
+      return p.grade === grade && (branch === '' ? !p.branch : p.branch === branch);
+    }).sort((a, b) => (a.last_name || '').localeCompare(b.last_name || '', 'tr'));
+    document.getElementById('sv-students-body').innerHTML =
+      `<button class="btn btn-secondary btn-sm mb-2" onclick="SchoolView.resetStudentsHierarchy()">◀ Kademelere Dön</button>`
+      + this._studentsTableHtml(rows);
+  },
+
+  resetStudentsHierarchy() {
+    document.getElementById('sv-students-body').innerHTML = this._gradeCardsHtml(this._studentsCache || []);
+  },
+
   async renderStudents() {
     const container = document.getElementById('page-students');
     if (!container) return;
     container.innerHTML = `${this._banner()}<p class="text-muted mt-2">Yükleniyor...</p>`;
     try {
       const data = await this._loadOverview();
-      const rows = [...data.students].sort((a, b) => (a.last_name || '').localeCompare(b.last_name || '', 'tr'));
+      this._studentsCache = data.students;
       container.innerHTML = `
         ${this._banner()}
         <div class="card mt-2">
           <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <h3 class="card-title"><span class="card-icon">🎓</span> Öğrenciler (${rows.length})</h3>
+            <h3 class="card-title"><span class="card-icon">🎓</span> Öğrenciler (${data.students.length})</h3>
             <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddStudentForm(true)">➕ Öğrenci Ekle</button>
           </div>
           ${this._addStudentFormHtml()}
-          <div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
-            <tr style="text-align:left;color:var(--text-muted)">
-              <th style="padding:8px">Ad Soyad</th><th style="padding:8px">Sınıf</th>
-              <th style="padding:8px">Son Net</th><th style="padding:8px">Sıra</th><th style="padding:8px">Durum</th>
-            </tr>
-            ${rows.map(s => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('student-profile', {studentId: ${s.id}})">
-              <td style="padding:8px">${_svEscapeHtml(s.first_name)} ${_svEscapeHtml(s.last_name)}</td>
-              <td style="padding:8px">${_svEscapeHtml(s.class_name || '-')}</td>
-              <td style="padding:8px">${s.latestNet ?? '-'}</td>
-              <td style="padding:8px">${s.rank ?? '-'}</td>
-              <td style="padding:8px">${_svEscapeHtml(s.status || '-')}</td>
-            </tr>`).join('')}
-          </table></div>
+          <div id="sv-students-body">${this._gradeCardsHtml(data.students)}</div>
         </div>`;
     } catch (err) {
       container.innerHTML = `${this._banner()}<p class="text-muted mt-2">❌ ${_svEscapeHtml(err.message)}</p>`;
@@ -180,22 +255,55 @@ const SchoolView = {
     container.innerHTML = `${this._banner()}<p class="text-muted mt-2">Yükleniyor...</p>`;
     try {
       const data = await this._loadOverview();
+
+      // admin-panel-prompt.md bölüm 7: kademeye göre gruplu liste.
+      const groups = {};
+      data.exams.forEach(e => {
+        const grade = e.stats?.dominantGrade || null;
+        const key = grade || '__other__';
+        if (!groups[key]) groups[key] = { grade, exams: [] };
+        groups[key].exams.push(e);
+      });
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (a === '__other__') return 1;
+        if (b === '__other__') return -1;
+        return Number(a) - Number(b);
+      });
+      const rowHtml = (e) => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('exam-detail', {examId: ${e.id}})">
+        <td style="padding:8px">${_svEscapeHtml(e.name)}</td>
+        <td style="padding:8px">${_svEscapeHtml(e.date || '-')}</td>
+        <td style="padding:8px">${_svEscapeHtml(e.exam_type || '-')}</td>
+        <td style="padding:8px">${e.stats ? e.stats.studentCount : '-'}</td>
+        <td style="padding:8px">${e.stats ? e.stats.totalNet : '-'}</td>
+        <td style="padding:8px">${e.stats ? e.stats.highestNet : '-'}</td>
+        <td style="padding:8px">${e.stats ? e.stats.lowestNet : '-'}</td>
+      </tr>`;
+      const groupsHtml = sortedKeys.map(key => {
+        const g = groups[key];
+        const title = g.grade ? `${g.grade}. Sınıf Denemeleri` : 'Diğer / Karışık Denemeler';
+        return `<h4 style="font-size:14px;font-weight:600;color:var(--text-muted);margin:16px 0 8px">${title} (${g.exams.length})</h4>
+          <div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
+            <tr style="text-align:left;color:var(--text-muted)">
+              <th style="padding:8px">Deneme</th><th style="padding:8px">Tarih</th><th style="padding:8px">Tür</th>
+              <th style="padding:8px">Katılımcı</th><th style="padding:8px">Ort. Net</th>
+              <th style="padding:8px">En Yüksek</th><th style="padding:8px">En Düşük</th>
+            </tr>
+            ${g.exams.map(rowHtml).join('')}
+          </table></div>`;
+      }).join('');
+
+      // Veri Girişi Admini "+ Deneme Oluştur" butonunu görmez (bölüm 7).
+      const canCreateExam = !App.currentUser?.dataEntryOnly;
+
       container.innerHTML = `
         ${this._banner()}
         <div class="card mt-2">
           <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <h3 class="card-title"><span class="card-icon">📝</span> Denemeler (${data.exams.length})</h3>
-            <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddExamForm(true)">➕ Deneme Oluştur</button>
+            ${canCreateExam ? `<button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddExamForm(true)">➕ Deneme Oluştur</button>` : ''}
           </div>
-          ${this._addExamFormHtml()}
-          <div class="table-wrapper"><table style="width:100%;border-collapse:collapse;font-size:13px">
-            <tr style="text-align:left;color:var(--text-muted)"><th style="padding:8px">Deneme</th><th style="padding:8px">Tarih</th><th style="padding:8px">Tür</th></tr>
-            ${data.exams.map(e => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('exam-detail', {examId: ${e.id}})">
-              <td style="padding:8px">${_svEscapeHtml(e.name)}</td>
-              <td style="padding:8px">${_svEscapeHtml(e.date || '-')}</td>
-              <td style="padding:8px">${_svEscapeHtml(e.exam_type || '-')}</td>
-            </tr>`).join('')}
-          </table></div>
+          ${canCreateExam ? this._addExamFormHtml() : ''}
+          ${groupsHtml}
         </div>`;
     } catch (err) {
       container.innerHTML = `${this._banner()}<p class="text-muted mt-2">❌ ${_svEscapeHtml(err.message)}</p>`;

@@ -822,10 +822,19 @@ class Database {
   }
 
   async getAllExamsAverages() {
-    const [exams, results] = await Promise.all([
+    const [exams, results, students] = await Promise.all([
       this.getAllExams(),
-      this.db.results.toArray()
+      this.db.results.toArray(),
+      this.db.students.toArray(),
     ]);
+
+    // '9/A' -> '9' gibi kademeyi çıkarır (bkz. App.parseClassName - burada
+    // App'e bağımlı olmamak için aynı mantık küçük bir yardımcıya kopyalandı).
+    const gradeOf = (className) => {
+      const m = String(className || '').trim().match(/^(\d+)/);
+      return m ? m[1] : null;
+    };
+    const studentGradeMap = new Map(students.map(s => [s.id, gradeOf(s.className)]));
 
     const examResultsMap = {};
     results.forEach(r => {
@@ -856,12 +865,33 @@ class Database {
         averages[sub.key] = count > 0 ? parseFloat((sum / count).toFixed(2)) : 0;
       });
 
+      let highestNet = -Infinity, lowestNet = Infinity;
       eResults.forEach(r => {
-        totalNetSum += this.calcTotalNet(r);
+        const net = this.calcTotalNet(r);
+        totalNetSum += net;
+        if (net > highestNet) highestNet = net;
+        if (net < lowestNet) lowestNet = net;
       });
 
       averages.totalNet = parseFloat((totalNetSum / eResults.length).toFixed(2));
       averages.studentCount = eResults.length;
+      averages.highestNet = parseFloat(highestNet.toFixed(2));
+      averages.lowestNet = parseFloat(lowestNet.toFixed(2));
+
+      // Bir denemenin "kademesi" diye ayrı bir alanı yok - katılımcıların
+      // sınıflarından (baskın kademe, >=%60) TÜRETİLİR. Katılımcılar birden
+      // fazla kademeye dağılmışsa (baskın çoğunluk yoksa) null - çağıran
+      // taraf bunu "Diğer/Karışık" grubunda toplar (bkz. admin-panel-prompt.md
+      // bölüm 7 - kademeye göre gruplu deneme listesi).
+      const gradeCounts = {};
+      eResults.forEach(r => {
+        const grade = studentGradeMap.get(r.studentId);
+        if (grade) gradeCounts[grade] = (gradeCounts[grade] || 0) + 1;
+      });
+      const gradeEntries = Object.entries(gradeCounts).sort((a, b) => b[1] - a[1]);
+      averages.dominantGrade = (gradeEntries.length && gradeEntries[0][1] / eResults.length >= 0.6)
+        ? gradeEntries[0][0] : null;
+
       averagesMap[exam.id] = averages;
     });
 
