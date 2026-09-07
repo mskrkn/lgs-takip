@@ -764,7 +764,8 @@
       const questionsHtml = data.questions.map((q, i) => `
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bg-glass-border)">
           <div style="font-size:13px;color:var(--text-muted)">Soru ${i + 1} — ${escapeHtml(q.displayCode)}</div>
-          ${q.questionText ? `<div style="margin-top:6px">${escapeHtml(q.questionText)}</div>` : (q.hasImage ? '<div class="text-muted" style="margin-top:6px">(Görsel soru - öğretmeninize danışın)</div>' : '')}
+          ${q.questionText ? `<div style="margin-top:6px">${escapeHtml(q.questionText)}</div>` : ''}
+          ${q.hasImage ? `<img src="/api/student/question-image/${q.questionBankId}" alt="Soru ${i + 1}" style="margin-top:8px;max-width:100%;border-radius:8px;border:1px solid var(--bg-glass-border)" loading="lazy">` : ''}
           <input type="text" class="form-control assignment-answer-input" data-question-id="${q.questionBankId}"
                  style="margin-top:8px;max-width:200px" placeholder="Cevabınız"
                  value="${escapeHtml(q.myAnswer || '')}" ${data.status !== 'active' ? 'disabled' : ''}>
