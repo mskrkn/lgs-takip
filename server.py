@@ -210,6 +210,10 @@ def _migrate_users_table(conn):
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
     if "phone" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+    if "subject" not in cols:
+        # Ogretmenin branşı (admin-panel-prompt.md bölüm 6 filtreleri icin) -
+        # diger roller icin anlamsiz, NULL kalir.
+        conn.execute("ALTER TABLE users ADD COLUMN subject TEXT")
 
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -263,10 +267,13 @@ def _migrate_users_table(conn):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         has_org = "organization_id" in cols
         has_contact = "email" in cols and "phone" in cols
+        has_subject = "subject" in cols
         org_col_def = ",\n                organization_id INTEGER REFERENCES organizations(id)" if has_org else ""
         org_col_name = ", organization_id" if has_org else ""
         contact_col_def = ",\n                email TEXT,\n                phone TEXT" if has_contact else ""
         contact_col_name = ", email, phone" if has_contact else ""
+        subject_col_def = ",\n                subject TEXT" if has_subject else ""
+        subject_col_name = ", subject" if has_subject else ""
         conn.executescript(
             f"""
             CREATE TABLE users_new (
@@ -278,12 +285,12 @@ def _migrate_users_table(conn):
                 class_name TEXT,
                 student_id INTEGER,
                 active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT{org_col_def}{contact_col_def}
+                created_at TEXT{org_col_def}{contact_col_def}{subject_col_def}
             );
             INSERT INTO users_new (id, username, password_hash, role, display_name,
-                                    class_name, student_id, active, created_at{org_col_name}{contact_col_name})
+                                    class_name, student_id, active, created_at{org_col_name}{contact_col_name}{subject_col_name})
                 SELECT id, username, password_hash, role, display_name,
-                       class_name, student_id, active, created_at{org_col_name}{contact_col_name} FROM users;
+                       class_name, student_id, active, created_at{org_col_name}{contact_col_name}{subject_col_name} FROM users;
             DROP TABLE users;
             ALTER TABLE users_new RENAME TO users;
             """
@@ -1919,6 +1926,11 @@ def api_login():
             "SELECT user_limit FROM organizations WHERE id = ?", (user["organization_id"],)
         ).fetchone()
         user_limit = org_row["user_limit"] if org_row else None
+    # Veri Girişi Admini mi? (admin-panel-prompt.md bölüm 7: "+ Yeni Deneme"
+    # butonunu göremez.) NOT: bu SADECE frontend'te butonu gizler - backend
+    # tarafında exams.create'i GERÇEKTEN kısıtlamaz (bkz. _admin_subrole
+    # yorumu, DATA_ADMIN'in yanında otomatik INSTITUTION_ADMIN de taşınır).
+    data_entry_only = user["role"] == "admin" and _admin_subrole(db, user["id"], user["role"]) == "DATA_ADMIN"
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
@@ -1929,6 +1941,7 @@ def api_login():
         "canManageAdmins": can_manage_admins,
         "organizationId": user["organization_id"],
         "userLimit": user_limit,
+        "dataEntryOnly": data_entry_only,
     })
 
 
@@ -1965,6 +1978,10 @@ def api_me():
     if own_org_id:
         limit_row = db.execute("SELECT user_limit FROM organizations WHERE id = ?", (own_org_id,)).fetchone()
         user_limit = limit_row["user_limit"] if limit_row else None
+    data_entry_only = (
+        session.get("role") == "admin"
+        and _admin_subrole(db, session["user_id"], session.get("role")) == "DATA_ADMIN"
+    )
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
@@ -1975,6 +1992,7 @@ def api_me():
         "canManageAdmins": can_manage_admins,
         "organizationId": own_org_id,
         "userLimit": user_limit,
+        "dataEntryOnly": data_entry_only,
     })
 
 
@@ -3060,7 +3078,7 @@ def api_admin_list_users():
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
-        "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
+        "SELECT id, username, role, display_name, class_name, student_id, active, subject FROM users "
         "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
@@ -3087,6 +3105,7 @@ def api_admin_list_users():
             "studentId": r["student_id"], "studentName": ", ".join(student_names) or None,
             "active": bool(r["active"]),
             "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
+            "subject": r["subject"] if r["role"] == "teacher" else None,
         })
     return jsonify(out)
 
@@ -3121,6 +3140,7 @@ def api_admin_create_user():
     class_name = (data.get("className") or "").strip() or None
     student_id = data.get("studentId") or None
     student_ids = [int(x) for x in (data.get("studentIds") or []) if x]
+    subject = (data.get("subject") or "").strip() or None
 
     if not username or not password or role not in ("teacher", "parent", "student"):
         return jsonify({"error": "Kullanıcı adı, şifre ve geçerli bir rol (teacher/parent/student) gerekli."}), 400
@@ -3154,9 +3174,10 @@ def api_admin_create_user():
 
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
-        "student_id, organization_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        "student_id, organization_id, subject, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         (username, hash_password(password), role, display_name,
-         class_name, student_id if role == "student" else None, org_id, datetime.now().isoformat()),
+         class_name, student_id if role == "student" else None, org_id,
+         subject if role == "teacher" else None, datetime.now().isoformat()),
     )
     if role == "parent":
         new_user_id = cur.lastrowid
@@ -3538,6 +3559,41 @@ def api_teacher_overview():
         (org_id,),
     ).fetchall()
 
+    # admin-panel-prompt.md bolum 7: kademeye gore gruplu liste + katilimci/
+    # ortalama/en yuksek/en dusuk. Denemenin kendi bir "kademe" alani yok -
+    # katilimcilarinin sinif adlarindan (bkz. js/app.js parseClassName ile
+    # AYNI mantik) baskin kademe (>=%60) turetilir.
+    exam_stats = {}
+    for e in exams:
+        rows = db.execute(
+            "SELECT r.data_json, s.class_name FROM results r "
+            "JOIN students s ON s.id = r.student_id WHERE r.exam_id = ?",
+            (e["id"],),
+        ).fetchall()
+        if not rows:
+            exam_stats[e["id"]] = None
+            continue
+        nets = []
+        grade_counts = {}
+        for r in rows:
+            data = json.loads(r["data_json"]) if r["data_json"] else {}
+            nets.append(calc_total_net(data.get("subjects", {})))
+            m = re.match(r"^(\d+)", (r["class_name"] or "").strip())
+            if m:
+                grade_counts[m.group(1)] = grade_counts.get(m.group(1), 0) + 1
+        dominant_grade = None
+        if grade_counts:
+            top_grade, top_count = max(grade_counts.items(), key=lambda kv: kv[1])
+            if top_count / len(rows) >= 0.6:
+                dominant_grade = top_grade
+        exam_stats[e["id"]] = {
+            "studentCount": len(nets),
+            "totalNet": round(sum(nets) / len(nets), 2),
+            "highestNet": round(max(nets), 2),
+            "lowestNet": round(min(nets), 2),
+            "dominantGrade": dominant_grade,
+        }
+
     student_list = []
     for s in students:
         s_dict = dict(s)
@@ -3586,10 +3642,16 @@ def api_teacher_overview():
     for idx, s_item in enumerate(sorted_by_net, 1):
         s_item["rank"] = idx if s_item["latestNet"] is not None else None
 
+    exams_with_stats = []
+    for e in exams:
+        e_dict = dict(e)
+        e_dict["stats"] = exam_stats.get(e["id"])
+        exams_with_stats.append(e_dict)
+
     return jsonify({
         "className": my_class,
         "students": student_list,
-        "exams": [dict(e) for e in exams],
+        "exams": exams_with_stats,
         "classAverages": _all_class_averages(db, org_id),
     })
 
