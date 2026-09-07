@@ -54,17 +54,19 @@ const Schools = {
 
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
 
-    let schools = [], dashboard = null, attentionItems = [];
+    let schools = [], dashboard = null, attentionItems = [], rankings = null;
     try {
-      const [schoolsRes, dashRes, attnRes] = await Promise.all([
+      const [schoolsRes, dashRes, attnRes, rankRes] = await Promise.all([
         fetch('/api/superadmin/organizations'),
         fetch('/api/superadmin/dashboard'),
         fetch('/api/superadmin/attention-items'),
+        fetch('/api/superadmin/school-rankings'),
       ]);
       if (!schoolsRes.ok) throw new Error((await schoolsRes.json()).error || 'Okullar yüklenemedi.');
       schools = await schoolsRes.json();
       dashboard = dashRes.ok ? await dashRes.json() : null;
       attentionItems = attnRes.ok ? await attnRes.json() : [];
+      rankings = rankRes.ok ? await rankRes.json() : null;
     } catch (err) {
       container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
       return;
@@ -74,6 +76,7 @@ const Schools = {
     container.innerHTML = `
       ${this._renderAttentionPanel(attentionItems)}
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
+      ${rankings ? this._renderRankings(rankings) : ''}
 
       <div class="card mt-2" style="border:1px solid rgba(20,184,166,0.3)">
         <div class="card-header">
@@ -168,6 +171,38 @@ const Schools = {
               <span style="color:var(--text-muted);font-size:12px">→</span>
             </div>
           `).join('')}
+        </div>
+      </div>
+    `;
+  },
+
+  // Madde 6+7: "En Aktif Okullar" (haftalık liderlik tablosu) + "Aktivitesi
+  // Düşen Okullar" (churn risk monitoring - bu hafta vs geçen hafta).
+  _renderRankings(r) {
+    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+    const topActiveHtml = r.topActive.length
+      ? r.topActive.map((s, i) => `
+          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px">
+            <span>${medals[i] || '•'} ${_schoolsEscapeHtml(s.name)}</span>
+            <span style="color:var(--text-muted)">${s.examCount} deneme</span>
+          </div>`).join('')
+      : '<p class="text-muted" style="font-size:13px">Bu hafta henüz deneme yapılmadı.</p>';
+    const decliningHtml = r.declining.length
+      ? r.declining.map(s => `
+          <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px">
+            <span>${_schoolsEscapeHtml(s.name)}</span>
+            <span style="color:#fb7185">↓ %${s.dropPercent} (${s.lastWeek}→${s.thisWeek})</span>
+          </div>`).join('')
+      : '<p class="text-muted" style="font-size:13px">Belirgin bir aktivite düşüşü yok.</p>';
+    return `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">🏆</span> Bu Haftanın En Aktif Okulları</h3></div>
+          ${topActiveHtml}
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">📉</span> Aktivitesi Düşen Okullar</h3></div>
+          ${decliningHtml}
         </div>
       </div>
     `;
@@ -317,7 +352,8 @@ const Schools = {
     let html = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
       <tr style="text-align:left;color:var(--text-muted);font-size:13px">
         <th style="padding:8px">Okul</th><th style="padding:8px">Öğrenci</th>
-        <th style="padding:8px">Yönetici</th><th style="padding:8px">Durum</th><th style="padding:8px">Oluşturulma</th>
+        <th style="padding:8px">Yönetici</th><th style="padding:8px">Durum</th>
+        <th style="padding:8px">Son Aktivite</th><th style="padding:8px">Sistem Sağlığı</th>
         <th style="padding:8px"></th>
       </tr>`;
     schools.forEach(s => {
@@ -326,7 +362,8 @@ const Schools = {
         <td style="padding:8px">${this._studentCountCell(s)}</td>
         <td style="padding:8px">${s.adminCount}</td>
         <td style="padding:8px">${this._statusCell(s)}</td>
-        <td style="padding:8px">${(s.createdAt || '').slice(0, 10)}</td>
+        <td style="padding:8px">${this._lastActivityCell(s.lastActivity)}</td>
+        <td style="padding:8px">${this._healthCell(s.health)}</td>
         <td style="padding:8px;text-align:right;white-space:nowrap">
           <button class="btn btn-secondary btn-sm" data-school-id="${s.id}" data-school-name="${_schoolsEscapeHtml(s.name).replace(/"/g, '&quot;')}" onclick="Schools.enterSchool(this)">🚪 Okula Gir</button>
           <button class="btn btn-secondary btn-sm" onclick="Schools.editSchool(${s.id})">✏️ Düzenle</button>
@@ -347,6 +384,23 @@ const Schools = {
     if (ratio >= 0.95) return '#fb7185';
     if (ratio >= 0.8) return '#fbbf24';
     return 'var(--text-primary)';
+  },
+
+  _lastActivityCell(lastActivity) {
+    if (!lastActivity) return '<span style="color:var(--text-muted)">—</span>';
+    const days = Math.floor((new Date() - new Date(lastActivity)) / 86400000);
+    if (days <= 0) return '<span style="color:#4ade80">Bugün</span>';
+    if (days === 1) return '<span style="color:#4ade80">Dün</span>';
+    if (days <= 7) return `<span style="color:#4ade80">${days} gün önce</span>`;
+    if (days <= 30) return `<span style="color:#fbbf24">${days} gün önce</span>`;
+    return `<span style="color:#fb7185">${days} gün önce</span>`;
+  },
+
+  _healthCell(health) {
+    if (!health) return '—';
+    const colors = { healthy: '#4ade80', warning: '#fbbf24', risky: '#fb7185' };
+    const icons = { healthy: '🟢', warning: '🟡', risky: '🔴' };
+    return `<span title="Giriş:${health.breakdown.loginRecency} Deneme:${health.breakdown.examActivity} Öğretmen:${health.breakdown.teacherActivity} Öğrenci:${health.breakdown.studentActivity} Veri:${health.breakdown.dataQuality}" style="cursor:help;color:${colors[health.band]}">${icons[health.band]} ${health.score}</span>`;
   },
 
   _studentCountCell(s) {

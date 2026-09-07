@@ -2447,6 +2447,49 @@ def api_superadmin_growth_chart():
     return jsonify([{"date": r["bucket"], "value": r["c"]} for r in rows])
 
 
+@app.route("/api/superadmin/school-rankings")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_school_rankings():
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 6+7): 'En Aktif
+    Okullar' (bu haftaki deneme sayısına göre) ve 'Aktivitesi Düşen Okullar'
+    (bu hafta vs geçen hafta - SaaS'ta 'churn risk monitoring') - ikisi de
+    aynı iki haftalık pencereden türetildiği için tek uçta birleştirildi."""
+    db = get_db()
+    now = datetime.now()
+    this_week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+    last_week_start = (now - timedelta(days=13)).strftime("%Y-%m-%d")
+    last_week_end = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    this_week_counts = {r["organization_id"]: r["c"] for r in db.execute(
+        "SELECT organization_id, COUNT(*) c FROM exams WHERE date >= ? GROUP BY organization_id",
+        (this_week_start,),
+    ).fetchall()}
+    last_week_counts = {r["organization_id"]: r["c"] for r in db.execute(
+        "SELECT organization_id, COUNT(*) c FROM exams WHERE date >= ? AND date < ? GROUP BY organization_id",
+        (last_week_start, last_week_end),
+    ).fetchall()}
+    schools = {r["id"]: r["name"] for r in db.execute(
+        "SELECT id, name FROM organizations WHERE status != 'inactive'"
+    ).fetchall()}
+
+    top_active = sorted(
+        [{"id": oid, "name": schools[oid], "examCount": c} for oid, c in this_week_counts.items() if oid in schools and c > 0],
+        key=lambda x: x["examCount"], reverse=True,
+    )[:5]
+
+    declining = []
+    for oid, name in schools.items():
+        cur_c = this_week_counts.get(oid, 0)
+        prev_c = last_week_counts.get(oid, 0)
+        if prev_c >= 3 and cur_c < prev_c:
+            drop_pct = round((1 - cur_c / prev_c) * 100)
+            if drop_pct >= 30:
+                declining.append({"id": oid, "name": name, "dropPercent": drop_pct, "thisWeek": cur_c, "lastWeek": prev_c})
+    declining.sort(key=lambda x: x["dropPercent"], reverse=True)
+
+    return jsonify({"topActive": top_active, "declining": declining[:5]})
+
+
 @app.route("/api/superadmin/attention-items")
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_attention_items():
@@ -2538,14 +2581,20 @@ def api_superadmin_list_organizations():
         "SELECT o.id, o.name, o.slug, o.email, o.phone, o.address, o.status, o.created_at, "
         "o.user_limit, o.trial_ends_at, "
         "(SELECT COUNT(*) FROM users WHERE organization_id=o.id AND role='admin') AS admin_count, "
-        "(SELECT COUNT(*) FROM students WHERE organization_id=o.id) AS student_count "
+        "(SELECT COUNT(*) FROM students WHERE organization_id=o.id) AS student_count, "
+        "(SELECT MAX(last_login) FROM users WHERE organization_id=o.id) AS last_activity "
         "FROM organizations o ORDER BY o.created_at DESC"
     ).fetchall()
+    # Ana Sayfa Geliştirme Önerileri madde 3: okul listesine "Sistem Sağlığı"
+    # skoru eklenir - okul sayısı bu ölçekte küçük olduğu için (N sorgu x
+    # okul sayısı) burada kabul edilebilir, mevcut admin_count/student_count
+    # alt sorguları da zaten aynı desende.
     return jsonify([{
         "id": r["id"], "name": r["name"], "slug": r["slug"], "email": r["email"],
         "phone": r["phone"], "address": r["address"], "status": r["status"],
         "createdAt": r["created_at"], "adminCount": r["admin_count"], "studentCount": r["student_count"],
-        "userLimit": r["user_limit"], "trialEndsAt": r["trial_ends_at"],
+        "userLimit": r["user_limit"], "trialEndsAt": r["trial_ends_at"], "lastActivity": r["last_activity"],
+        "health": _compute_school_health(db, r["id"]),
     } for r in rows])
 
 
