@@ -190,6 +190,9 @@ const App = {
     } else if (this.currentUser.canManageSchools) {
       label = '🧭 Platform Sahibi';
       title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz.';
+    } else if (this.currentUser.dataEntryOnly) {
+      label = '📥 Veri Giriş Admini';
+      title = 'Sadece öğrenci kaydı ve deneme sonucu girişi yaparsınız - okul ayarlarına erişiminiz yok.';
     } else {
       label = '🏫 Okul Admini';
       title = 'Sadece kendi okulunuzun verilerini yönetirsiniz.';
@@ -357,6 +360,10 @@ const App = {
         // tıpkı başka bir okula girdikleri gibi.
         if (this.currentUser?.canManageSchools) {
           await Schools.render('page-dashboard');
+        } else if (this.currentUser?.dataEntryOnly) {
+          // Bölüm 2: Veri Giriş Admini operasyon odaklı kendi Anasayfa'sını
+          // görür (öğrenci/sınıf karşılaştırma detayları DEĞİL).
+          await this.renderDataAdminDashboard();
         } else {
           await this.renderDashboard();
         }
@@ -789,6 +796,74 @@ const App = {
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('import')">📥 Veri Girişi</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('question-bank')">📝 Soru Girişi</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">📊 Rapor Oluştur</button>
+        </div>
+      </div>
+    `;
+  },
+
+  // Bölüm 2 (yeni master prompt): Veri Giriş Admini'nin operasyon odaklı
+  // Anasayfa'sı. /api/data-admin/dashboard'daki 4 sinyali gösterir - master
+  // prompt'un istediği "bekleyen dosya/hatalı dosya/işleme başarı oranı"
+  // backend'de karşılığı olmadığı için buraya alınmadı (bkz. o ucun
+  // docstring'i - Veri Girişi sayfası tamamen tarayıcı-içi, kuyruk/durum
+  // takibi hiç yok).
+  async renderDataAdminDashboard() {
+    const container = document.getElementById('page-dashboard');
+    const greetingName = this.currentUser?.displayName || 'Yöneticim';
+    const todayStr = new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
+    let data = null;
+    try {
+      const res = await fetch('/api/data-admin/dashboard');
+      if (!res.ok) throw new Error((await res.json()).error || 'Veriler yüklenemedi.');
+      data = await res.json();
+    } catch (err) {
+      container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
+      return;
+    }
+
+    const lastSyncText = data.lastSync
+      ? `${new Date(data.lastSync.at).toLocaleString('tr-TR')} · ${data.lastSync.totalRecords} kayıt`
+      : 'Henüz senkronizasyon yapılmadı';
+
+    container.innerHTML = `
+      <div class="greeting-header">
+        <div>
+          <div class="greeting-title">👋 Hoş Geldiniz, ${greetingName}! 📥</div>
+          <p class="greeting-sub">Öğrenci kayıtlarını ve deneme sonuçlarını güncel tutun.</p>
+        </div>
+        <div class="greeting-date">📅 ${todayStr}</div>
+      </div>
+
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">⚡</span> Hızlı İşlemler</h3></div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('import')">📥 Veri Girişi</button>
+        </div>
+      </div>
+
+      <div class="stats-grid stats-grid-compact mt-2">
+        <div class="stat-card stat-card-link" onclick="App.navigateTo('students')" title="Öğrenciler sayfasına git">
+          <div class="stat-icon purple">👥</div>
+          <div class="stat-value">${data.totalStudents}</div>
+          <div class="stat-label">Toplam Öğrenci</div>
+        </div>
+        <div class="stat-card stat-card-link" onclick="App.navigateTo('students')" title="Sınıfı eksik öğrencileri gör">
+          <div class="stat-icon orange">⚠️</div>
+          <div class="stat-value">${data.missingClassCount}</div>
+          <div class="stat-label">Sınıfı Atanmamış Öğrenci</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon blue">🔄</div>
+          <div class="stat-value" style="font-size:14px">${lastSyncText}</div>
+          <div class="stat-label">Son Senkronizasyon</div>
+        </div>
+        <div class="stat-card ${data.latestExam ? 'stat-card-link' : ''}" ${data.latestExam ? `onclick="App.navigateTo('exam-detail', {examId: ${data.latestExam.id}})"` : ''}>
+          <div class="stat-icon green">📝</div>
+          <div class="stat-value">${data.latestExam ? data.latestExam.missingResultsCount : '-'}</div>
+          <div class="stat-label">${data.latestExam ? `"${data.latestExam.name}" - Sonucu Eksik` : 'Deneme Yok'}</div>
         </div>
       </div>
     `;
