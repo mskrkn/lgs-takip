@@ -30,7 +30,7 @@ import sqlite3
 import secrets
 import zipfile
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 # Konsolun kod sayfası UTF-8 olmayabilir (örn. Windows'ta chcp 65001
@@ -206,6 +206,14 @@ def _migrate_users_table(conn):
     cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "active" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+    if "email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    if "phone" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+    if "subject" not in cols:
+        # Ogretmenin branşı (admin-panel-prompt.md bölüm 6 filtreleri icin) -
+        # diger roller icin anlamsiz, NULL kalir.
+        conn.execute("ALTER TABLE users ADD COLUMN subject TEXT")
 
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -258,8 +266,14 @@ def _migrate_users_table(conn):
     if row and "'super_admin'" not in row[0]:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         has_org = "organization_id" in cols
+        has_contact = "email" in cols and "phone" in cols
+        has_subject = "subject" in cols
         org_col_def = ",\n                organization_id INTEGER REFERENCES organizations(id)" if has_org else ""
         org_col_name = ", organization_id" if has_org else ""
+        contact_col_def = ",\n                email TEXT,\n                phone TEXT" if has_contact else ""
+        contact_col_name = ", email, phone" if has_contact else ""
+        subject_col_def = ",\n                subject TEXT" if has_subject else ""
+        subject_col_name = ", subject" if has_subject else ""
         conn.executescript(
             f"""
             CREATE TABLE users_new (
@@ -271,12 +285,12 @@ def _migrate_users_table(conn):
                 class_name TEXT,
                 student_id INTEGER,
                 active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT{org_col_def}
+                created_at TEXT{org_col_def}{contact_col_def}{subject_col_def}
             );
             INSERT INTO users_new (id, username, password_hash, role, display_name,
-                                    class_name, student_id, active, created_at{org_col_name})
+                                    class_name, student_id, active, created_at{org_col_name}{contact_col_name}{subject_col_name})
                 SELECT id, username, password_hash, role, display_name,
-                       class_name, student_id, active, created_at{org_col_name} FROM users;
+                       class_name, student_id, active, created_at{org_col_name}{contact_col_name}{subject_col_name} FROM users;
             DROP TABLE users;
             ALTER TABLE users_new RENAME TO users;
             """
@@ -353,8 +367,8 @@ SUBJECT_SEED = [
     ("ayt_cografya2", "Coğrafya-2"), ("ayt_felsefe", "Felsefe Grubu"), ("ayt_din", "Din Kültürü (Seçmeli)"),
 ]
 
-ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "INSTITUTION_ADMIN", "SCHOOL_ADMIN_DELEGATE",
-             "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
+ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "ASSISTANT_ADMIN", "INSTITUTION_ADMIN",
+             "SCHOOL_ADMIN_DELEGATE", "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
 
 PERMISSION_SEED = [
     "students.view", "students.create", "students.update", "students.delete",
@@ -364,6 +378,7 @@ PERMISSION_SEED = [
     "exams.import", "exams.view_results",
     "results.view", "results.create", "analytics.view", "organization.manage", "users.manage",
     "users.view", "users.create", "users.update", "users.deactivate", "users.assign_role",
+    "admins.manage",
     "organizations.view", "organizations.create", "organizations.update", "organizations.archive",
     "teachers.view", "teachers.create", "teachers.update", "teachers.manage_assignments",
     "questions.view", "questions.create", "questions.update", "questions.delete",
@@ -381,11 +396,16 @@ PERMISSION_SEED = [
 # VERISINI goruntule/yonet" (_effective_org_id'nin ?school_id= override
 # gate'i). organizations.* = "organizations TABLOSUNUN kendisini (ad/
 # iletisim/durum) yonet". analytics.global/system.*/ai.manage = platform
-# geneli, tek bir okulla sinirli olmayan yetkiler. Hepsi sadece
-# SUPER_ADMIN/PLATFORM_ADMIN'de.
+# geneli, tek bir okulla sinirli olmayan yetkiler. admins.manage = admin
+# hesabi olusturma/duzenleme/pasiflestirme (bkz. ASSIGNABLE_ADMIN_SUBROLES) -
+# KRITIK: bu listede olmasi sart, aksi halde INSTITUTION_ADMIN'in izin kumesi
+# (= PERMISSION_SEED - PLATFORM_ONLY_PERMISSIONS) admins.manage'i SESSIZCE
+# icerir ve herhangi bir okul admini baska admin hesaplari olusturabilir/
+# silebilir hale gelir (IDOR/yetki yukseltme). Hepsi SUPER_ADMIN/PLATFORM_ADMIN'de;
+# admins.manage HARIC hepsi ayrica ASSISTANT_ADMIN'de de (bkz. asagisi).
 PLATFORM_ONLY_PERMISSIONS = [
     "organization.manage", "organizations.view", "organizations.create",
-    "organizations.update", "organizations.archive",
+    "organizations.update", "organizations.archive", "admins.manage",
     "analytics.global", "system.settings", "system.logs", "system.manage", "ai.manage",
 ]
 
@@ -398,6 +418,14 @@ ROLE_PERMISSIONS_SEED = {
     # (bu liste PERMISSION_SEED'in tamami olsaydi) her okul admini bir
     # digerinin school_id'sini enjekte edip/organizations ucuna erisip
     # baska okulun verisine ulasabilirdi (IDOR).
+    #
+    # Admin Yardimcisi (admin-panel-prompt.md bolum 1) - PLATFORM_ADMIN ile
+    # AYNI kapsam (tum okullar, sistem loglari, vs.) ama "admins.manage"
+    # HARIC: yeni admin hesabi olusturamaz/silemez/duzenleyemez. PLATFORM_ADMIN
+    # bilerek degistirilmedi (bugunku platform sahibi hesabi zaten o v2 rolu
+    # tasiyor, admins.manage'i PERMISSION_SEED'e eklemek ona otomatik gecti);
+    # bu yuzden ayri, katilimci bir rol.
+    "ASSISTANT_ADMIN": [p for p in PERMISSION_SEED if p != "admins.manage"],
     "INSTITUTION_ADMIN": [p for p in PERMISSION_SEED if p not in PLATFORM_ONLY_PERMISSIONS],
     # Veri girisi personeli (Excel/optik/PDF aktarimi, ogrenci kaydi) -
     # organizasyon ayarlarina/kullanici yetkilerine dokunamaz. NOT: legacy
@@ -857,7 +885,14 @@ def _create_question_bank_tables(conn):
         conn.commit()
 
     org_extra_cols = [r[1] for r in conn.execute("PRAGMA table_info(organizations)").fetchall()]
-    for col, decl in (("short_name", "TEXT"), ("type", "TEXT"), ("archived_at", "TEXT")):
+    # user_limit: NULL = sinirsiz (bkz. admin-panel-prompt.md bolum 3) - o
+    # okulun students tablosundaki KAYITLI ogrenci sayisina uygulanir,
+    # ogretmen/veli/admin hesaplarini ETKILEMEZ (bkz. Admins/ogretmen paneli).
+    # trial_ends_at: NULL degilse ve gecmisteyse okul otomatik pasif sayilir
+    # (bkz. _is_org_effectively_active) - status kolonu ayrica 'trial'
+    # degerini de alabilir (CHECK kisiti yok, TEXT NOT NULL DEFAULT 'active').
+    for col, decl in (("short_name", "TEXT"), ("type", "TEXT"), ("archived_at", "TEXT"),
+                       ("user_limit", "INTEGER"), ("trial_ends_at", "TEXT")):
         if col not in org_extra_cols:
             conn.execute(f"ALTER TABLE organizations ADD COLUMN {col} {decl}")
     conn.commit()
@@ -1107,6 +1142,14 @@ def _seed_reference_data(conn):
         "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
         "AND permission_id = (SELECT id FROM permissions WHERE name='organization.manage')"
     )
+    # Ayni sekilde: "admins.manage" ilk eklendiginde PLATFORM_ONLY_PERMISSIONS'a
+    # dahil edilmemis olabilir (yukaridaki INSERT OR IGNORE bu satiri o zaman
+    # eklemis olabilir) - okul adminlerinin baska admin hesabi olusturabilmesi
+    # gibi bir yetki yukselmesine yol acmamasi icin idempotent temizlik.
+    conn.execute(
+        "DELETE FROM role_permissions WHERE role_id = (SELECT id FROM roles WHERE name='INSTITUTION_ADMIN') "
+        "AND permission_id = (SELECT id FROM permissions WHERE name='admins.manage')"
+    )
 
     for code, name in SUBJECT_SEED:
         conn.execute("INSERT OR IGNORE INTO subjects (code, name) VALUES (?,?)", (code, name))
@@ -1351,6 +1394,60 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
         db.commit()
     except Exception:
         pass
+
+
+# Trial suresi dolan/dolmak uzere olan okullar icin ayri bir zamanlanmis is
+# (cron/scheduler) bu projede yok (bkz. server infra notlari) - bu yuzden
+# platform sahibinin okullari GORDUGU/bir okulun kullanicisinin GIRIS YAPMAYA
+# CALISTIGI her an bu kontrolu tetikleriz (bkz. cagiran yerler: api_login,
+# api_superadmin_list_organizations).
+TRIAL_EXPIRY_WARNING_DAYS = 3
+
+
+def _process_trial_lifecycle(db):
+    """1) Suresi gecmis 'trial' okullari otomatik 'inactive' yapar (bolum 4 -
+    o okulun kullanicilari bir sonraki giris denemesinde/zaten aktif
+    session'lari organization status kontrolunden gecemeyip engellenir).
+    2) Suresi TRIAL_EXPIRY_WARNING_DAYS gun icinde dolacak okullar icin log
+    akisina bir uyari dusurur - ayni okul icin 24 saatte bir defadan fazla
+    tekrar etmesini (her sayfa yenilemesinde spam) onlemek icin son 24 saatte
+    ayni uyari zaten atilmis mi diye once kontrol eder."""
+    now = datetime.now()
+    now_iso = now.isoformat()
+
+    expired = db.execute(
+        "SELECT id FROM organizations WHERE status = 'trial' AND trial_ends_at IS NOT NULL AND trial_ends_at < ?",
+        (now_iso,),
+    ).fetchall()
+    for row in expired:
+        db.execute(
+            "UPDATE organizations SET status = 'inactive', updated_at = ? WHERE id = ?",
+            (now_iso, row["id"]),
+        )
+        log_audit(db, "ORGANIZATION_TRIAL_EXPIRED", resource_type="organization", resource_id=row["id"])
+
+    soon_cutoff = (now + timedelta(days=TRIAL_EXPIRY_WARNING_DAYS)).isoformat()
+    warn_since = (now - timedelta(hours=24)).isoformat()
+    soon = db.execute(
+        "SELECT id FROM organizations WHERE status = 'trial' AND trial_ends_at IS NOT NULL "
+        "AND trial_ends_at >= ? AND trial_ends_at <= ?",
+        (now_iso, soon_cutoff),
+    ).fetchall()
+    for row in soon:
+        already_warned = db.execute(
+            "SELECT 1 FROM audit_logs WHERE action = 'ORGANIZATION_TRIAL_EXPIRING_SOON' "
+            "AND resource_type = 'organization' AND resource_id = ? AND created_at > ? LIMIT 1",
+            (row["id"], warn_since),
+        ).fetchone()
+        if not already_warned:
+            log_audit(db, "ORGANIZATION_TRIAL_EXPIRING_SOON", resource_type="organization", resource_id=row["id"])
+    db.commit()
+
+
+def _org_student_count(db, org_id):
+    return db.execute(
+        "SELECT COUNT(*) AS c FROM students WHERE organization_id = ?", (org_id,)
+    ).fetchone()["c"]
 
 
 def init_db():
@@ -1783,11 +1880,23 @@ def api_login():
     # o okula bagli KIMSE giris yapamaz - platform sahibinin organization_id'si
     # NULL oldugu icin bu kontrolden hic etkilenmez.
     if user["organization_id"]:
+        # 'trial' de giris icin ACTIVE ile ESDEGER (suresi henuz dolmamis bir
+        # deneme kullanicilari engellemez) - once ONCEKI durumu yakala (mesaj
+        # icin), SONRA suresi gecmis trial'lari pasife cek, SONRA guncel
+        # duruma bak.
+        org_before = db.execute(
+            "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        was_trial = bool(org_before) and org_before["status"] == "trial"
+        _process_trial_lifecycle(db)
         org = db.execute(
             "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
         ).fetchone()
-        if org and org["status"] != "active":
-            return jsonify({"error": "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin."}), 403
+        if org and org["status"] not in ("active", "trial"):
+            msg = ("Bu okulun deneme süresi sona ermiş. Platform yöneticinizle iletişime geçin."
+                   if was_trial
+                   else "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin.")
+            return jsonify({"error": msg}), 403
     if needs_rehash:
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), user["id"]))
         db.commit()
@@ -1810,6 +1919,18 @@ def api_login():
     # legacy role='admin' kalir, sadece EK bir "organization.manage" izni
     # verilmis olabilir. /api/me'deki ayni mantik (bkz. orada).
     can_manage_schools = has_permission(db, user["id"], "organization.manage")
+    can_manage_admins = has_permission(db, user["id"], "admins.manage")
+    user_limit = None
+    if user["organization_id"]:
+        org_row = db.execute(
+            "SELECT user_limit FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        user_limit = org_row["user_limit"] if org_row else None
+    # Veri Girişi Admini mi? (admin-panel-prompt.md bölüm 7: "+ Yeni Deneme"
+    # butonunu göremez.) NOT: bu SADECE frontend'te butonu gizler - backend
+    # tarafında exams.create'i GERÇEKTEN kısıtlamaz (bkz. _admin_subrole
+    # yorumu, DATA_ADMIN'in yanında otomatik INSTITUTION_ADMIN de taşınır).
+    data_entry_only = user["role"] == "admin" and _admin_subrole(db, user["id"], user["role"]) == "DATA_ADMIN"
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
@@ -1817,7 +1938,10 @@ def api_login():
         "studentId": user["student_id"],
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
+        "canManageAdmins": can_manage_admins,
         "organizationId": user["organization_id"],
+        "userLimit": user_limit,
+        "dataEntryOnly": data_entry_only,
     })
 
 
@@ -1845,9 +1969,19 @@ def api_me():
     # verilmis olabilir - bu durumda normal admin panelinin YANI SIRA
     # "Okullar" sekmesini de gorur (bkz. js/app.js init()).
     can_manage_schools = has_permission(db, session["user_id"], "organization.manage")
+    can_manage_admins = has_permission(db, session["user_id"], "admins.manage")
     own_org_row = db.execute(
         "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
     ).fetchone()
+    own_org_id = own_org_row["organization_id"] if own_org_row else None
+    user_limit = None
+    if own_org_id:
+        limit_row = db.execute("SELECT user_limit FROM organizations WHERE id = ?", (own_org_id,)).fetchone()
+        user_limit = limit_row["user_limit"] if limit_row else None
+    data_entry_only = (
+        session.get("role") == "admin"
+        and _admin_subrole(db, session["user_id"], session.get("role")) == "DATA_ADMIN"
+    )
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
@@ -1855,7 +1989,10 @@ def api_me():
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
-        "organizationId": own_org_row["organization_id"] if own_org_row else None,
+        "canManageAdmins": can_manage_admins,
+        "organizationId": own_org_id,
+        "userLimit": user_limit,
+        "dataEntryOnly": data_entry_only,
     })
 
 
@@ -1888,12 +2025,110 @@ def _external_base_url():
     return f"{scheme}://{request.host}"
 
 
+@app.route("/api/superadmin/dashboard")
+@login_required(role=("admin", "super_admin"), permission="organizations.view")
+def api_superadmin_dashboard():
+    """Platform geneli ozet (admin-panel-prompt.md bolum 2) - okul durum
+    kirilimi, toplam ogrenci, limite yaklasan okul sayisi, bugun/bu hafta
+    yapilan deneme sayisi, son denemeler + zaman icindeki deneme grafigi,
+    ve TUM okullari kapsayan bir aktivite akisi.
+
+    Aktivite akisi icin BILEREK /api/superadmin/audit-logs'u (ve onun
+    _effective_org_id filtresini) yeniden KULLANMIYORUZ - o uc "bu okulun
+    KENDI personelinin yaptigi islemler" anlamina gelir ve saf platform
+    hesaplari (organization_id NULL, ?school_id= verilmemis) icin 400 doner
+    (bkz. _effective_org_id yorumu). Platform ozetinin amaci tam tersi:
+    TUM okullari kapsayan tek bir akis - bu yuzden burada ayri, filtresiz
+    bir sorgu kullaniyoruz."""
+    db = get_db()
+    _process_trial_lifecycle(db)
+
+    status_rows = db.execute("SELECT status, COUNT(*) AS c FROM organizations GROUP BY status").fetchall()
+    school_counts = {"active": 0, "trial": 0, "inactive": 0}
+    for r in status_rows:
+        if r["status"] in school_counts:
+            school_counts[r["status"]] = r["c"]
+    school_counts["total"] = sum(school_counts.values())
+
+    total_students = db.execute("SELECT COUNT(*) AS c FROM students").fetchone()["c"]
+
+    schools_near_limit = db.execute(
+        "SELECT COUNT(*) AS c FROM organizations o WHERE o.user_limit IS NOT NULL "
+        "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id = o.id) >= o.user_limit * 0.8"
+    ).fetchone()["c"]
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_ago = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    exams_today = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date = ?", (today,)).fetchone()["c"]
+    exams_this_week = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date >= ?", (week_ago,)).fetchone()["c"]
+
+    recent_exams = db.execute(
+        "SELECT e.id, e.name, e.date, o.name AS org_name, "
+        "(SELECT COUNT(DISTINCT r.student_id) FROM results r WHERE r.exam_id = e.id) AS participant_count "
+        "FROM exams e LEFT JOIN organizations o ON o.id = e.organization_id "
+        "ORDER BY e.date DESC, e.id DESC LIMIT 10"
+    ).fetchall()
+
+    chart_start = (datetime.now() - timedelta(days=13)).strftime("%Y-%m-%d")
+    chart_rows = db.execute(
+        "SELECT date, COUNT(*) AS c FROM exams WHERE date >= ? AND date <= ? GROUP BY date ORDER BY date",
+        (chart_start, today),
+    ).fetchall()
+
+    # audit_logs.organization_id ISLEMI YAPAN kisinin okulunu tutar, ETKILENEN
+    # kaynagin okulunu DEGIL (bkz. api_superadmin_audit_logs yorumu) - platform
+    # sahibi baska bir okulu duzenlediginde/o okula admin eklediginde bu satir
+    # olmadan HER ZAMAN platform sahibinin KENDI okulunun adi gorunurdu. Bu
+    # yuzden resource_type'a gore GERCEKTEN etkilenen okulu coz: 'organization'
+    # ise resource_id DOGRUDAN bir organizations.id'dir; 'user' ise resource_id
+    # bir users.id'dir, o kullanicinin organization_id'sinden okula ulasilir.
+    # Diger resource_type'lar (student/exam/result/admin_sync - hepsi
+    # platform-admin dogrudan yazma ya da senkron kaynakli) icin bu coz ume
+    # yapilmiyor, actor'un kendi okulu fallback olarak kalir (bkz. asagisi -
+    # ayri, gelecekteki bir is: bu id'ler ORG_ID_BLOCK_SIZE ile kodlanmis,
+    # coz mek ayri bir yardimci fonksiyon gerektirir).
+    activity_rows = db.execute(
+        "SELECT al.id, al.action, al.resource_type, al.resource_id, al.created_at, "
+        "u.username, u.display_name, "
+        "COALESCE(res_org.name, target_user_org.name, actor_org.name) AS org_name "
+        "FROM audit_logs al "
+        "LEFT JOIN users u ON u.id = al.user_id "
+        "LEFT JOIN organizations actor_org ON actor_org.id = al.organization_id "
+        "LEFT JOIN organizations res_org ON al.resource_type = 'organization' AND res_org.id = al.resource_id "
+        "LEFT JOIN users target_user ON al.resource_type = 'user' AND target_user.id = al.resource_id "
+        "LEFT JOIN organizations target_user_org ON target_user_org.id = target_user.organization_id "
+        "WHERE al.action != 'LOGIN_SUCCESS' "
+        "ORDER BY al.id DESC LIMIT 20"
+    ).fetchall()
+
+    return jsonify({
+        "schoolCounts": school_counts,
+        "totalStudents": total_students,
+        "schoolsNearLimit": schools_near_limit,
+        "examsToday": exams_today,
+        "examsThisWeek": exams_this_week,
+        "recentExams": [{
+            "id": r["id"], "name": r["name"], "date": r["date"],
+            "organizationName": r["org_name"], "participantCount": r["participant_count"],
+        } for r in recent_exams],
+        "examChart": [{"date": r["date"], "count": r["c"]} for r in chart_rows],
+        "recentActivity": [{
+            "id": r["id"], "action": r["action"], "resourceType": r["resource_type"],
+            "resourceId": r["resource_id"], "createdAt": r["created_at"],
+            "actorDisplayName": r["display_name"] or r["username"],
+            "organizationName": r["org_name"],
+        } for r in activity_rows],
+    })
+
+
 @app.route("/api/superadmin/organizations", methods=["GET"])
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_list_organizations():
     db = get_db()
+    _process_trial_lifecycle(db)  # bu listeyi her goruntuleyen, suresi gecmis trial'lari da tetikler
     rows = db.execute(
         "SELECT o.id, o.name, o.slug, o.email, o.phone, o.address, o.status, o.created_at, "
+        "o.user_limit, o.trial_ends_at, "
         "(SELECT COUNT(*) FROM users WHERE organization_id=o.id AND role='admin') AS admin_count, "
         "(SELECT COUNT(*) FROM students WHERE organization_id=o.id) AS student_count "
         "FROM organizations o ORDER BY o.created_at DESC"
@@ -1902,6 +2137,7 @@ def api_superadmin_list_organizations():
         "id": r["id"], "name": r["name"], "slug": r["slug"], "email": r["email"],
         "phone": r["phone"], "address": r["address"], "status": r["status"],
         "createdAt": r["created_at"], "adminCount": r["admin_count"], "studentCount": r["student_count"],
+        "userLimit": r["user_limit"], "trialEndsAt": r["trial_ends_at"],
     } for r in rows])
 
 
@@ -1916,6 +2152,12 @@ def api_superadmin_create_organization():
     email = (data.get("email") or "").strip() or None
     phone = (data.get("phone") or "").strip() or None
     address = (data.get("address") or "").strip() or None
+    user_limit = data.get("userLimit")
+    user_limit = int(user_limit) if user_limit not in (None, "") else None
+    if user_limit is not None and user_limit < 1:
+        return jsonify({"error": "Kullanıcı limiti en az 1 olmalı."}), 400
+    trial_ends_at = (data.get("trialEndsAt") or "").strip() or None
+    status = "trial" if trial_ends_at else "active"
 
     if not name or not admin_username or not admin_password:
         return jsonify({"error": "Okul adı, yönetici kullanıcı adı ve şifresi gerekli."}), 400
@@ -1935,9 +2177,9 @@ def api_superadmin_create_organization():
 
     now = datetime.now().isoformat()
     cur = db.execute(
-        "INSERT INTO organizations (name, slug, email, phone, address, status, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (name, slug, email, phone, address, "active", now, now),
+        "INSERT INTO organizations (name, slug, email, phone, address, status, user_limit, trial_ends_at, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (name, slug, email, phone, address, status, user_limit, trial_ends_at, now, now),
     )
     org_id = cur.lastrowid
     admin_cur = db.execute(
@@ -1987,6 +2229,13 @@ def api_superadmin_update_organization(org_id):
     if "address" in data:
         fields.append("address = ?")
         values.append((data.get("address") or "").strip() or None)
+    if "userLimit" in data:
+        user_limit = data.get("userLimit")
+        user_limit = int(user_limit) if user_limit not in (None, "") else None
+        if user_limit is not None and user_limit < 1:
+            return jsonify({"error": "Kullanıcı limiti en az 1 olmalı."}), 400
+        fields.append("user_limit = ?")
+        values.append(user_limit)
 
     if not fields:
         return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
@@ -2011,7 +2260,13 @@ def api_superadmin_toggle_organization_status(org_id):
     org = db.execute("SELECT status FROM organizations WHERE id = ?", (org_id,)).fetchone()
     if not org:
         return jsonify({"error": "Okul bulunamadı."}), 404
-    new_status = "inactive" if org["status"] == "active" else "active"
+    # 'trial' de "erisimi acik" sayilir - manuel Pasiflestir bir trial okulu
+    # da kapatabilmeli (bkz. buton: her iki durumda da tek bir "Pasiflestir"
+    # aksiyonu var, ayri bir "trial'i iptal et" UI'i yok). trial_ends_at
+    # BILEREK temizlenmiyor - Aktiflestir'e basilirsa okul yeniden trial'a
+    # DONMEZ (dogrudan 'active' olur), bu yuzden eski tarih ortada kalmasi
+    # zararsiz (bkz. _process_trial_lifecycle: sadece status='trial' iken bakar).
+    new_status = "inactive" if org["status"] in ("active", "trial") else "active"
     db.execute(
         "UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?",
         (new_status, datetime.now().isoformat(), org_id),
@@ -2019,6 +2274,262 @@ def api_superadmin_toggle_organization_status(org_id):
     db.commit()
     log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
     return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>/extend-trial", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.archive")
+def api_superadmin_extend_trial(org_id):
+    """Trial bitis tarihini manuel olarak degistirir (bolum 4: 'Super Admin
+    manuel olarak trial suresini uzatabilir'). Suresi zaten dolup 'inactive'e
+    dusmus bir okulu da (yeni bir gelecek tarih verilerek) trial'a GERI
+    DONDURUR - aksi halde bir okulu kurtarmanin tek yolu status'u dogrudan
+    'active' yapmak olurdu ki bu trial baglamini tamamen kaybederdi."""
+    db = get_db()
+    org = db.execute("SELECT id, status FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    trial_ends_at = (data.get("trialEndsAt") or "").strip()
+    if not trial_ends_at:
+        return jsonify({"error": "Yeni trial bitiş tarihi gerekli."}), 400
+    if trial_ends_at <= datetime.now().isoformat():
+        return jsonify({"error": "Trial bitiş tarihi gelecekte olmalı."}), 400
+
+    db.execute(
+        "UPDATE organizations SET status = 'trial', trial_ends_at = ?, updated_at = ? WHERE id = ?",
+        (trial_ends_at, datetime.now().isoformat(), org_id),
+    )
+    db.commit()
+    log_audit(db, "ORGANIZATION_TRIAL_EXTENDED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "status": "trial", "trialEndsAt": trial_ends_at})
+
+
+# ============================================================
+# API: Süper admin - admin hesapları yönetimi (admin-panel-prompt.md bölüm 1)
+# ============================================================
+# "Admin oluşturma/silme" SADECE admins.manage iznine sahip hesaplara açık
+# (bugün: PLATFORM_ADMIN - platform sahibi). ASSISTANT_ADMIN (Admin
+# Yardımcısı) kasıtlı olarak bu izne sahip DEĞİL - PERMISSION_SEED'in geri
+# kalanının tamamına sahip olsa da bu uçlara giremez (bkz. ROLE_PERMISSIONS_SEED).
+ADMIN_SUBROLES = {
+    "PLATFORM_ADMIN": {"label": "Süper Admin", "requiresOrg": False},
+    "ASSISTANT_ADMIN": {"label": "Admin Yardımcısı", "requiresOrg": False},
+    "INSTITUTION_ADMIN": {"label": "Okul Admini", "requiresOrg": True},
+    "DATA_ADMIN": {"label": "Veri Giriş Admini", "requiresOrg": True},
+}
+# Bu ekrandan doğrudan oluşturulabilen/atanabilen roller - PLATFORM_ADMIN
+# (Süper Admin) kasıtlı olarak dışarıda: platform sahipliği kadar hassas bir
+# atama bugün sadece grant_platform_admin.py script'i (doğrudan sunucu
+# erişimi) üzerinden yapılabilir.
+ASSIGNABLE_ADMIN_SUBROLES = ("ASSISTANT_ADMIN", "INSTITUTION_ADMIN", "DATA_ADMIN")
+
+
+def _admin_subrole(db, user_id, legacy_role):
+    """role IN ('admin','super_admin') olan bir kullanıcının v2 rollerinden
+    admin-panel-prompt.md'deki 4 rolden hangisine karşılık geldiğini türetir.
+    NOT: DATA_ADMIN, legacy role='admin' + organization_id üzerine EK bir v2
+    rol olarak verilir - ama organization_id'si olan her 'admin' otomatik
+    olarak INSTITUTION_ADMIN'i de taşır (bkz. LEGACY_ROLE_TO_NEW_ROLE), bu
+    yüzden DATA_ADMIN önce kontrol edilir (varsa "Veri Giriş Admini" olarak
+    gösterilir) ama bugün itibarıyla bu hesap fiilen INSTITUTION_ADMIN'in tüm
+    izinlerini de taşımaya devam eder - has_permission() OR mantığıyla
+    çalıştığı için (bkz. exams.create ile ilgili yorum, admin-panel-prompt.md
+    bölüm 7 - ayrı, gelecekteki bir iş)."""
+    if legacy_role == "super_admin":
+        return "PLATFORM_ADMIN"
+    names = {r["name"] for r in db.execute(
+        "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?",
+        (user_id,),
+    ).fetchall()}
+    if "PLATFORM_ADMIN" in names:
+        return "PLATFORM_ADMIN"
+    if "DATA_ADMIN" in names:
+        return "DATA_ADMIN"
+    if "ASSISTANT_ADMIN" in names:
+        return "ASSISTANT_ADMIN"
+    return "INSTITUTION_ADMIN"
+
+
+@app.route("/api/superadmin/admins", methods=["GET"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_list_admins():
+    db = get_db()
+    rows = db.execute(
+        "SELECT u.id, u.username, u.display_name, u.email, u.phone, u.role, "
+        "u.organization_id, u.active, u.created_at, o.name AS org_name "
+        "FROM users u LEFT JOIN organizations o ON o.id = u.organization_id "
+        "WHERE u.role IN ('admin', 'super_admin') ORDER BY u.created_at DESC"
+    ).fetchall()
+    result = []
+    for r in rows:
+        sub_role = _admin_subrole(db, r["id"], r["role"])
+        result.append({
+            "id": r["id"], "username": r["username"], "displayName": r["display_name"],
+            "email": r["email"], "phone": r["phone"], "active": bool(r["active"]),
+            "createdAt": r["created_at"], "organizationId": r["organization_id"],
+            "organizationName": r["org_name"], "subRole": sub_role,
+            "subRoleLabel": ADMIN_SUBROLES[sub_role]["label"],
+            "isSelf": r["id"] == session["user_id"],
+        })
+    return jsonify(result)
+
+
+@app.route("/api/superadmin/admins", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_create_admin():
+    """Yeni bir admin-katmanı hesabı oluşturur - Admin Yardımcısı / Okul
+    Admini / Veri Girişi Admini (bkz. ASSIGNABLE_ADMIN_SUBROLES)."""
+    data = request.get_json(silent=True) or {}
+    sub_role = (data.get("subRole") or "").strip().upper()
+    if sub_role not in ASSIGNABLE_ADMIN_SUBROLES:
+        return jsonify({"error": "Geçersiz rol."}), 400
+
+    display_name = (data.get("displayName") or "").strip()
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    email = (data.get("email") or "").strip() or None
+    phone = (data.get("phone") or "").strip() or None
+
+    if not display_name or not username or not password:
+        return jsonify({"error": "Ad soyad, kullanıcı adı ve şifre gerekli."}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Şifre en az 4 karakter olmalı."}), 400
+
+    db = get_db()
+    requires_org = ADMIN_SUBROLES[sub_role]["requiresOrg"]
+    org_id = None
+    if requires_org:
+        org_id = data.get("organizationId")
+        if not org_id:
+            return jsonify({"error": "Bu rol için bir okul seçilmeli."}), 400
+        org_id = int(org_id)
+        if not db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone():
+            return jsonify({"error": "Okul bulunamadı."}), 404
+
+    if db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
+        return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO users (username, password_hash, role, display_name, email, phone, organization_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (username, hash_password(password), "admin", display_name, email, phone, org_id, now),
+    )
+    user_id = cur.lastrowid
+    db.commit()
+    # ONEMLI SIRA: ASSISTANT_ADMIN/DATA_ADMIN'in ek v2 rolu run_v2_migration'dan
+    # ONCE atanmali. run_v2_migration -> _seed_reference_data, organization_id
+    # NULL olan ve "organization.manage" izni VERMEYEN her admin'i varsayilan
+    # okula geri baglar (bkz. o fonksiyondaki NOT IN alt sorgusu) - eger once
+    # migration calisip SONRA rol verilseydi, org_id=NULL kalmasi gereken bir
+    # Admin Yardimcisi bu backfill tarafindan yanlislikla varsayilan okula
+    # atanirdi (grant_platform_admin.py'nin de zaten bu sirayla calismasinin
+    # nedeni ayni).
+    if sub_role in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+        role_row = db.execute("SELECT id FROM roles WHERE name = ?", (sub_role,)).fetchone()
+        db.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, role_row["id"]))
+        db.commit()
+    # legacy role='admin' -> organization_id varsa INSTITUTION_ADMIN'i otomatik eşitler.
+    run_v2_migration(db)
+    log_audit(db, "ADMIN_CREATED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "id": user_id, "username": username})
+
+
+@app.route("/api/superadmin/admins/<int:user_id>", methods=["PATCH"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_update_admin(user_id):
+    db = get_db()
+    user = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role IN ('admin','super_admin')", (user_id,)
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "Admin bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    fields, values = [], []
+    if "displayName" in data:
+        display_name = (data.get("displayName") or "").strip()
+        if not display_name:
+            return jsonify({"error": "Ad soyad boş olamaz."}), 400
+        fields.append("display_name = ?")
+        values.append(display_name)
+    if "email" in data:
+        fields.append("email = ?")
+        values.append((data.get("email") or "").strip() or None)
+    if "phone" in data:
+        fields.append("phone = ?")
+        values.append((data.get("phone") or "").strip() or None)
+
+    if "subRole" in data:
+        if user_id == session["user_id"]:
+            return jsonify({"error": "Kendi rolünüzü değiştiremezsiniz."}), 400
+        sub_role = (data.get("subRole") or "").strip().upper()
+        if sub_role not in ASSIGNABLE_ADMIN_SUBROLES:
+            return jsonify({"error": "Geçersiz rol."}), 400
+        requires_org = ADMIN_SUBROLES[sub_role]["requiresOrg"]
+        org_id = None
+        if requires_org:
+            org_id = data.get("organizationId")
+            if not org_id:
+                return jsonify({"error": "Bu rol için bir okul seçilmeli."}), 400
+            org_id = int(org_id)
+            if not db.execute("SELECT id FROM organizations WHERE id = ?", (org_id,)).fetchone():
+                return jsonify({"error": "Okul bulunamadı."}), 404
+        fields.append("organization_id = ?")
+        values.append(org_id)
+        # eski ASSISTANT_ADMIN/DATA_ADMIN ek v2 rolünü temizleyip yenisini ver
+        # (INSTITUTION_ADMIN kasıtlı olarak silinmiyor - kaldırılsa bile
+        # ASSISTANT_ADMIN/PLATFORM_ADMIN'in izin kümesi zaten onu kapsıyor,
+        # bkz. _admin_subrole yorumu).
+        for extra in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+            role_row = db.execute("SELECT id FROM roles WHERE name = ?", (extra,)).fetchone()
+            db.execute("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", (user_id, role_row["id"]))
+        if sub_role in ("ASSISTANT_ADMIN", "DATA_ADMIN"):
+            role_row = db.execute("SELECT id FROM roles WHERE name = ?", (sub_role,)).fetchone()
+            db.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, role_row["id"]))
+
+    if not fields:
+        return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
+
+    fields_sql = ", ".join(fields)
+    db.execute(f"UPDATE users SET {fields_sql} WHERE id = ?", values + [user_id])
+    db.commit()
+    log_audit(db, "ADMIN_UPDATED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/superadmin/admins/<int:user_id>/toggle-status", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="admins.manage")
+def api_superadmin_toggle_admin_status(user_id):
+    if user_id == session["user_id"]:
+        return jsonify({"error": "Kendi hesabınızı pasifleştiremezsiniz."}), 400
+    db = get_db()
+    user = db.execute(
+        "SELECT id, active FROM users WHERE id = ? AND role IN ('admin','super_admin')", (user_id,)
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "Admin bulunamadı."}), 404
+
+    new_active = 0 if user["active"] else 1
+    if not new_active:
+        # Platformun kilitlenmemesi icin en az bir aktif admins.manage
+        # sahibi (Süper Admin) her zaman kalmali.
+        others = db.execute(
+            "SELECT COUNT(*) AS c FROM users u "
+            "JOIN user_roles ur ON ur.user_id = u.id "
+            "JOIN role_permissions rp ON rp.role_id = ur.role_id "
+            "JOIN permissions p ON p.id = rp.permission_id "
+            "WHERE p.name = 'admins.manage' AND u.active = 1 AND u.id != ?",
+            (user_id,),
+        ).fetchone()["c"]
+        if others == 0:
+            return jsonify({"error": "Son aktif Süper Admin hesabı pasifleştirilemez."}), 400
+
+    db.execute("UPDATE users SET active = ? WHERE id = ?", (new_active, user_id))
+    db.commit()
+    log_audit(db, "ADMIN_STATUS_CHANGED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "active": bool(new_active)})
 
 
 @app.route("/api/superadmin/audit-logs")
@@ -2107,7 +2618,7 @@ def api_register_teacher_lookup(code):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     db = get_db()
     org = db.execute(
-        "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+        "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
         _register_record_attempt(request.remote_addr)
@@ -2133,7 +2644,7 @@ def api_register_teacher():
 
     db = get_db()
     org = db.execute(
-        "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+        "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
         _register_record_attempt(request.remote_addr)
@@ -2567,7 +3078,7 @@ def api_admin_list_users():
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
-        "SELECT id, username, role, display_name, class_name, student_id, active FROM users "
+        "SELECT id, username, role, display_name, class_name, student_id, active, subject FROM users "
         "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
@@ -2594,6 +3105,7 @@ def api_admin_list_users():
             "studentId": r["student_id"], "studentName": ", ".join(student_names) or None,
             "active": bool(r["active"]),
             "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
+            "subject": r["subject"] if r["role"] == "teacher" else None,
         })
     return jsonify(out)
 
@@ -2628,6 +3140,7 @@ def api_admin_create_user():
     class_name = (data.get("className") or "").strip() or None
     student_id = data.get("studentId") or None
     student_ids = [int(x) for x in (data.get("studentIds") or []) if x]
+    subject = (data.get("subject") or "").strip() or None
 
     if not username or not password or role not in ("teacher", "parent", "student"):
         return jsonify({"error": "Kullanıcı adı, şifre ve geçerli bir rol (teacher/parent/student) gerekli."}), 400
@@ -2661,9 +3174,10 @@ def api_admin_create_user():
 
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
-        "student_id, organization_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        "student_id, organization_id, subject, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         (username, hash_password(password), role, display_name,
-         class_name, student_id if role == "student" else None, org_id, datetime.now().isoformat()),
+         class_name, student_id if role == "student" else None, org_id,
+         subject if role == "teacher" else None, datetime.now().isoformat()),
     )
     if role == "parent":
         new_user_id = cur.lastrowid
@@ -3045,6 +3559,41 @@ def api_teacher_overview():
         (org_id,),
     ).fetchall()
 
+    # admin-panel-prompt.md bolum 7: kademeye gore gruplu liste + katilimci/
+    # ortalama/en yuksek/en dusuk. Denemenin kendi bir "kademe" alani yok -
+    # katilimcilarinin sinif adlarindan (bkz. js/app.js parseClassName ile
+    # AYNI mantik) baskin kademe (>=%60) turetilir.
+    exam_stats = {}
+    for e in exams:
+        rows = db.execute(
+            "SELECT r.data_json, s.class_name FROM results r "
+            "JOIN students s ON s.id = r.student_id WHERE r.exam_id = ?",
+            (e["id"],),
+        ).fetchall()
+        if not rows:
+            exam_stats[e["id"]] = None
+            continue
+        nets = []
+        grade_counts = {}
+        for r in rows:
+            data = json.loads(r["data_json"]) if r["data_json"] else {}
+            nets.append(calc_total_net(data.get("subjects", {})))
+            m = re.match(r"^(\d+)", (r["class_name"] or "").strip())
+            if m:
+                grade_counts[m.group(1)] = grade_counts.get(m.group(1), 0) + 1
+        dominant_grade = None
+        if grade_counts:
+            top_grade, top_count = max(grade_counts.items(), key=lambda kv: kv[1])
+            if top_count / len(rows) >= 0.6:
+                dominant_grade = top_grade
+        exam_stats[e["id"]] = {
+            "studentCount": len(nets),
+            "totalNet": round(sum(nets) / len(nets), 2),
+            "highestNet": round(max(nets), 2),
+            "lowestNet": round(min(nets), 2),
+            "dominantGrade": dominant_grade,
+        }
+
     student_list = []
     for s in students:
         s_dict = dict(s)
@@ -3093,10 +3642,16 @@ def api_teacher_overview():
     for idx, s_item in enumerate(sorted_by_net, 1):
         s_item["rank"] = idx if s_item["latestNet"] is not None else None
 
+    exams_with_stats = []
+    for e in exams:
+        e_dict = dict(e)
+        e_dict["stats"] = exam_stats.get(e["id"])
+        exams_with_stats.append(e_dict)
+
     return jsonify({
         "className": my_class,
         "students": student_list,
-        "exams": [dict(e) for e in exams],
+        "exams": exams_with_stats,
         "classAverages": _all_class_averages(db, org_id),
     })
 

@@ -612,7 +612,11 @@ const ImportPDF = {
     const res = await db.batchImportResults(examId, rowsToImport);
     await db.repairAndLinkStudents();
 
-    UI.toast(`${res.imported} sonuç başarıyla içe aktarıldı ve öğrencilerle eşleştirildi!${res.errors > 0 ? ` (${res.errors} hata)` : ''}`, res.errors > 0 ? 'warning' : 'success');
+    const extra = [
+      res.errors > 0 ? `${res.errors} hata` : null,
+      res.skippedForLimit > 0 ? `${res.skippedForLimit} öğrenci kullanıcı limiti nedeniyle eklenemedi` : null,
+    ].filter(Boolean).join(', ');
+    UI.toast(`${res.imported} sonuç başarıyla içe aktarıldı ve öğrencilerle eşleştirildi!${extra ? ` (${extra})` : ''}`, (res.errors > 0 || res.skippedForLimit > 0) ? 'warning' : 'success');
     this.clearPDFPreview();
     this.loadExamSelects();
     if (typeof App !== 'undefined') App.refreshCurrentPage();

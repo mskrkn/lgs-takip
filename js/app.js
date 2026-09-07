@@ -39,6 +39,7 @@ const App = {
     // panelinde goruluyordu. db.* KULLANAN HER SEYDEN (repairAndLinkStudents
     // dahil) ONCE, senkron modulunden de ONCE calismasi ZORUNLU.
     await db.switchToOrg(this.currentUser?.organizationId || null);
+    db.setUserLimit(this.currentUser?.userLimit ?? null);
     db.repairAndLinkStudents().catch(console.error);
 
     // KRITIK: Bulut Senkronizasyonu (Firebase) anahtarini HER GIRISTE bu
@@ -101,8 +102,10 @@ const App = {
     const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
       (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
     if (isPurePlatformAccount) {
+      const visiblePages = ['schools', 'system-logs'];
+      if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.style.display = ['schools', 'system-logs'].includes(item.dataset.page) ? '' : 'none';
+        item.style.display = visiblePages.includes(item.dataset.page) ? '' : 'none';
       });
       // Mobil alt navigasyon çubuğu (Anasayfa/Öğrenciler/Denemeler/Giriş/
       // Ayarlar) yukarıdaki .nav-item filtresine dahil değil - hiçbiri bu
@@ -139,7 +142,9 @@ const App = {
     // "Okullar" sekmesini de görür ve oradan başka okullara "girebilir".
     const demoNav = document.getElementById('nav-demo-talepleri');
     if (this.currentUser?.canManageSchools) {
-      ['nav-schools', 'nav-system-logs'].forEach(id => {
+      const platformNavIds = ['nav-schools', 'nav-system-logs'];
+      if (this.currentUser?.canManageAdmins) platformNavIds.push('nav-admins');
+      platformNavIds.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
@@ -162,9 +167,16 @@ const App = {
     const el = document.getElementById('role-badge');
     if (!el || !this.currentUser?.authenticated) return;
     let label, title;
-    if (this.currentUser.role === 'super_admin' || (this.currentUser.canManageSchools && !this.currentUser.organizationId)) {
+    const isPureplatform = this.currentUser.role === 'super_admin' || (this.currentUser.canManageSchools && !this.currentUser.organizationId);
+    if (isPureplatform && !this.currentUser.canManageAdmins) {
+      label = '🧭 Admin Yardımcısı';
+      title = 'Süper Admin ile aynı yetkilere sahipsiniz, admin oluşturma/silme HARİÇ.';
+    } else if (isPureplatform) {
       label = '🧭 Platform (Saf)';
-      title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları yönetir.';
+      title = 'Bu hesabın kendi okulu yok - sadece Okullar/Sistem Logları/Adminler yönetir.';
+    } else if (this.currentUser.canManageSchools && !this.currentUser.canManageAdmins) {
+      label = '🧭 Admin Yardımcısı';
+      title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz, admin oluşturma/silme HARİÇ.';
     } else if (this.currentUser.canManageSchools) {
       label = '🧭 Platform Sahibi';
       title = 'Kendi okulunuzun tüm yetkilerine ek olarak diğer okulları da görüntüleyebilirsiniz.';
@@ -251,6 +263,7 @@ const App = {
       users: ['Kullanıcılar', 'Öğretmen & Veli Hesapları'],
       'demo-talepleri': ['Demo Talepleri', 'EduPusula Tanıtım Sayfası'],
       schools: ['Okullar', 'Okul Yönetimi'],
+      admins: ['Adminler', 'Admin Hesapları Yönetimi'],
       'system-logs': ['Sistem Logları', 'Denetim Kaydı'],
     };
 
@@ -320,6 +333,9 @@ const App = {
         break;
       case 'schools':
         await Schools.render();
+        break;
+      case 'admins':
+        await Admins.render();
         break;
       case 'system-logs':
         await SystemLogs.render();
@@ -639,6 +655,31 @@ const App = {
     }
   },
 
+  _userLimitReached(currentCount) {
+    const limit = this.currentUser?.userLimit;
+    return !!limit && currentCount >= limit;
+  },
+
+  // Okul kullanıcı (öğrenci koltuğu) limiti uyarısı - admin-panel-prompt.md
+  // bölüm 3 "limite %80-90 yaklaşıldığında uyarı rengi ve 'X kullanıcı
+  // hakkınız kaldı' mesajı". Limit yoksa (sınırsız) hiçbir şey göstermez.
+  _renderUserLimitBanner(studentCount) {
+    const limit = this.currentUser?.userLimit;
+    if (!limit) return '';
+    const remaining = limit - studentCount;
+    if (remaining <= 0) {
+      return `<div class="card mt-2" style="border:1px solid rgba(244,63,94,0.4);background:rgba(244,63,94,0.08)">
+        <p style="margin:0;color:#fb7185">🚫 Kullanıcı limitinize ulaştınız (${studentCount}/${limit}). Yeni öğrenci eklemek için platform yöneticinizle iletişime geçin.</p>
+      </div>`;
+    }
+    if (remaining / limit <= 0.2) {
+      return `<div class="card mt-2" style="border:1px solid rgba(251,191,36,0.4);background:rgba(251,191,36,0.08)">
+        <p style="margin:0;color:#fbbf24">⚠️ ${remaining} kullanıcı hakkınız kaldı (${studentCount}/${limit}).</p>
+      </div>`;
+    }
+    return '';
+  },
+
   async renderDashboard() {
     const container = document.getElementById('page-dashboard');
     const studentCount = await db.getStudentCount();
@@ -666,6 +707,8 @@ const App = {
         </div>
         <div class="greeting-date">📅 ${todayStr}</div>
       </div>
+
+      ${this._renderUserLimitBanner(studentCount)}
 
       <!-- Stats (küçük/sıkışık) -->
       <div class="stats-grid stats-grid-compact">
@@ -1198,16 +1241,107 @@ const App = {
             <span class="text-muted">${students.length} öğrenci</span>
           </div>
           <div class="controls-right">
-            <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
+            ${this._userLimitReached(students.length)
+              ? `<button class="btn btn-secondary btn-sm" disabled title="Kullanıcı limitinize ulaştınız (${students.length}/${this.currentUser.userLimit})">➕ Öğrenci Ekle</button>`
+              : `<button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>`}
             <button class="btn btn-danger btn-sm" onclick="App.clearAllStudents()" title="Tüm kayıtlı öğrencileri ve sonuçlarını sil">🗑️ Tümünü Sil</button>
           </div>
         </div>
 
         <div id="students-table-container">
-          <p class="text-muted" style="text-align:center;padding:20px 0">Yukarıdan aramaya başlayın ya da sınıf kademesi / şube seçin.</p>
+          ${this._renderGradeCards(students)}
         </div>
       </div>
     `;
+  },
+
+  // admin-panel-prompt.md bölüm 5: Okul → Kademe → Sınıf hiyerarşisi, her
+  // seviyede öğrenci sayısı görünür. Süper Admin'in kendi okulu YOK (yerel
+  // IndexedDB'si boş), bu yüzden "Okul seç" adımı burada gerekmiyor - bu
+  // sayfaya hiç ulaşamaz (bkz. js/schoolView.js - okul seçilene kadar
+  // App.actingSchool boş, "Okula Gir"e basmadan Öğrenciler sekmesi görünmez).
+  _renderGradeCards(students) {
+    const counts = {};
+    students.forEach(s => {
+      const grade = this.parseClassName(s.className).grade;
+      const key = grade || '__none__';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const grades = Object.keys(counts).filter(k => k !== '__none__').sort((a, b) => Number(a) - Number(b));
+
+    const cards = grades.map(g => `
+      <div class="stat-card" style="cursor:pointer" onclick="App.drillIntoGrade('${g}')">
+        <div class="stat-icon purple">📚</div>
+        <div class="stat-value">${counts[g]}</div>
+        <div class="stat-label">${g}. Sınıf</div>
+      </div>
+    `).join('');
+    const noneCard = counts.__none__ ? `
+      <div class="stat-card" style="cursor:pointer" onclick="App.drillIntoGrade('')">
+        <div class="stat-icon orange">❔</div>
+        <div class="stat-value">${counts.__none__}</div>
+        <div class="stat-label">Sınıfı Belirsiz</div>
+      </div>` : '';
+
+    return `
+      <p class="text-muted" style="margin-bottom:12px">Listelemek için bir sınıf kademesi seçin, ya da yukarıdan arayın.</p>
+      <div class="stats-grid">${cards}${noneCard}</div>
+    `;
+  },
+
+  _renderBranchCards(grade) {
+    const students = (this._allStudentsCache || []).filter(s => this.parseClassName(s.className).grade === grade);
+    const counts = {};
+    students.forEach(s => {
+      const branch = this.parseClassName(s.className).branch;
+      const key = branch || '__none__';
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const branches = Object.keys(counts).filter(k => k !== '__none__').sort();
+
+    const cards = branches.map(b => `
+      <div class="stat-card" style="cursor:pointer" onclick="App.drillIntoBranch('${grade}', '${b}')">
+        <div class="stat-icon blue">🏷️</div>
+        <div class="stat-value">${counts[b]}</div>
+        <div class="stat-label">${grade}/${b}</div>
+      </div>
+    `).join('');
+    const noneCard = counts.__none__ ? `
+      <div class="stat-card" style="cursor:pointer" onclick="App.drillIntoBranch('${grade}', '')">
+        <div class="stat-icon orange">❔</div>
+        <div class="stat-value">${counts.__none__}</div>
+        <div class="stat-label">Şubesi Belirsiz</div>
+      </div>` : '';
+
+    return `
+      <button class="btn btn-secondary btn-sm mb-2" onclick="App.resetStudentsHierarchy()">◀ Kademelere Dön</button>
+      <p class="text-muted" style="margin-bottom:12px">${grade}. Sınıf - bir şube seçin.</p>
+      <div class="stats-grid">${cards}${noneCard}</div>
+    `;
+  },
+
+  drillIntoGrade(grade) {
+    document.getElementById('students-table-container').innerHTML = this._renderBranchCards(grade);
+  },
+
+  async drillIntoBranch(grade, branch) {
+    const gradeFilter = document.getElementById('students-grade-filter');
+    const branchFilter = document.getElementById('students-branch-filter');
+    if (gradeFilter) gradeFilter.value = grade;
+    if (branchFilter) branchFilter.value = branch;
+    this._cameFromHierarchy = true;
+    await this.filterStudentsManual();
+  },
+
+  resetStudentsHierarchy() {
+    const searchInput = document.getElementById('students-filter');
+    const gradeFilter = document.getElementById('students-grade-filter');
+    const branchFilter = document.getElementById('students-branch-filter');
+    if (searchInput) searchInput.value = '';
+    if (gradeFilter) gradeFilter.value = '';
+    if (branchFilter) branchFilter.value = '';
+    this._cameFromHierarchy = false;
+    document.getElementById('students-table-container').innerHTML = this._renderGradeCards(this._allStudentsCache || []);
   },
 
   // '5/A', '8-C' gibi sınıf adlarını kademe ('5','8') ve şube ('A','C') olarak ayırır.
@@ -1267,7 +1401,8 @@ const App = {
     const container = document.getElementById('students-table-container');
 
     if (!query && !grade && !branch) {
-      container.innerHTML = '<p class="text-muted" style="text-align:center;padding:20px 0">Yukarıdan aramaya başlayın ya da sınıf kademesi / şube seçin.</p>';
+      this._cameFromHierarchy = false;
+      container.innerHTML = this._renderGradeCards(this._allStudentsCache || await db.getAllStudents());
       return;
     }
 
@@ -1288,9 +1423,10 @@ const App = {
     const rankMap = {};
     rankings.forEach(r => { rankMap[r.studentId] = r; });
 
-    container.innerHTML = students.length
+    const backBtn = this._cameFromHierarchy ? `<button class="btn btn-secondary btn-sm mb-2" onclick="App.resetStudentsHierarchy()">◀ Kademelere Dön</button>` : '';
+    container.innerHTML = backBtn + (students.length
       ? this.buildStudentsTable(students, rankMap, latestExam)
-      : '<p class="text-muted" style="text-align:center;padding:20px 0">Eşleşen öğrenci bulunamadı.</p>';
+      : '<p class="text-muted" style="text-align:center;padding:20px 0">Eşleşen öğrenci bulunamadı.</p>');
   },
 
   goToStudentProfile(studentId) {
@@ -1360,7 +1496,13 @@ const App = {
       return;
     }
 
-    const studentId = await db.addStudent({ schoolNumber, firstName, lastName, className });
+    let studentId;
+    try {
+      studentId = await db.addStudent({ schoolNumber, firstName, lastName, className });
+    } catch (err) {
+      UI.toast(err.message || 'Öğrenci eklenemedi.', 'danger');
+      return;
+    }
     UI.toast('Öğrenci eklendi!', 'success');
     document.getElementById('add-student-modal')?.remove();
     await this.renderStudents();
@@ -1947,10 +2089,26 @@ const App = {
       return;
     }
 
-    let examsHtml = '';
-    for (const exam of exams) {
+    // admin-panel-prompt.md bölüm 7: kademeye göre gruplu liste. Kademesi
+    // (katılımcılarının çoğunluğundan) belirlenemeyen denemeler "Diğer/Karışık"
+    // grubunda toplanır - bkz. db.getAllExamsAverages'taki dominantGrade.
+    const groups = {};
+    exams.forEach(exam => {
       const avg = averagesMap[exam.id];
-      examsHtml += `
+      const grade = avg?.dominantGrade || null;
+      const key = grade || '__other__';
+      if (!groups[key]) groups[key] = { grade, exams: [] };
+      groups[key].exams.push(exam);
+    });
+    const sortedKeys = Object.keys(groups).sort((a, b) => {
+      if (a === '__other__') return 1;
+      if (b === '__other__') return -1;
+      return Number(a) - Number(b);
+    });
+
+    const examCardHtml = (exam) => {
+      const avg = averagesMap[exam.id];
+      return `
         <div class="stat-card" style="cursor:pointer" onclick="App.navigateTo('exam-detail', { examId: ${exam.id} })">
           <div style="display:flex;justify-content:space-between;align-items:start">
             <div>
@@ -1969,20 +2127,42 @@ const App = {
                 <span class="text-muted" style="font-size:11px">Ort. Net</span>
                 <div style="font-size:18px;font-weight:700">${avg.totalNet.toFixed(1)}</div>
               </div>
+              <div>
+                <span class="text-muted" style="font-size:11px">En Yüksek</span>
+                <div style="font-size:18px;font-weight:700;color:#4ade80">${avg.highestNet.toFixed(1)}</div>
+              </div>
+              <div>
+                <span class="text-muted" style="font-size:11px">En Düşük</span>
+                <div style="font-size:18px;font-weight:700;color:#fb7185">${avg.lowestNet.toFixed(1)}</div>
+              </div>
             </div>
           ` : '<p class="text-muted mt-1" style="font-size:12px">Sonuç yok</p>'}
         </div>
       `;
-    }
+    };
+
+    const groupsHtml = sortedKeys.map(key => {
+      const g = groups[key];
+      const title = g.grade ? `${g.grade}. Sınıf Denemeleri` : 'Diğer / Karışık Denemeler';
+      return `
+        <div class="mt-2">
+          <h4 style="font-size:14px;font-weight:600;color:var(--text-muted);margin-bottom:8px">${title} (${g.exams.length})</h4>
+          <div class="stats-grid">${g.exams.map(examCardHtml).join('')}</div>
+        </div>
+      `;
+    }).join('');
+
+    // Veri Girişi Admini "+ Yeni Deneme" butonunu görmez (admin-panel-prompt.md
+    // bölüm 7) - NOT: bu sadece UI'da gizler, backend'te henüz ayrıca
+    // kısıtlanmıyor (bkz. server.py /api/me dataEntryOnly yorumu).
+    const canCreateExam = !this.currentUser?.dataEntryOnly;
 
     container.innerHTML = `
       <div class="controls-bar">
         <h3 style="font-size:16px;font-weight:600">Tüm Denemeler</h3>
-        <button class="btn btn-primary btn-sm" onclick="App.showAddExamModal()">➕ Yeni Deneme</button>
+        ${canCreateExam ? `<button class="btn btn-primary btn-sm" onclick="App.showAddExamModal()">➕ Yeni Deneme</button>` : ''}
       </div>
-      <div class="stats-grid">
-        ${examsHtml}
-      </div>
+      ${groupsHtml}
     `;
   },
 

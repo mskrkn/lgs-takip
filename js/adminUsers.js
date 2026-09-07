@@ -91,6 +91,8 @@ const AdminUsers = {
     // bilerek false'a duser (bkz. asagidaki "Sunucuya Veri Gonder" karti).
     const isRealAdmin = App.currentUser?.role === 'admin' && !App.actingSchool;
     const canManageAccounts = isRealAdmin || (App.currentUser?.actsAsSuperAdmin && !!App.actingSchool);
+    this._users = users; // Bölüm 6 filtreleri (branş/sınıf/durum/isim) için
+    this._canManageAccounts = canManageAccounts;
 
     container.innerHTML = `
       ${App.currentUser?.actsAsSuperAdmin && App.actingSchool ? `
@@ -138,6 +140,10 @@ const AdminUsers = {
           <div>
             <label class="form-label">Şifre</label>
             <input type="text" id="new-user-password" class="form-control" placeholder="En az 4 karakter">
+          </div>
+          <div id="new-user-subject-wrap">
+            <label class="form-label">Branş (Öğretmen İçin, opsiyonel)</label>
+            <input type="text" id="new-user-subject" class="form-control" placeholder="Örn: Matematik">
           </div>
           <div id="new-user-class-wrap">
             <label class="form-label">Sınıf(lar) (Öğretmen İçin)</label>
@@ -215,6 +221,7 @@ const AdminUsers = {
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
+        ${this._renderUserFilters(users)}
         <div id="users-list">${this._renderUsersTable(users, canManageAccounts)}</div>
       </div>
 
@@ -244,12 +251,63 @@ const AdminUsers = {
     return { teacher: '👨‍🏫 Öğretmen', parent: '👪 Veli', student: '🎓 Öğrenci' }[role] || role;
   },
 
+  // admin-panel-prompt.md bölüm 6: Öğretmen Paneli filtreleri (branş, girdiği
+  // sınıf, durum, isim arama) - "Kullanıcılar" (öğretmen/veli/öğrenci hepsi
+  // bir arada) sayfasının üstüne eklendi, ayrı bir sayfa açmak yerine mevcut
+  // hesap yönetimi akışıyla aynı yerde tutuldu.
+  _renderUserFilters(users) {
+    const subjects = [...new Set(users.filter(u => u.role === 'teacher' && u.subject).map(u => u.subject))].sort();
+    const classNames = [...new Set(users.filter(u => u.role === 'teacher' && u.className).map(u => u.className))].sort();
+    return `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <input type="text" id="users-filter-search" class="form-control" style="max-width:220px" placeholder="İsim ara..." oninput="AdminUsers._applyUserFilters()">
+        <select id="users-filter-role" class="form-control" style="max-width:160px" onchange="AdminUsers._applyUserFilters()">
+          <option value="">Tüm Roller</option>
+          <option value="teacher">Öğretmen</option>
+          <option value="parent">Veli</option>
+          <option value="student">Öğrenci</option>
+        </select>
+        <select id="users-filter-subject" class="form-control" style="max-width:160px" onchange="AdminUsers._applyUserFilters()">
+          <option value="">Tüm Branşlar</option>
+          ${subjects.map(s => `<option value="${s}">${s}</option>`).join('')}
+        </select>
+        <select id="users-filter-class" class="form-control" style="max-width:160px" onchange="AdminUsers._applyUserFilters()">
+          <option value="">Tüm Sınıflar</option>
+          ${classNames.map(c => `<option value="${c}">${c}</option>`).join('')}
+        </select>
+        <select id="users-filter-status" class="form-control" style="max-width:140px" onchange="AdminUsers._applyUserFilters()">
+          <option value="">Tüm Durumlar</option>
+          <option value="active">Aktif</option>
+          <option value="inactive">Pasif</option>
+        </select>
+      </div>
+    `;
+  },
+
+  _applyUserFilters() {
+    const q = (document.getElementById('users-filter-search')?.value || '').toLocaleLowerCase('tr-TR').trim();
+    const role = document.getElementById('users-filter-role')?.value || '';
+    const subject = document.getElementById('users-filter-subject')?.value || '';
+    const className = document.getElementById('users-filter-class')?.value || '';
+    const status = document.getElementById('users-filter-status')?.value || '';
+    const filtered = (this._users || []).filter(u => {
+      if (q && !(u.displayName || '').toLocaleLowerCase('tr-TR').includes(q) && !(u.username || '').toLocaleLowerCase('tr-TR').includes(q)) return false;
+      if (role && u.role !== role) return false;
+      if (subject && u.subject !== subject) return false;
+      if (className && u.className !== className) return false;
+      if (status === 'active' && !u.active) return false;
+      if (status === 'inactive' && u.active) return false;
+      return true;
+    });
+    document.getElementById('users-list').innerHTML = this._renderUsersTable(filtered, this._canManageAccounts);
+  },
+
   _renderUsersTable(users, isRealAdmin) {
-    if (!users.length) return '<p class="text-muted">Henüz öğretmen/veli/öğrenci hesabı oluşturulmadı.</p>';
+    if (!users.length) return '<p class="text-muted">Eşleşen hesap bulunamadı.</p>';
     let html = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
       <tr style="text-align:left;color:var(--text-muted);font-size:13px">
         <th style="padding:8px">Rol</th><th style="padding:8px">Ad</th><th style="padding:8px">Kullanıcı Adı</th>
-        <th style="padding:8px">Kapsam</th><th style="padding:8px">Durum</th><th style="padding:8px"></th>
+        <th style="padding:8px">Branş</th><th style="padding:8px">Kapsam</th><th style="padding:8px">Durum</th><th style="padding:8px"></th>
       </tr>`;
     users.forEach(u => {
       const scope = u.role === 'teacher' ? (u.className || '-') : (u.studentName || '-');
@@ -268,6 +326,7 @@ const AdminUsers = {
         <td style="padding:8px">${this._roleLabel(u.role)}${u.isDelegate ? ' <span style="color:#2DD4BF;font-size:11px">(Yönetici Yrd.)</span>' : ''}</td>
         <td style="padding:8px">${u.displayName || '-'}</td>
         <td style="padding:8px">${u.username}</td>
+        <td style="padding:8px">${u.subject || '-'}</td>
         <td style="padding:8px">${scope}</td>
         <td style="padding:8px">${u.active ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
         <td style="padding:8px;text-align:right;white-space:nowrap">${delegateBtn}${adminOnlyActions}</td>
@@ -311,6 +370,7 @@ const AdminUsers = {
 
   onRoleChange() {
     const role = document.getElementById('new-user-role').value;
+    document.getElementById('new-user-subject-wrap').style.display = role === 'teacher' ? '' : 'none';
     document.getElementById('new-user-class-wrap').style.display = role === 'teacher' ? '' : 'none';
     document.getElementById('new-user-student-wrap').style.display = role === 'student' ? '' : 'none';
     document.getElementById('new-user-children-wrap').style.display = role === 'parent' ? '' : 'none';
@@ -447,6 +507,7 @@ const AdminUsers = {
     const studentId = document.getElementById('new-user-studentid').value;
     const studentIds = Array.from(document.querySelectorAll('.new-user-child-checkbox:checked'))
       .map(cb => Number(cb.value));
+    const subject = document.getElementById('new-user-subject').value.trim();
 
     try {
       const res = await fetch(`/api/admin/users${this._schoolQuery()}`, {
@@ -455,6 +516,7 @@ const AdminUsers = {
         body: JSON.stringify({
           role, displayName, username, password,
           className: role === 'teacher' ? className : undefined,
+          subject: role === 'teacher' ? subject : undefined,
           studentId: role === 'student' ? Number(studentId) : undefined,
           studentIds: role === 'parent' ? studentIds : undefined,
         }),
