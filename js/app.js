@@ -2574,10 +2574,119 @@ const App = {
           <button class="btn btn-secondary btn-sm" onclick="App.exportApprovedQuestions()">⬇️ Onaylanmış Soruları İndir (ZIP)</button>
         </div>
         <div id="qb-batch-list"><p class="text-muted">Yükleniyor...</p></div>
+      </div>
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🧠</span> Beceriler (Skill)</h3></div>
+        <p class="text-muted" style="margin-bottom:12px">
+          Sorular beceriyle etiketlenir (konu değil, "Ortak Payda Bulma" gibi ölçülebilir bir yetenek).
+          Yeni bir beceri önerebilirsiniz - onay için başka bir yetkili incelemeli (dört göz ilkesi,
+          kendi önerdiğinizi siz onaylayamazsınız).
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <input type="text" class="form-control" id="skill-new-name" style="max-width:240px" placeholder="Beceri adı (örn. Ortak Payda Bulma)">
+          <input type="text" class="form-control" id="skill-new-description" style="max-width:320px" placeholder="Açıklama (opsiyonel)">
+          <button class="btn btn-secondary btn-sm" onclick="App.proposeSkill()">➕ Beceri Öner</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <select class="form-select" id="skill-status-filter" style="max-width:200px" onchange="App.loadSkills()">
+            <option value="">Tüm Durumlar</option>
+            <option value="pending_review" selected>İncelemede</option>
+            <option value="active">Aktif</option>
+            <option value="rejected">Reddedildi</option>
+          </select>
+        </div>
+        <div id="skill-list"><p class="text-muted">Yükleniyor...</p></div>
       </div>`;
 
     ImportModule.setupDropZone('qb-drop-zone', 'qb-file-input', (file) => this.uploadQuestionBankPdf(file));
     this.loadQuestionBankBatches();
+    this.loadSkills();
+  },
+
+  async proposeSkill() {
+    const nameEl = document.getElementById('skill-new-name');
+    const descEl = document.getElementById('skill-new-description');
+    const name = nameEl.value.trim();
+    if (!name) { UI.toast('Beceri adı gerekli.', 'warning'); return; }
+    try {
+      const res = await fetch('/api/admin/question-bank/skills', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: descEl.value.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Beceri önerilemedi.');
+      UI.toast('Beceri önerildi - onay bekliyor.', 'success');
+      nameEl.value = ''; descEl.value = '';
+      this.loadSkills();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async loadSkills() {
+    const listEl = document.getElementById('skill-list');
+    const status = document.getElementById('skill-status-filter')?.value || '';
+    try {
+      const res = await fetch(`/api/admin/question-bank/skills${status ? '?status=' + status : ''}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Beceriler yüklenemedi.');
+      this._renderSkillList(data.skills || []);
+    } catch (err) {
+      listEl.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
+    }
+  },
+
+  _renderSkillList(skills) {
+    const listEl = document.getElementById('skill-list');
+    if (!skills.length) { listEl.innerHTML = '<p class="text-muted">Bu durumda beceri yok.</p>'; return; }
+    const statusLabels = {
+      pending_review: ['⏳ İncelemede', 'var(--warning)'],
+      active: ['✅ Aktif', 'var(--success)'],
+      rejected: ['🚫 Reddedildi', 'var(--danger)'],
+    };
+    listEl.innerHTML = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
+      <tr style="text-align:left;color:var(--text-muted);font-size:13px">
+        <th style="padding:8px">Beceri</th><th style="padding:8px">Öneren</th>
+        <th style="padding:8px">Durum</th><th style="padding:8px"></th>
+      </tr>
+      ${skills.map(s => {
+        const [label, color] = statusLabels[s.status] || statusLabels.pending_review;
+        const reasonHtml = s.status === 'rejected' && s.rejection_reason
+          ? `<div class="text-muted" style="font-size:11px">Gerekçe: ${s.rejection_reason}</div>` : '';
+        const actionsHtml = s.status === 'pending_review'
+          ? (s.is_own
+              ? `<span class="text-muted" style="font-size:11.5px">👤 Kendi öneriniz - başkası onaylamalı</span>`
+              : `<button class="btn btn-primary btn-sm" onclick="App.reviewSkill(${s.id}, 'active')">✅ Onayla</button>
+                 <button class="btn btn-danger btn-sm" onclick="App.reviewSkill(${s.id}, 'rejected')">🚫 Reddet</button>`)
+          : '';
+        return `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
+          <td style="padding:8px">${s.name}${s.description ? `<div class="text-muted" style="font-size:11px">${s.description}</div>` : ''}</td>
+          <td style="padding:8px">${s.created_by_name || '-'}</td>
+          <td style="padding:8px"><span style="color:${color}">${label}</span>${reasonHtml}</td>
+          <td style="padding:8px;text-align:right;white-space:nowrap">${actionsHtml}</td>
+        </tr>`;
+      }).join('')}
+    </table></div>`;
+  },
+
+  async reviewSkill(skillId, status) {
+    let rejectionReason = null;
+    if (status === 'rejected') {
+      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
+      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+    }
+    try {
+      const res = await fetch(`/api/admin/question-bank/skills/${skillId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, rejectionReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
+      UI.toast(status === 'active' ? 'Beceri onaylandı ✅' : 'Beceri reddedildi', 'success');
+      this.loadSkills();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   exportApprovedQuestions() {
@@ -2984,6 +3093,14 @@ const App = {
                 </div>
                 <div id="qbr-ai-taxonomy-hint" class="text-muted mt-1" style="font-size:12px"></div>
               </div>
+              <div class="form-group" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
+                <label class="form-label">🧠 Beceriler <span class="text-muted" style="font-weight:400">(ağırlıklar toplamı %100 olmalı)</span></label>
+                <div id="qbr-skills-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <span id="qbr-skills-total" class="text-muted" style="font-size:12px"></span>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbSaveSkills()">💾 Becerileri Kaydet</button>
+                </div>
+              </div>
               <div class="form-group">
                 <label class="form-label">Kitapçık Eşlemeleri <span class="text-muted" id="qbr-native-booklet" style="font-weight:400"></span></label>
                 <div id="qbr-booklet-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
@@ -3114,6 +3231,7 @@ const App = {
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
+    await this._qbLoadSkillsForQuestion(q.id);
   },
 
   // admin-panel-soru-havuzu-1.md tasarım önerisi #2: tek genel skor yerine
@@ -3226,6 +3344,74 @@ const App = {
     if (!s) return;
     s.bookletRows.splice(index, 1);
     this._qbRenderBookletRows();
+  },
+
+  // ---- Beceriler (bölüm 10.3) ----
+  async _qbLoadSkillsForQuestion(questionId) {
+    const s = this._qbState;
+    if (!s) return;
+    if (!s.activeSkillsCache) {
+      const res = await fetch('/api/admin/question-bank/skills?status=active');
+      const data = await res.json();
+      s.activeSkillsCache = res.ok ? (data.skills || []) : [];
+    }
+    const res = await fetch(`/api/admin/question-bank/questions/${questionId}/skills`);
+    const data = await res.json();
+    const current = {};
+    (res.ok ? data.skills || [] : []).forEach(row => { current[row.skill_id] = row.weight; });
+    this._qbRenderSkillsRows(s.activeSkillsCache, current);
+  },
+
+  _qbRenderSkillsRows(activeSkills, currentWeights) {
+    const wrap = document.getElementById('qbr-skills-rows');
+    if (!wrap) return;
+    if (!activeSkills.length) {
+      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok - "Beceriler" bölümünden önce bir beceri önerip onaylatın.</span>`;
+      this._qbUpdateSkillsTotal();
+      return;
+    }
+    wrap.innerHTML = activeSkills.map(sk => {
+      const checked = sk.id in currentWeights;
+      return `<div style="display:flex;gap:8px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;flex:1;font-size:13px;cursor:pointer">
+          <input type="checkbox" class="qbr-skill-check" data-skill-id="${sk.id}" ${checked ? 'checked' : ''} onchange="App._qbUpdateSkillsTotal()">
+          ${sk.name}
+        </label>
+        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100"
+               value="${checked ? currentWeights[sk.id] : ''}" placeholder="%" oninput="App._qbUpdateSkillsTotal()">
+      </div>`;
+    }).join('');
+    this._qbUpdateSkillsTotal();
+  },
+
+  _qbUpdateSkillsTotal() {
+    const total = Array.from(document.querySelectorAll('.qbr-skill-check:checked'))
+      .reduce((sum, cb) => sum + (parseFloat(document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`)?.value) || 0), 0);
+    const el = document.getElementById('qbr-skills-total');
+    if (el) {
+      el.textContent = `Toplam: %${total.toFixed(1)}`;
+      el.style.color = Math.abs(total - 100) < 0.01 ? 'var(--success)' : (total === 0 ? '' : 'var(--danger)');
+    }
+  },
+
+  async _qbSaveSkills() {
+    const q = this._qbCurrentQuestion;
+    if (!q) return;
+    const skills = Array.from(document.querySelectorAll('.qbr-skill-check:checked')).map(cb => ({
+      skillId: parseInt(cb.dataset.skillId),
+      weight: parseFloat(document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`)?.value) || 0,
+    }));
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/skills`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skills }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+      UI.toast('Beceriler kaydedildi 💾', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   async _qbSaveBookletNumbers() {
