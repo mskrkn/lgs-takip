@@ -54,15 +54,17 @@ const Schools = {
 
     container.innerHTML = `<p class="text-muted">Yükleniyor...</p>`;
 
-    let schools = [], dashboard = null;
+    let schools = [], dashboard = null, attentionItems = [];
     try {
-      const [schoolsRes, dashRes] = await Promise.all([
+      const [schoolsRes, dashRes, attnRes] = await Promise.all([
         fetch('/api/superadmin/organizations'),
         fetch('/api/superadmin/dashboard'),
+        fetch('/api/superadmin/attention-items'),
       ]);
       if (!schoolsRes.ok) throw new Error((await schoolsRes.json()).error || 'Okullar yüklenemedi.');
       schools = await schoolsRes.json();
       dashboard = dashRes.ok ? await dashRes.json() : null;
+      attentionItems = attnRes.ok ? await attnRes.json() : [];
     } catch (err) {
       container.innerHTML = `<p class="text-muted">❌ ${err.message}</p>`;
       return;
@@ -70,6 +72,7 @@ const Schools = {
     this._schools = schools; // Duzenle formunun mevcut degerlerle doldurulmasi icin
 
     container.innerHTML = `
+      ${this._renderAttentionPanel(attentionItems)}
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
 
       <div class="card mt-2" style="border:1px solid rgba(20,184,166,0.3)">
@@ -141,6 +144,33 @@ const Schools = {
     `;
 
     if (dashboard) this._renderExamChart(dashboard.examChart);
+  },
+
+  // Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 2): "şu an
+  // ilgilenmem gereken ne var" - dashboard KPI'larından ÖNCE, en üstte
+  // gösterilir çünkü asıl cevaplanması gereken soru bu.
+  _renderAttentionPanel(items) {
+    if (!items.length) {
+      return `<div class="card" style="border:1px solid rgba(74,222,128,0.3)">
+        <p style="margin:0;color:#4ade80">✅ Şu an dikkat gerektiren bir durum yok.</p>
+      </div>`;
+    }
+    const severityColor = { critical: '#fb7185', warning: '#fbbf24', info: '#60a5fa' };
+    return `
+      <div class="card" style="border:1px solid rgba(251,113,133,0.3)">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">🚨</span> Dikkat Gerekenler</h3>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${items.map(it => `
+            <div onclick="App.navigateTo('${it.page}')" style="cursor:pointer;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border-left:3px solid ${severityColor[it.severity] || '#60a5fa'};display:flex;justify-content:space-between;align-items:center" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'">
+              <span style="font-size:13px">${it.icon} ${_schoolsEscapeHtml(it.text)}</span>
+              <span style="color:var(--text-muted);font-size:12px">→</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
   },
 
   _renderDashboardSection(d) {
