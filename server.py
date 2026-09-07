@@ -2206,6 +2206,63 @@ def api_me():
     })
 
 
+@app.route("/api/data-admin/dashboard")
+@login_required(role=("admin", "super_admin"), permission="students.view")
+def api_data_admin_dashboard():
+    """Komuta Merkezi (yeni master prompt, Bölüm 2): Veri Giriş Admini'nin
+    operasyon odaklı Anasayfa'sı. NOT: master prompt "bekleyen dosyalar /
+    hatalı dosyalar / işleme başarı oranı" istiyor ama bunun karşılığı
+    backend'de YOK - Veri Girişi sayfasındaki Manuel/Excel/Optik/PDF
+    akışlarının hepsi tarayıcının yerel IndexedDB'sinde çalışır, sunucuya
+    sadece /api/admin/sync push'unda (tamamlanmış, tek satır) uğrar; ayrı
+    dosyalar için kuyruk/durum takibi hiç tutulmuyor (question_bank'in PDF
+    içe aktarma hattının aksine). Bu yüzden burada GERÇEKTEN var olan ve
+    aksiyon alınabilir 4 sinyal kullanılıyor: öğrenci sayısı, son senkron,
+    sınıfı/şubesi atanmamış öğrenciler (gerçek bir veri kalitesi sorunu -
+    bkz. js/app.js Sınıf Karşılaştırma'daki "5/undefined" hatasının kökeni
+    de bu), ve en son denemede sonucu eksik öğrenciler."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    total_students = db.execute(
+        "SELECT COUNT(*) c FROM students WHERE organization_id=?", (org_id,)
+    ).fetchone()["c"]
+
+    missing_class = db.execute(
+        "SELECT COUNT(*) c FROM students WHERE organization_id=? "
+        "AND (class_name IS NULL OR TRIM(class_name)='')", (org_id,)
+    ).fetchone()["c"]
+
+    last_sync = db.execute(
+        "SELECT created_at, total_records FROM imports "
+        "WHERE organization_id=? AND file_type='admin_sync' "
+        "ORDER BY id DESC LIMIT 1", (org_id,)
+    ).fetchone()
+
+    latest_exam = db.execute(
+        "SELECT id, name, date FROM exams WHERE organization_id=? "
+        "ORDER BY date DESC, id DESC LIMIT 1", (org_id,)
+    ).fetchone()
+    missing_results = None
+    if latest_exam:
+        results_count = db.execute(
+            "SELECT COUNT(DISTINCT student_id) c FROM results WHERE exam_id=?", (latest_exam["id"],)
+        ).fetchone()["c"]
+        missing_results = max(total_students - results_count, 0)
+
+    return jsonify({
+        "totalStudents": total_students,
+        "missingClassCount": missing_class,
+        "lastSync": {"at": last_sync["created_at"], "totalRecords": last_sync["total_records"]} if last_sync else None,
+        "latestExam": {
+            "id": latest_exam["id"], "name": latest_exam["name"], "date": latest_exam["date"],
+            "missingResultsCount": missing_results,
+        } if latest_exam else None,
+    })
+
+
 # ============================================================
 # API: Süper admin - okul (organization) yönetimi
 # ============================================================
