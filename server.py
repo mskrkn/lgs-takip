@@ -4444,37 +4444,19 @@ def _find_similar_question(db, org_id, subject_id, grade_level, topic_id, skill_
     return None
 
 
-@app.route("/api/student/next-question/<int:question_id>")
-@login_required(role="student", permission="assignments.view")
-def api_student_next_question(question_id):
-    """admin-panel-soru-havuzu-2 bölüm 10.5+10.8: öğrenci bir soruyu
-    çözdükten SONRA (question_id = az önce çözülen soru) performansına göre
-    önerilen bir sonraki soruyu döner. Yetkilendirme: bu öğrencinin bu soru
-    için GERÇEKTEN en az bir denemesi olması şart (student_question_attempts) -
-    aksi halde rastgele question_id deneyerek başka konulara/becerilere ait
-    soru/zorluk bilgisi sızdırılabilirdi (IDOR)."""
-    student_id = session.get("student_id")
-    if not student_id:
-        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
-    db = get_db()
-    student = db.execute("SELECT organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
-    if not student:
-        return jsonify({"error": "Öğrenci bulunamadı."}), 404
-
-    attempt = db.execute(
-        "SELECT 1 FROM student_question_attempts WHERE student_id=? AND question_id=? LIMIT 1",
-        (student_id, question_id),
-    ).fetchone()
-    if not attempt:
-        return jsonify({"error": "Bu soruya ait bir çözüm kaydınız yok."}), 404
-
+def _compute_next_recommendation(db, org_id, student_id, question_id):
+    """admin-panel-soru-havuzu-2 bölüm 10.5+10.8'i birleştirir: öğrenci
+    question_id'yi çözdükten SONRA, performansına göre önerilen bir sonraki
+    soruyu hesaplar. Hem GET /next-question (ödev bağlamında) hem POST
+    /practice/answer (bölüm 10.7 öncesi minimal pratik modu) tarafından
+    kullanılan tek ortak çekirdek - iki uç aynı mantığı KOPYALAMASIN diye."""
     q = db.execute(
         "SELECT subject_id, grade_level, topic_id, difficulty, question_pattern, explanation "
         "FROM question_bank WHERE id=? AND organization_id=?",
-        (question_id, student["organization_id"]),
+        (question_id, org_id),
     ).fetchone()
     if not q:
-        return jsonify({"error": "Soru bulunamadı."}), 404
+        return None
 
     skill_row = db.execute(
         "SELECT skill_id FROM question_skills WHERE question_id=? ORDER BY weight DESC LIMIT 1",
@@ -4502,17 +4484,154 @@ def api_student_next_question(question_id):
     recent_solved_ids.add(question_id)
 
     next_id = _find_similar_question(
-        db, student["organization_id"], q["subject_id"], q["grade_level"], q["topic_id"], skill_id,
+        db, org_id, q["subject_id"], q["grade_level"], q["topic_id"], skill_id,
         next_difficulty, exclude_ids=recent_solved_ids, exclude_pattern=q["question_pattern"],
     )
 
-    return jsonify({
+    return {
         "recommendedDifficulty": next_difficulty,
         "needsSupport": needs_support,
         "supportExplanation": q["explanation"] if needs_support else None,
         "nextQuestionId": next_id,
         "nextQuestionImageUrl": f"/api/student/question-image/{next_id}" if next_id else None,
+    }
+
+
+@app.route("/api/student/next-question/<int:question_id>")
+@login_required(role="student", permission="assignments.view")
+def api_student_next_question(question_id):
+    """Yetkilendirme: bu öğrencinin bu soru için GERÇEKTEN en az bir
+    denemesi olması şart (student_question_attempts) - aksi halde rastgele
+    question_id deneyerek başka konulara/becerilere ait soru/zorluk bilgisi
+    sızdırılabilirdi (IDOR)."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    attempt = db.execute(
+        "SELECT 1 FROM student_question_attempts WHERE student_id=? AND question_id=? LIMIT 1",
+        (student_id, question_id),
+    ).fetchone()
+    if not attempt:
+        return jsonify({"error": "Bu soruya ait bir çözüm kaydınız yok."}), 404
+
+    result = _compute_next_recommendation(db, student["organization_id"], student_id, question_id)
+    if result is None:
+        return jsonify({"error": "Soru bulunamadı."}), 404
+    return jsonify(result)
+
+
+@app.route("/api/student/practice/subjects")
+@login_required(role="student", permission="assignments.view")
+def api_student_practice_subjects():
+    """Pratik modu (bölüm 10.5+10.8'in öğrenci tarafında kullanılabilir
+    hale gelmesi) - öğrencinin kendi sınıf seviyesinde (class_name'den
+    türetilen grade_level) yayınlanmış sorusu bulunan dersleri listeler."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    grade_level = (student["class_name"] or "").split("/")[0].strip()
+
+    rows = db.execute(
+        "SELECT DISTINCT s.id, s.name FROM subjects s "
+        "JOIN question_bank qb ON qb.subject_id = s.id "
+        "WHERE qb.organization_id=? AND qb.status='published' AND qb.grade_level=? "
+        "ORDER BY s.name",
+        (student["organization_id"], grade_level),
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/student/practice/start")
+@login_required(role="student", permission="assignments.view")
+def api_student_practice_start():
+    """Pratik moduna 'soğuk başlangıç' - bir önceki soru olmadığı için
+    _compute_next_recommendation kullanılamaz. Konu seçimi: bu öğrencinin bu
+    dersteki (varsa) EN ZAYIF becerisine bağlı konu öncelikli - hiç veri
+    yoksa/eşit sıradaysa ilk uygun konuya düşülür (COALESCE(...,0) ile hiç
+    denenmemiş beceriler 0 mastery gibi davranıp doğal olarak öne çıkar).
+    Başlangıç zorluğu 'orta' - bilinmeyen seviye için makul, aşırı kolay/zor
+    başlayıp gereksiz sallanmayı önleyen standart bir varsayılan."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    subject_id = request.args.get("subjectId", type=int)
+    if not subject_id:
+        return jsonify({"error": "subjectId gerekli."}), 400
+    db = get_db()
+    student = db.execute("SELECT organization_id, class_name FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    grade_level = (student["class_name"] or "").split("/")[0].strip()
+    org_id = student["organization_id"]
+
+    topic_row = db.execute(
+        "SELECT qb.topic_id, MIN(COALESCE(ss.mastery_percentage, 0)) AS min_mastery "
+        "FROM question_bank qb "
+        "LEFT JOIN question_skills qs ON qs.question_id = qb.id "
+        "LEFT JOIN student_skills ss ON ss.skill_id = qs.skill_id AND ss.student_id = ? "
+        "WHERE qb.organization_id=? AND qb.subject_id=? AND qb.grade_level=? "
+        "AND qb.status='published' AND qb.topic_id IS NOT NULL "
+        "GROUP BY qb.topic_id ORDER BY min_mastery ASC LIMIT 1",
+        (student_id, org_id, subject_id, grade_level),
+    ).fetchone()
+    topic_id = topic_row["topic_id"] if topic_row else None
+
+    question_id = _find_similar_question(
+        db, org_id, subject_id, grade_level, topic_id, None, "orta", exclude_ids=set(),
+    )
+    if not question_id:
+        return jsonify({"error": "Bu ders/sınıf seviyesinde uygun soru bulunamadı."}), 404
+    return jsonify({
+        "questionId": question_id,
+        "questionImageUrl": f"/api/student/question-image/{question_id}",
     })
+
+
+@app.route("/api/student/practice/answer", methods=["POST"])
+@login_required(role="student", permission="assignments.complete")
+def api_student_practice_answer():
+    """Pratik modunda (herhangi bir ödeve bağlı OLMAYAN) tek bir cevabı
+    kaydeder ve aynı anda bir sonraki öneriyi döner - tek round-trip'te hem
+    _record_attempt hem _compute_next_recommendation çalışır."""
+    student_id = session.get("student_id")
+    if not student_id:
+        return jsonify({"error": "Öğrenci hesabı bulunamadı."}), 400
+    data = request.get_json(silent=True) or {}
+    question_id = data.get("questionId")
+    answer_text = (data.get("answer") or "").strip()
+    if not question_id or not answer_text:
+        return jsonify({"error": "questionId ve answer gerekli."}), 400
+
+    db = get_db()
+    student = db.execute("SELECT organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    org_id = student["organization_id"]
+
+    q = db.execute(
+        "SELECT correct_answer FROM question_bank WHERE id=? AND organization_id=? AND status='published'",
+        (question_id, org_id),
+    ).fetchone()
+    if not q:
+        return jsonify({"error": "Soru bulunamadı."}), 404
+
+    is_correct_tristate = None
+    if q["correct_answer"]:
+        is_correct_tristate = answer_text.lower() == q["correct_answer"].strip().lower()
+    _record_attempt(db, student_id, question_id, answer=answer_text, is_correct=is_correct_tristate)
+
+    result = _compute_next_recommendation(db, org_id, student_id, question_id) or {}
+    result["isCorrect"] = is_correct_tristate
+    return jsonify(result)
 
 
 @app.route("/api/student/assignments/<int:assignment_id>/submit", methods=["POST"])

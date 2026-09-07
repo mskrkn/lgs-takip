@@ -812,6 +812,97 @@
       }
     }
 
+    // ----- PRATİK MODU (bölüm 10.5+10.8 adaptif motor - ödeve bağlı değil) -----
+    let _practiceState = null; // { questionId, imageUrl }
+
+    async function renderPracticeSubjects() {
+      const container = document.getElementById('practice-container');
+      container.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+      let subjects;
+      try {
+        subjects = await fetch('/api/student/practice/subjects').then(r => r.json());
+      } catch (e) {
+        container.innerHTML = '<p class="text-muted">❌ Dersler yüklenemedi.</p>';
+        return;
+      }
+      if (!subjects.length) {
+        container.innerHTML = '<p class="text-muted">Şu an sınıf seviyenizde pratik yapılabilecek bir ders bulunmuyor.</p>';
+        return;
+      }
+      container.innerHTML = `
+        <p style="font-size:13px;color:var(--text-muted)">Bir ders seç, başlayalım:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">
+          ${subjects.map(s => `
+            <button onclick="startPractice(${s.id})" style="padding:12px 18px;border:none;border-radius:10px;background:${subjectColor(s.name)};color:#fff;font-weight:600;cursor:pointer">
+              ${subjectIcon(s.name)} ${escapeHtml(s.name)}
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    async function startPractice(subjectId) {
+      const container = document.getElementById('practice-container');
+      container.innerHTML = '<p class="text-muted">Soru hazırlanıyor...</p>';
+      try {
+        const res = await fetch(`/api/student/practice/start?subjectId=${subjectId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Başlatılamadı.');
+        _practiceState = { questionId: data.questionId, imageUrl: data.questionImageUrl };
+        renderPracticeQuestion();
+      } catch (err) {
+        container.innerHTML = `<p class="text-muted">❌ ${escapeHtml(err.message)}</p><button onclick="renderPracticeSubjects()" style="margin-top:8px;padding:8px 16px;border:none;border-radius:8px;background:#334155;color:#fff;cursor:pointer">← Derslere Dön</button>`;
+      }
+    }
+
+    function renderPracticeQuestion() {
+      const container = document.getElementById('practice-container');
+      if (!_practiceState) { renderPracticeSubjects(); return; }
+      container.innerHTML = `
+        <div class="ep-card" style="margin-top:10px">
+          <img src="${_practiceState.imageUrl}" alt="Soru" style="max-width:100%;border-radius:8px;border:1px solid var(--bg-glass-border)" loading="lazy">
+          <input type="text" id="practice-answer-input" class="form-control" style="margin-top:10px;max-width:200px" placeholder="Cevabınız">
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button onclick="submitPracticeAnswer()" style="padding:10px 20px;border:none;border-radius:8px;background:#14B8A6;color:#fff;font-weight:600;cursor:pointer">Gönder</button>
+            <button onclick="renderPracticeSubjects()" style="padding:10px 20px;border:none;border-radius:8px;background:#334155;color:#fff;cursor:pointer">Ders Değiştir</button>
+          </div>
+          <div id="practice-feedback" style="margin-top:10px;font-size:13px"></div>
+        </div>
+      `;
+      document.getElementById('practice-answer-input').focus();
+    }
+
+    async function submitPracticeAnswer() {
+      const input = document.getElementById('practice-answer-input');
+      const answer = input.value.trim();
+      const feedback = document.getElementById('practice-feedback');
+      if (!answer) { feedback.innerHTML = '<span style="color:#facc15">Önce bir cevap girin.</span>'; return; }
+      feedback.textContent = 'Kontrol ediliyor...';
+      try {
+        const res = await fetch('/api/student/practice/answer', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ questionId: _practiceState.questionId, answer }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Gönderilemedi.');
+
+        let msg = data.isCorrect === true ? '✅ Doğru!' : (data.isCorrect === false ? '❌ Yanlış.' : '📝 Kaydedildi.');
+        if (data.needsSupport && data.supportExplanation) {
+          msg += `<div class="ep-card" style="margin-top:8px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3)">💡 ${escapeHtml(data.supportExplanation)}</div>`;
+        }
+        feedback.innerHTML = msg;
+
+        if (data.nextQuestionId) {
+          _practiceState = { questionId: data.nextQuestionId, imageUrl: data.nextQuestionImageUrl };
+          setTimeout(renderPracticeQuestion, data.needsSupport ? 2500 : 900);
+        } else {
+          feedback.innerHTML += '<div style="margin-top:8px;color:var(--text-muted)">Bu ders/konuda şu an başka uygun soru kalmadı 🎉</div>';
+        }
+      } catch (err) {
+        feedback.innerHTML = `<span style="color:#fb7185">❌ ${escapeHtml(err.message)}</span>`;
+      }
+    }
+
     function showPage(page) {
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
@@ -823,6 +914,7 @@
         analytics: ['Analizler','Konu Analizi & Sınıf Karşılaştırma'],
         exams:     ['Denemelerim','Deneme Sonuçlarım'],
         assignments: ['Ödevlerim','Öğretmenimin Verdiği Ödevler'],
+        practice:  ['Pratik Yap','Zorluk Kendini Ayarlar'],
         settings:  ['Ayarlar','Hesap & Güvenlik'],
       };
       const [title, subtitle] = titles[page] || [page,''];
@@ -838,8 +930,13 @@
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.addEventListener('click', () => {
         showPage(i.dataset.page);
         if (i.dataset.page === 'assignments') renderAssignmentsList();
+        if (i.dataset.page === 'practice') renderPracticeSubjects();
       }));
-      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.addEventListener('click', () => showPage(i.dataset.page)));
+      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.addEventListener('click', () => {
+        showPage(i.dataset.page);
+        if (i.dataset.page === 'assignments') renderAssignmentsList();
+        if (i.dataset.page === 'practice') renderPracticeSubjects();
+      }));
       const toggle  = document.getElementById('menu-toggle');
       const sidebar = document.querySelector('.sidebar');
       const overlay = document.querySelector('.sidebar-overlay');

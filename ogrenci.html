@@ -32,6 +32,7 @@
         <div class="nav-item" data-page="analytics"><span class="nav-icon">📊</span><span>Analizler</span></div>
         <div class="nav-item" data-page="exams"><span class="nav-icon">📝</span><span>Denemelerim</span></div>
         <div class="nav-item" data-page="assignments"><span class="nav-icon">📋</span><span>Ödevlerim</span></div>
+        <div class="nav-item" data-page="practice"><span class="nav-icon">🎯</span><span>Pratik Yap</span></div>
         <div class="nav-section-title">Yakında</div>
         <div class="nav-item" onclick="comingSoon('Konular')"><span class="nav-icon">📚</span><span>Konular</span><span class="nav-badge">Yakında</span></div>
         <div class="nav-item" onclick="comingSoon('Edu AI')"><span class="nav-icon">🤖</span><span>Edu AI</span><span class="nav-badge">Yakında</span></div>
@@ -306,6 +307,17 @@
           <div id="assignment-detail-card"></div>
         </section>
 
+        <!-- ============ PRATİK YAP (adaptif zorluk) ============ -->
+        <section class="page-section" id="page-practice">
+          <div class="ep-card">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Pratik Yap</div>
+            </div>
+            <p class="text-muted">Cevaplarına göre zorluk kendini ayarlar - doğru çözdükçe zorlaşır, zorlandığında kolaylaşır.</p>
+            <div id="practice-container"></div>
+          </div>
+        </section>
+
         <!-- ============ AYARLAR ============ -->
         <section class="page-section" id="page-settings">
           <div class="ep-card">
@@ -342,8 +354,8 @@
     <button class="mobile-nav-item" data-page="exams">
       <span class="mobile-nav-icon">📝</span><span class="mobile-nav-label">Denemelerim</span>
     </button>
-    <button class="mobile-nav-item" onclick="comingSoon('Edu AI')">
-      <span class="mobile-nav-icon">🤖</span><span class="mobile-nav-label">Edu AI</span>
+    <button class="mobile-nav-item" data-page="practice">
+      <span class="mobile-nav-icon">🎯</span><span class="mobile-nav-label">Pratik</span>
     </button>
     <button class="mobile-nav-item" data-page="settings">
       <span class="mobile-nav-icon">⚙️</span><span class="mobile-nav-label">Ayarlar</span>
