@@ -801,12 +801,48 @@ def _create_invite_tables(conn):
 def _create_question_bank_tables(conn):
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS grade_levels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS units (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             created_at TEXT NOT NULL,
             UNIQUE(subject_id, name)
+        );
+
+        -- admin-panel-soru-havuzu-2 bolum 10.3: beceri (skill) sistemi.
+        -- organization_id BILEREK YOK - merkezi soru bankasi gibi TUM
+        -- okullarda ortak/paylasilan bir kaynak. Ogretmenler de yeni beceri
+        -- ONERebilir (created_by bir ogretmen olabilir), ama onay hala
+        -- ayni "dort goz" mantigiyla bir admin tarafindan verilir (bkz.
+        -- _check_four_eyes ile ayni desen, questions.approve izniyle).
+        CREATE TABLE IF NOT EXISTS skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'pending_review'
+                CHECK(status IN ('pending_review','active','rejected')),
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            rejection_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        -- Bir soru birden fazla beceri olcebilir; agirliklar (weight, 0-100)
+        -- toplami %100 olmali - bu VERITABANI seviyesinde degil, yazma
+        -- ucunda (api_question_bank_set_skills) dogrulanir (SQLite CHECK
+        -- birden fazla satir arasi toplami kontrol edemez).
+        CREATE TABLE IF NOT EXISTS question_skills (
+            question_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+            weight REAL NOT NULL,
+            PRIMARY KEY (question_id, skill_id)
         );
 
         CREATE TABLE IF NOT EXISTS topics (
@@ -915,6 +951,17 @@ def _create_question_bank_tables(conn):
     topics_cols = [r[1] for r in conn.execute("PRAGMA table_info(topics)").fetchall()]
     if topics_cols and "unit_id" not in topics_cols:
         conn.execute("ALTER TABLE topics ADD COLUMN unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL")
+
+    units_cols = [r[1] for r in conn.execute("PRAGMA table_info(units)").fetchall()]
+    if units_cols and "grade_level_id" not in units_cols:
+        conn.execute("ALTER TABLE units ADD COLUMN grade_level_id INTEGER REFERENCES grade_levels(id) ON DELETE SET NULL")
+
+    # 5-12 (ortaokul + lise) varsayilan kademe listesi - admin panelinden
+    # sonradan duzenlenebilir/genisletilebilir, burasi sadece ilk kurulum.
+    if not conn.execute("SELECT 1 FROM grade_levels LIMIT 1").fetchone():
+        now_gl = datetime.now().isoformat()
+        for grade_name in ("5", "6", "7", "8", "9", "10", "11", "12"):
+            conn.execute("INSERT OR IGNORE INTO grade_levels (name, created_at) VALUES (?,?)", (grade_name, now_gl))
 
     # Var olan kurulumlarda booklet_code sütunu eklenmeden önce oluşturulmuş
     # question_import_batches tablosuna, çoklu kitapçık eşleştirmesinin
@@ -5440,6 +5487,29 @@ def api_question_bank_bulk_update():
     return jsonify({"updated": updated, "skippedOwn": skipped_own})
 
 
+@app.route("/api/admin/question-bank/grade-levels")
+@login_required(role="admin", permission="questions.view")
+def api_question_bank_grade_levels():
+    db = get_db()
+    rows = db.execute("SELECT id, name FROM grade_levels ORDER BY CAST(name AS INTEGER)").fetchall()
+    return jsonify({"gradeLevels": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/question-bank/grade-levels", methods=["POST"])
+@login_required(role="admin", permission="questions.create")
+def api_question_bank_create_grade_level():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name gerekli."}), 400
+    now = datetime.now().isoformat()
+    db.execute("INSERT OR IGNORE INTO grade_levels (name, created_at) VALUES (?,?)", (name, now))
+    db.commit()
+    row = db.execute("SELECT id, name FROM grade_levels WHERE name=?", (name,)).fetchone()
+    return jsonify(dict(row))
+
+
 @app.route("/api/admin/question-bank/units")
 @login_required(role="admin", permission="questions.view")
 def api_question_bank_units():
@@ -5448,7 +5518,7 @@ def api_question_bank_units():
     if not subject_id:
         return jsonify({"error": "subject_id gerekli."}), 400
     rows = db.execute(
-        "SELECT id, name FROM units WHERE subject_id=? ORDER BY name", (subject_id,)
+        "SELECT id, name, grade_level_id FROM units WHERE subject_id=? ORDER BY name", (subject_id,)
     ).fetchall()
     return jsonify({"units": [dict(r) for r in rows]})
 
@@ -5459,17 +5529,25 @@ def api_question_bank_create_unit():
     db = get_db()
     data = request.get_json(silent=True) or {}
     subject_id = data.get("subjectId")
+    grade_level_id = data.get("gradeLevelId") or None
     name = (data.get("name") or "").strip()
     if not subject_id or not name:
         return jsonify({"error": "subjectId ve name gerekli."}), 400
     now = datetime.now().isoformat()
+    existing_unit = db.execute("SELECT id FROM units WHERE subject_id=? AND name=?", (subject_id, name)).fetchone()
+    if existing_unit:
+        if grade_level_id:
+            db.execute("UPDATE units SET grade_level_id=? WHERE id=?", (grade_level_id, existing_unit["id"]))
+            db.commit()
+        row = db.execute("SELECT id, name, grade_level_id FROM units WHERE id=?", (existing_unit["id"],)).fetchone()
+        return jsonify(dict(row))
     db.execute(
-        "INSERT OR IGNORE INTO units (subject_id, name, created_at) VALUES (?,?,?)",
-        (subject_id, name, now),
+        "INSERT INTO units (subject_id, grade_level_id, name, created_at) VALUES (?,?,?,?)",
+        (subject_id, grade_level_id, name, now),
     )
     db.commit()
     row = db.execute(
-        "SELECT id, name FROM units WHERE subject_id=? AND name=?", (subject_id, name)
+        "SELECT id, name, grade_level_id FROM units WHERE subject_id=? AND name=?", (subject_id, name)
     ).fetchone()
     return jsonify(dict(row))
 
@@ -5560,6 +5638,164 @@ def api_question_bank_create_learning_outcome():
         "SELECT id, name FROM learning_outcomes WHERE topic_id=? AND name=?", (topic_id, name)
     ).fetchone()
     return jsonify(dict(row))
+
+
+# ============================================================
+# Beceri (Skill) sistemi - admin-panel-soru-havuzu-2 bölüm 10.3
+# ============================================================
+# organization_id YOK: merkezi soru bankası gibi TÜM okullarda ortak/
+# paylaşılan bir kaynak. Hem admin hem öğretmen yeni beceri ÖNERebilir
+# (created_by), ama onay her zaman soru onayıyla AYNI "dört göz" ilkesiyle
+# (_check_four_eyes) bir admin (questions.approve) tarafından verilir -
+# öneren bir admin olsa bile KENDİ önerdiği beceriyi onaylayamaz.
+
+def _propose_skill(db, name, description, user_id):
+    name = (name or "").strip()
+    if not name:
+        return None, "Beceri adı gerekli."
+    now = datetime.now().isoformat()
+    existing = db.execute("SELECT id, status FROM skills WHERE LOWER(name)=LOWER(?)", (name,)).fetchone()
+    if existing:
+        return None, f"Bu isimde bir beceri zaten var (durum: {existing['status']})."
+    cur = db.execute(
+        "INSERT INTO skills (name, description, status, created_by, created_at, updated_at) "
+        "VALUES (?,?,'pending_review',?,?,?)",
+        (name, (description or "").strip() or None, user_id, now, now),
+    )
+    db.commit()
+    return cur.lastrowid, None
+
+
+@app.route("/api/admin/question-bank/skills")
+@login_required(role="admin", permission="questions.view")
+def api_question_bank_list_skills():
+    db = get_db()
+    status = request.args.get("status")
+    query = (
+        "SELECT sk.id, sk.name, sk.description, sk.status, sk.rejection_reason, sk.created_at, "
+        "u.display_name AS created_by_name, sk.created_by = ? AS is_own "
+        "FROM skills sk LEFT JOIN users u ON u.id = sk.created_by"
+    )
+    params = [session["user_id"]]
+    if status:
+        query += " WHERE sk.status = ?"
+        params.append(status)
+    query += " ORDER BY sk.created_at DESC"
+    rows = db.execute(query, params).fetchall()
+    return jsonify({"skills": [dict(r) | {"is_own": bool(r["is_own"])} for r in rows]})
+
+
+@app.route("/api/admin/question-bank/skills", methods=["POST"])
+@login_required(role="admin", permission="questions.create")
+def api_question_bank_create_skill():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    skill_id, error = _propose_skill(db, data.get("name"), data.get("description"), session["user_id"])
+    if error:
+        return jsonify({"error": error}), 400
+    log_audit(db, "SKILL_PROPOSED", resource_type="skill", resource_id=skill_id)
+    return jsonify({"ok": True, "id": skill_id})
+
+
+@app.route("/api/teacher/skills", methods=["POST"])
+@login_required(role="teacher", permission="questions.create")
+def api_teacher_create_skill():
+    """Öğretmenler de yeni beceri önerebilir (bölüm 10.3) - legacy role
+    hala 'teacher', onay hâlâ bir admin'in questions.approve iznine
+    bağlı (bkz. _check_four_eyes ile aynı desen aşağıda)."""
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    skill_id, error = _propose_skill(db, data.get("name"), data.get("description"), session["user_id"])
+    if error:
+        return jsonify({"error": error}), 400
+    log_audit(db, "SKILL_PROPOSED", resource_type="skill", resource_id=skill_id)
+    return jsonify({"ok": True, "id": skill_id})
+
+
+@app.route("/api/admin/question-bank/skills/<int:skill_id>", methods=["PATCH"])
+@login_required(role="admin", permission="questions.approve")
+def api_question_bank_review_skill(skill_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+    data = request.get_json(silent=True) or {}
+    status = data.get("status")
+    if status not in ("active", "rejected"):
+        return jsonify({"error": "Geçersiz durum."}), 400
+    # Aynı dört göz ilkesi (bkz. _check_four_eyes / server.py bölüm 8) -
+    # burada question_bank değil skills satırı olduğu için ayrı, küçük bir
+    # kontrol; ortak bir yardımcıya çıkarmak (created_by/status/user_id
+    # imzası aynı olsa da) bu iki farklı tablo için gereksiz bir soyutlama
+    # olurdu.
+    if row["created_by"] == session["user_id"]:
+        return jsonify({"error": "Kendi önerdiğiniz beceriyi onaylayamaz/reddedemezsiniz - başka bir yetkili incelemeli."}), 403
+    rejection_reason = None
+    if status == "rejected":
+        rejection_reason = (data.get("rejectionReason") or "").strip()
+        if not rejection_reason:
+            return jsonify({"error": "Reddetme gerekçesi zorunlu."}), 400
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE skills SET status=?, approved_by=?, rejection_reason=?, updated_at=? WHERE id=?",
+        (status, session["user_id"], rejection_reason, now, skill_id),
+    )
+    db.commit()
+    log_audit(db, "SKILL_APPROVED" if status == "active" else "SKILL_REJECTED", resource_type="skill", resource_id=skill_id)
+    return jsonify({"ok": True, "status": status})
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/skills", methods=["GET", "PUT"])
+@login_required(role="admin", permission="questions.update")
+def api_question_bank_question_skills(question_id):
+    """Bir soruya bağlı becerileri (ve ağırlıklarını) okur/günceller. Sadece
+    status='active' beceriler bağlanabilir - henüz onaylanmamış/reddedilmiş
+    bir beceriyle soru etiketlemek, mastery hesaplamasına asla ACTIVE
+    olmayacak bir beceri sızdırırdı."""
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    if request.method == "GET":
+        rows = db.execute(
+            "SELECT qs.skill_id, qs.weight, sk.name FROM question_skills qs "
+            "JOIN skills sk ON sk.id = qs.skill_id WHERE qs.question_id=?",
+            (question_id,),
+        ).fetchall()
+        return jsonify({"skills": [dict(r) for r in rows]})
+
+    data = request.get_json(silent=True) or {}
+    items = data.get("skills")
+    if not isinstance(items, list):
+        return jsonify({"error": "skills (liste) gerekli."}), 400
+    total_weight = 0.0
+    clean_items = []
+    for item in items:
+        skill_id = item.get("skillId")
+        weight = item.get("weight")
+        try:
+            weight = float(weight)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Geçersiz ağırlık değeri."}), 400
+        if not skill_id or weight <= 0:
+            return jsonify({"error": "Her beceri için geçerli bir id ve pozitif ağırlık gerekli."}), 400
+        skill_row = db.execute("SELECT status FROM skills WHERE id=?", (skill_id,)).fetchone()
+        if not skill_row or skill_row["status"] != "active":
+            return jsonify({"error": "Sadece onaylı (aktif) beceriler bir soruya bağlanabilir."}), 400
+        clean_items.append((skill_id, weight))
+        total_weight += weight
+    if clean_items and abs(total_weight - 100.0) > 0.01:
+        return jsonify({"error": f"Ağırlıkların toplamı %100 olmalı (şu an: %{total_weight:.1f})."}), 400
+
+    db.execute("DELETE FROM question_skills WHERE question_id=?", (question_id,))
+    for skill_id, weight in clean_items:
+        db.execute(
+            "INSERT INTO question_skills (question_id, skill_id, weight) VALUES (?,?,?)",
+            (question_id, skill_id, weight),
+        )
+    db.commit()
+    return jsonify({"ok": True, "count": len(clean_items)})
 
 
 @app.route("/api/admin/question-bank/export")
