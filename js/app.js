@@ -747,6 +747,26 @@ const App = {
     return '';
   },
 
+  // Ana Sayfa Geliştirme Önerileri madde 10 (Hızlı İşlemler) - okul
+  // seviyesindeki (Okul Admini/Veri Girişi Admini) dashboard için. Bugün
+  // itibarıyla iki rol arasında UI seviyesinde bir ayrım yok (bkz. bu
+  // oturumdaki daha önceki bulgu: DATA_ADMIN henüz frontend'de
+  // kısıtlanmıyor) - bu yüzden tüm okul-seviyesi hesaplara aynı, tam set gösterilir.
+  _renderQuickActions() {
+    return `
+      <div class="card mt-2">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">⚡</span> Hızlı İşlemler</h3></div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('users')">👤 Kullanıcı Ekle</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('import')">📥 Veri Girişi</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('question-bank')">📝 Soru Girişi</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">📊 Rapor Oluştur</button>
+        </div>
+      </div>
+    `;
+  },
+
   async renderDashboard() {
     const container = document.getElementById('page-dashboard');
     const studentCount = await db.getStudentCount();
@@ -776,6 +796,7 @@ const App = {
       </div>
 
       ${this._renderUserLimitBanner(studentCount)}
+      ${this._renderQuickActions()}
 
       <!-- Stats (küçük/sıkışık) -->
       <div class="stats-grid stats-grid-compact">
