@@ -709,6 +709,63 @@
         </div>`).join('');
     }
 
+    // ----- KİŞİSEL ÇALIŞMA PLANI (bölüm 10.10 - soru havuzuna bağlı, GERÇEK
+    // sorular içerir; yukarıdaki renderStudyPlanCard'dan FARKLI bir özellik,
+    // o sadece metin önerisi üretir, bu ise deneme hata hafızasından soru
+    // havuzunda gerçek telafi soruları seçer) -----
+    async function renderPersonalStudyPlan() {
+      const container = document.getElementById('study-plan-container');
+      let plan;
+      try {
+        plan = await fetch('/api/student/study-plan/latest').then(r => r.json());
+      } catch (e) {
+        container.innerHTML = '<p class="text-muted">❌ Çalışma planı yüklenemedi.</p>';
+        return;
+      }
+      if (!plan) {
+        container.innerHTML = `
+          <p style="color:var(--text-muted);font-size:13px">Son denemendeki zayıf konulardan sana özel bir çalışma planı oluşturabiliriz.</p>
+          <button class="ep-task-cta" onclick="generatePersonalStudyPlan()">✨ Çalışma Planı Oluştur</button>
+          <div id="study-plan-status" class="text-muted" style="margin-top:8px;font-size:13px"></div>
+        `;
+        return;
+      }
+      const solvedCount = plan.questions.filter(q => q.solved).length;
+      container.innerHTML = `
+        <p style="color:var(--text-muted);font-size:13px">${solvedCount}/${plan.questions.length} tamamlandı</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          ${plan.questions.map(q => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border:1px solid var(--bg-glass-border);border-radius:8px">
+              <span style="font-size:13px">${q.solved ? '✅' : '⬜'} ${escapeHtml(q.matchedKazanim || 'Genel tekrar')}</span>
+              <button class="btn-sm" style="padding:6px 12px;border:none;border-radius:6px;background:#14B8A6;color:#fff;cursor:pointer" onclick="solveStudyPlanQuestion(${q.questionId}, '${q.questionImageUrl}')">${q.solved ? 'Tekrar Çöz' : 'Çöz'}</button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    async function generatePersonalStudyPlan() {
+      const statusEl = document.getElementById('study-plan-status');
+      if (statusEl) statusEl.textContent = 'Oluşturuluyor...';
+      try {
+        const res = await fetch('/api/student/study-plan/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Oluşturulamadı.');
+        await renderPersonalStudyPlan();
+      } catch (err) {
+        if (statusEl) statusEl.textContent = '❌ ' + err.message;
+      }
+    }
+
+    // Plan sorusunu, pratik modunun AYNI çözme ekranıyla açar (bkz.
+    // renderPracticeQuestion/submitPracticeAnswer) - ayrı bir çözme arayüzü
+    // yazmaya gerek yok, aynı adaptif motor zaten questionId+answer üzerinden çalışıyor.
+    function solveStudyPlanQuestion(questionId, imageUrl) {
+      _practiceState = { questionId, imageUrl };
+      showPage('practice');
+      renderPracticeQuestion();
+    }
+
     // ----- HATA HAFIZASI -----
     function renderErrorMemory(errorMemory) {
       const card = document.getElementById('error-memory-card');
@@ -991,6 +1048,7 @@
       renderPusi(data.errorMemory, data.netTrend, data.compass, riseStreak);
       renderErrorMemory(data.errorMemory);
       renderStudyPlanCard(data.latestExamTopicStats);
+      renderPersonalStudyPlan();
 
       renderNetTrendTable(applyTrendWindow(data.netTrend));
 
