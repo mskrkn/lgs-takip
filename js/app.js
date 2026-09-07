@@ -39,6 +39,7 @@ const App = {
     // panelinde goruluyordu. db.* KULLANAN HER SEYDEN (repairAndLinkStudents
     // dahil) ONCE, senkron modulunden de ONCE calismasi ZORUNLU.
     await db.switchToOrg(this.currentUser?.organizationId || null);
+    db.setUserLimit(this.currentUser?.userLimit ?? null);
     db.repairAndLinkStudents().catch(console.error);
 
     // KRITIK: Bulut Senkronizasyonu (Firebase) anahtarini HER GIRISTE bu
@@ -654,6 +655,31 @@ const App = {
     }
   },
 
+  _userLimitReached(currentCount) {
+    const limit = this.currentUser?.userLimit;
+    return !!limit && currentCount >= limit;
+  },
+
+  // Okul kullanıcı (öğrenci koltuğu) limiti uyarısı - admin-panel-prompt.md
+  // bölüm 3 "limite %80-90 yaklaşıldığında uyarı rengi ve 'X kullanıcı
+  // hakkınız kaldı' mesajı". Limit yoksa (sınırsız) hiçbir şey göstermez.
+  _renderUserLimitBanner(studentCount) {
+    const limit = this.currentUser?.userLimit;
+    if (!limit) return '';
+    const remaining = limit - studentCount;
+    if (remaining <= 0) {
+      return `<div class="card mt-2" style="border:1px solid rgba(244,63,94,0.4);background:rgba(244,63,94,0.08)">
+        <p style="margin:0;color:#fb7185">🚫 Kullanıcı limitinize ulaştınız (${studentCount}/${limit}). Yeni öğrenci eklemek için platform yöneticinizle iletişime geçin.</p>
+      </div>`;
+    }
+    if (remaining / limit <= 0.2) {
+      return `<div class="card mt-2" style="border:1px solid rgba(251,191,36,0.4);background:rgba(251,191,36,0.08)">
+        <p style="margin:0;color:#fbbf24">⚠️ ${remaining} kullanıcı hakkınız kaldı (${studentCount}/${limit}).</p>
+      </div>`;
+    }
+    return '';
+  },
+
   async renderDashboard() {
     const container = document.getElementById('page-dashboard');
     const studentCount = await db.getStudentCount();
@@ -681,6 +707,8 @@ const App = {
         </div>
         <div class="greeting-date">📅 ${todayStr}</div>
       </div>
+
+      ${this._renderUserLimitBanner(studentCount)}
 
       <!-- Stats (küçük/sıkışık) -->
       <div class="stats-grid stats-grid-compact">
@@ -1213,7 +1241,9 @@ const App = {
             <span class="text-muted">${students.length} öğrenci</span>
           </div>
           <div class="controls-right">
-            <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
+            ${this._userLimitReached(students.length)
+              ? `<button class="btn btn-secondary btn-sm" disabled title="Kullanıcı limitinize ulaştınız (${students.length}/${this.currentUser.userLimit})">➕ Öğrenci Ekle</button>`
+              : `<button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>`}
             <button class="btn btn-danger btn-sm" onclick="App.clearAllStudents()" title="Tüm kayıtlı öğrencileri ve sonuçlarını sil">🗑️ Tümünü Sil</button>
           </div>
         </div>
@@ -1375,7 +1405,13 @@ const App = {
       return;
     }
 
-    const studentId = await db.addStudent({ schoolNumber, firstName, lastName, className });
+    let studentId;
+    try {
+      studentId = await db.addStudent({ schoolNumber, firstName, lastName, className });
+    } catch (err) {
+      UI.toast(err.message || 'Öğrenci eklenemedi.', 'danger');
+      return;
+    }
     UI.toast('Öğrenci eklendi!', 'success');
     document.getElementById('add-student-modal')?.remove();
     await this.renderStudents();

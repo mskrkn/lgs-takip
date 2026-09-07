@@ -139,12 +139,18 @@ const ImportManual = {
     const lastName = parts.slice(1).join(' ') || '';
     const schoolNumber = String(Math.floor(1000 + Math.random() * 9000));
 
-    const id = await db.addStudent({
-      firstName,
-      lastName,
-      schoolNumber,
-      className: '',
-    });
+    let id;
+    try {
+      id = await db.addStudent({
+        firstName,
+        lastName,
+        schoolNumber,
+        className: '',
+      });
+    } catch (err) {
+      UI.toast(err.message || 'Öğrenci eklenemedi.', 'danger');
+      return;
+    }
 
     UI.toast(`${firstName} ${lastName} (No: ${schoolNumber}) oluşturuldu ve seçildi!`, 'success');
     this.selectManualStudent(id, `${firstName} ${lastName}`, schoolNumber);

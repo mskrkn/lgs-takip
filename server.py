@@ -30,7 +30,7 @@ import sqlite3
 import secrets
 import zipfile
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 # Konsolun kod sayfası UTF-8 olmayabilir (örn. Windows'ta chcp 65001
@@ -878,7 +878,14 @@ def _create_question_bank_tables(conn):
         conn.commit()
 
     org_extra_cols = [r[1] for r in conn.execute("PRAGMA table_info(organizations)").fetchall()]
-    for col, decl in (("short_name", "TEXT"), ("type", "TEXT"), ("archived_at", "TEXT")):
+    # user_limit: NULL = sinirsiz (bkz. admin-panel-prompt.md bolum 3) - o
+    # okulun students tablosundaki KAYITLI ogrenci sayisina uygulanir,
+    # ogretmen/veli/admin hesaplarini ETKILEMEZ (bkz. Admins/ogretmen paneli).
+    # trial_ends_at: NULL degilse ve gecmisteyse okul otomatik pasif sayilir
+    # (bkz. _is_org_effectively_active) - status kolonu ayrica 'trial'
+    # degerini de alabilir (CHECK kisiti yok, TEXT NOT NULL DEFAULT 'active').
+    for col, decl in (("short_name", "TEXT"), ("type", "TEXT"), ("archived_at", "TEXT"),
+                       ("user_limit", "INTEGER"), ("trial_ends_at", "TEXT")):
         if col not in org_extra_cols:
             conn.execute(f"ALTER TABLE organizations ADD COLUMN {col} {decl}")
     conn.commit()
@@ -1382,6 +1389,60 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
         pass
 
 
+# Trial suresi dolan/dolmak uzere olan okullar icin ayri bir zamanlanmis is
+# (cron/scheduler) bu projede yok (bkz. server infra notlari) - bu yuzden
+# platform sahibinin okullari GORDUGU/bir okulun kullanicisinin GIRIS YAPMAYA
+# CALISTIGI her an bu kontrolu tetikleriz (bkz. cagiran yerler: api_login,
+# api_superadmin_list_organizations).
+TRIAL_EXPIRY_WARNING_DAYS = 3
+
+
+def _process_trial_lifecycle(db):
+    """1) Suresi gecmis 'trial' okullari otomatik 'inactive' yapar (bolum 4 -
+    o okulun kullanicilari bir sonraki giris denemesinde/zaten aktif
+    session'lari organization status kontrolunden gecemeyip engellenir).
+    2) Suresi TRIAL_EXPIRY_WARNING_DAYS gun icinde dolacak okullar icin log
+    akisina bir uyari dusurur - ayni okul icin 24 saatte bir defadan fazla
+    tekrar etmesini (her sayfa yenilemesinde spam) onlemek icin son 24 saatte
+    ayni uyari zaten atilmis mi diye once kontrol eder."""
+    now = datetime.now()
+    now_iso = now.isoformat()
+
+    expired = db.execute(
+        "SELECT id FROM organizations WHERE status = 'trial' AND trial_ends_at IS NOT NULL AND trial_ends_at < ?",
+        (now_iso,),
+    ).fetchall()
+    for row in expired:
+        db.execute(
+            "UPDATE organizations SET status = 'inactive', updated_at = ? WHERE id = ?",
+            (now_iso, row["id"]),
+        )
+        log_audit(db, "ORGANIZATION_TRIAL_EXPIRED", resource_type="organization", resource_id=row["id"])
+
+    soon_cutoff = (now + timedelta(days=TRIAL_EXPIRY_WARNING_DAYS)).isoformat()
+    warn_since = (now - timedelta(hours=24)).isoformat()
+    soon = db.execute(
+        "SELECT id FROM organizations WHERE status = 'trial' AND trial_ends_at IS NOT NULL "
+        "AND trial_ends_at >= ? AND trial_ends_at <= ?",
+        (now_iso, soon_cutoff),
+    ).fetchall()
+    for row in soon:
+        already_warned = db.execute(
+            "SELECT 1 FROM audit_logs WHERE action = 'ORGANIZATION_TRIAL_EXPIRING_SOON' "
+            "AND resource_type = 'organization' AND resource_id = ? AND created_at > ? LIMIT 1",
+            (row["id"], warn_since),
+        ).fetchone()
+        if not already_warned:
+            log_audit(db, "ORGANIZATION_TRIAL_EXPIRING_SOON", resource_type="organization", resource_id=row["id"])
+    db.commit()
+
+
+def _org_student_count(db, org_id):
+    return db.execute(
+        "SELECT COUNT(*) AS c FROM students WHERE organization_id = ?", (org_id,)
+    ).fetchone()["c"]
+
+
 def init_db():
     os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -1812,11 +1873,23 @@ def api_login():
     # o okula bagli KIMSE giris yapamaz - platform sahibinin organization_id'si
     # NULL oldugu icin bu kontrolden hic etkilenmez.
     if user["organization_id"]:
+        # 'trial' de giris icin ACTIVE ile ESDEGER (suresi henuz dolmamis bir
+        # deneme kullanicilari engellemez) - once ONCEKI durumu yakala (mesaj
+        # icin), SONRA suresi gecmis trial'lari pasife cek, SONRA guncel
+        # duruma bak.
+        org_before = db.execute(
+            "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        was_trial = bool(org_before) and org_before["status"] == "trial"
+        _process_trial_lifecycle(db)
         org = db.execute(
             "SELECT status FROM organizations WHERE id = ?", (user["organization_id"],)
         ).fetchone()
-        if org and org["status"] != "active":
-            return jsonify({"error": "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin."}), 403
+        if org and org["status"] not in ("active", "trial"):
+            msg = ("Bu okulun deneme süresi sona ermiş. Platform yöneticinizle iletişime geçin."
+                   if was_trial
+                   else "Bu okulun hesabı pasifleştirilmiş. Platform yöneticinizle iletişime geçin.")
+            return jsonify({"error": msg}), 403
     if needs_rehash:
         db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(password), user["id"]))
         db.commit()
@@ -1840,6 +1913,12 @@ def api_login():
     # verilmis olabilir. /api/me'deki ayni mantik (bkz. orada).
     can_manage_schools = has_permission(db, user["id"], "organization.manage")
     can_manage_admins = has_permission(db, user["id"], "admins.manage")
+    user_limit = None
+    if user["organization_id"]:
+        org_row = db.execute(
+            "SELECT user_limit FROM organizations WHERE id = ?", (user["organization_id"],)
+        ).fetchone()
+        user_limit = org_row["user_limit"] if org_row else None
 
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
@@ -1849,6 +1928,7 @@ def api_login():
         "canManageSchools": can_manage_schools,
         "canManageAdmins": can_manage_admins,
         "organizationId": user["organization_id"],
+        "userLimit": user_limit,
     })
 
 
@@ -1880,6 +1960,11 @@ def api_me():
     own_org_row = db.execute(
         "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
     ).fetchone()
+    own_org_id = own_org_row["organization_id"] if own_org_row else None
+    user_limit = None
+    if own_org_id:
+        limit_row = db.execute("SELECT user_limit FROM organizations WHERE id = ?", (own_org_id,)).fetchone()
+        user_limit = limit_row["user_limit"] if limit_row else None
     return jsonify({
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
@@ -1888,7 +1973,8 @@ def api_me():
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
         "canManageAdmins": can_manage_admins,
-        "organizationId": own_org_row["organization_id"] if own_org_row else None,
+        "organizationId": own_org_id,
+        "userLimit": user_limit,
     })
 
 
@@ -1925,8 +2011,10 @@ def _external_base_url():
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_list_organizations():
     db = get_db()
+    _process_trial_lifecycle(db)  # bu listeyi her goruntuleyen, suresi gecmis trial'lari da tetikler
     rows = db.execute(
         "SELECT o.id, o.name, o.slug, o.email, o.phone, o.address, o.status, o.created_at, "
+        "o.user_limit, o.trial_ends_at, "
         "(SELECT COUNT(*) FROM users WHERE organization_id=o.id AND role='admin') AS admin_count, "
         "(SELECT COUNT(*) FROM students WHERE organization_id=o.id) AS student_count "
         "FROM organizations o ORDER BY o.created_at DESC"
@@ -1935,6 +2023,7 @@ def api_superadmin_list_organizations():
         "id": r["id"], "name": r["name"], "slug": r["slug"], "email": r["email"],
         "phone": r["phone"], "address": r["address"], "status": r["status"],
         "createdAt": r["created_at"], "adminCount": r["admin_count"], "studentCount": r["student_count"],
+        "userLimit": r["user_limit"], "trialEndsAt": r["trial_ends_at"],
     } for r in rows])
 
 
@@ -1949,6 +2038,12 @@ def api_superadmin_create_organization():
     email = (data.get("email") or "").strip() or None
     phone = (data.get("phone") or "").strip() or None
     address = (data.get("address") or "").strip() or None
+    user_limit = data.get("userLimit")
+    user_limit = int(user_limit) if user_limit not in (None, "") else None
+    if user_limit is not None and user_limit < 1:
+        return jsonify({"error": "Kullanıcı limiti en az 1 olmalı."}), 400
+    trial_ends_at = (data.get("trialEndsAt") or "").strip() or None
+    status = "trial" if trial_ends_at else "active"
 
     if not name or not admin_username or not admin_password:
         return jsonify({"error": "Okul adı, yönetici kullanıcı adı ve şifresi gerekli."}), 400
@@ -1968,9 +2063,9 @@ def api_superadmin_create_organization():
 
     now = datetime.now().isoformat()
     cur = db.execute(
-        "INSERT INTO organizations (name, slug, email, phone, address, status, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (name, slug, email, phone, address, "active", now, now),
+        "INSERT INTO organizations (name, slug, email, phone, address, status, user_limit, trial_ends_at, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (name, slug, email, phone, address, status, user_limit, trial_ends_at, now, now),
     )
     org_id = cur.lastrowid
     admin_cur = db.execute(
@@ -2020,6 +2115,13 @@ def api_superadmin_update_organization(org_id):
     if "address" in data:
         fields.append("address = ?")
         values.append((data.get("address") or "").strip() or None)
+    if "userLimit" in data:
+        user_limit = data.get("userLimit")
+        user_limit = int(user_limit) if user_limit not in (None, "") else None
+        if user_limit is not None and user_limit < 1:
+            return jsonify({"error": "Kullanıcı limiti en az 1 olmalı."}), 400
+        fields.append("user_limit = ?")
+        values.append(user_limit)
 
     if not fields:
         return jsonify({"error": "Güncellenecek bir alan gönderilmedi."}), 400
@@ -2044,7 +2146,13 @@ def api_superadmin_toggle_organization_status(org_id):
     org = db.execute("SELECT status FROM organizations WHERE id = ?", (org_id,)).fetchone()
     if not org:
         return jsonify({"error": "Okul bulunamadı."}), 404
-    new_status = "inactive" if org["status"] == "active" else "active"
+    # 'trial' de "erisimi acik" sayilir - manuel Pasiflestir bir trial okulu
+    # da kapatabilmeli (bkz. buton: her iki durumda da tek bir "Pasiflestir"
+    # aksiyonu var, ayri bir "trial'i iptal et" UI'i yok). trial_ends_at
+    # BILEREK temizlenmiyor - Aktiflestir'e basilirsa okul yeniden trial'a
+    # DONMEZ (dogrudan 'active' olur), bu yuzden eski tarih ortada kalmasi
+    # zararsiz (bkz. _process_trial_lifecycle: sadece status='trial' iken bakar).
+    new_status = "inactive" if org["status"] in ("active", "trial") else "active"
     db.execute(
         "UPDATE organizations SET status = ?, updated_at = ? WHERE id = ?",
         (new_status, datetime.now().isoformat(), org_id),
@@ -2052,6 +2160,35 @@ def api_superadmin_toggle_organization_status(org_id):
     db.commit()
     log_audit(db, "ORGANIZATION_STATUS_CHANGED", resource_type="organization", resource_id=org_id)
     return jsonify({"ok": True, "status": new_status})
+
+
+@app.route("/api/superadmin/organizations/<int:org_id>/extend-trial", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="organizations.archive")
+def api_superadmin_extend_trial(org_id):
+    """Trial bitis tarihini manuel olarak degistirir (bolum 4: 'Super Admin
+    manuel olarak trial suresini uzatabilir'). Suresi zaten dolup 'inactive'e
+    dusmus bir okulu da (yeni bir gelecek tarih verilerek) trial'a GERI
+    DONDURUR - aksi halde bir okulu kurtarmanin tek yolu status'u dogrudan
+    'active' yapmak olurdu ki bu trial baglamini tamamen kaybederdi."""
+    db = get_db()
+    org = db.execute("SELECT id, status FROM organizations WHERE id = ?", (org_id,)).fetchone()
+    if not org:
+        return jsonify({"error": "Okul bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    trial_ends_at = (data.get("trialEndsAt") or "").strip()
+    if not trial_ends_at:
+        return jsonify({"error": "Yeni trial bitiş tarihi gerekli."}), 400
+    if trial_ends_at <= datetime.now().isoformat():
+        return jsonify({"error": "Trial bitiş tarihi gelecekte olmalı."}), 400
+
+    db.execute(
+        "UPDATE organizations SET status = 'trial', trial_ends_at = ?, updated_at = ? WHERE id = ?",
+        (trial_ends_at, datetime.now().isoformat(), org_id),
+    )
+    db.commit()
+    log_audit(db, "ORGANIZATION_TRIAL_EXTENDED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "status": "trial", "trialEndsAt": trial_ends_at})
 
 
 # ============================================================
@@ -2367,7 +2504,7 @@ def api_register_teacher_lookup(code):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     db = get_db()
     org = db.execute(
-        "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+        "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
         _register_record_attempt(request.remote_addr)
@@ -2393,7 +2530,7 @@ def api_register_teacher():
 
     db = get_db()
     org = db.execute(
-        "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status = 'active'", (code,)
+        "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
         _register_record_attempt(request.remote_addr)
