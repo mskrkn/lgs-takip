@@ -754,6 +754,16 @@ def _create_v2_tables(conn):
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
         if "organization_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN organization_id INTEGER REFERENCES organizations(id)")
+    # Kritik #8 (500 ogrenci + 10 admin olcek analizi): organization_id/
+    # student_id/exam_id SQLite'ta FK oldugu icin OTOMATIK indekslenmiyor -
+    # bu sutunlara filtreleyen HER sorgu (dashboard'lar, "kendi okulunun
+    # ogrencileri" listeleri, sonuc/karsilastirma raporlari) tam tablo
+    # taramasi yapiyordu. Veri hacmi arttikca yavaslamayi onceden onlemek
+    # icin - IF NOT EXISTS oldugu icin zararsiz/tekrar calistirilabilir.
+    for table in ("users", "students", "exams", "results"):
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_org ON {table}(organization_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_results_student ON results(student_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_results_exam ON results(exam_id)")
     # students/exams/results.source: bu satir okulun kendi tarayici senkronundan
     # mi ('browser_sync', varsayilan - mevcut TUM veri bu sekilde damgalanir)
     # yoksa platform sahibinin dogrudan girdisinden mi ('platform_admin') geldi.
@@ -1857,6 +1867,32 @@ def _register_rate_limited(ip):
     return len(attempts) >= _REGISTER_MAX_ATTEMPTS
 
 
+# Kritik #7 (500 ogrenci + 10 admin olcek analizi): /api/login'de HICBIR
+# hiz sinirlama yoktu - kaba kuvvet saldirisina tamamen acikti. Yukaridaki
+# register limiteri TUM denemeleri sayar (kayit zaten tek seferlik), ama
+# burada SADECE BASARISIZ denemeler sayilir - aksi halde bir ogretmen gunde
+# birden fazla kez normal giris yaptiginda yanlislikla kilitlenebilirdi.
+_LOGIN_FAILED_ATTEMPTS = {}
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_MAX_ATTEMPTS = 8
+
+
+def _login_rate_limited(ip):
+    now = datetime.now().timestamp()
+    attempts = [t for t in _LOGIN_FAILED_ATTEMPTS.get(ip, []) if now - t < _LOGIN_WINDOW_SECONDS]
+    _LOGIN_FAILED_ATTEMPTS[ip] = attempts
+    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+
+def _login_record_failure(ip):
+    now = datetime.now().timestamp()
+    _LOGIN_FAILED_ATTEMPTS.setdefault(ip, []).append(now)
+
+
+def _login_clear_failures(ip):
+    _LOGIN_FAILED_ATTEMPTS.pop(ip, None)
+
+
 def _register_record_attempt(ip):
     _REGISTER_ATTEMPTS.setdefault(ip, []).append(datetime.now().timestamp())
 
@@ -2081,16 +2117,22 @@ def static_files(filename):
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
+    ip = request.remote_addr
+    if _login_rate_limited(ip):
+        return jsonify({"error": "Çok fazla başarısız deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyin."}), 429
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if not user:
+        _login_record_failure(ip)
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
     ok, needs_rehash = verify_password(user["password_hash"], password)
     if not ok:
+        _login_record_failure(ip)
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
+    _login_clear_failures(ip)
     if not user["active"]:
         return jsonify({"error": "Bu hesap pasifleştirilmiş. Yöneticinizle iletişime geçin."}), 403
     # Okulun kendisi pasiflestirilmisse (bkz. api_superadmin_toggle_organization_status)
