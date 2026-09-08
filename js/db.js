@@ -184,12 +184,12 @@ class Database {
   // "bu öğrenci zaten var olmalıydı" senaryolarında kullanılır - aksi halde
   // limit sonradan düşürülürse ya da bir yedek geri yüklenirse cihazlar
   // arasında sessizce farklı öğrenci kümeleri oluşurdu.
-  async addStudent(student, { enforceLimit = true } = {}) {
-    return await this.findOrMatchStudent(student, { enforceLimit });
+  async addStudent(student, { enforceLimit = true, overwriteClassName = false, overwriteName = false } = {}) {
+    return await this.findOrMatchStudent(student, { enforceLimit, overwriteClassName, overwriteName });
   }
 
   // Smart student matcher: checks school number first, then normalized full name
-  async findOrMatchStudent(student, { enforceLimit = true } = {}) {
+  async findOrMatchStudent(student, { enforceLimit = true, overwriteClassName = false, overwriteName = false } = {}) {
     const rawSNum = String(student.schoolNumber || '').trim();
     const cleanSNum = normalizeSchoolNo(rawSNum);
     const isAutoSNum = !rawSNum || rawSNum.startsWith('AUTO-');
@@ -210,8 +210,12 @@ class Database {
       if (matchByNo) {
         // Update missing class name or name if helpful
         const updates = {};
-        if (student.className && !matchByNo.className) updates.className = normalizeClassName(student.className);
-        if (fn && (!matchByNo.firstName || matchByNo.firstName.startsWith('AUTO-') || matchByNo.firstName === 'Bilinmeyen')) {
+        if (student.className && (overwriteClassName ? matchByNo.className !== normalizeClassName(student.className) : !matchByNo.className)) {
+          updates.className = normalizeClassName(student.className);
+        }
+        if (fn && (overwriteName
+          ? (matchByNo.firstName !== fn || matchByNo.lastName !== ln)
+          : (!matchByNo.firstName || matchByNo.firstName.startsWith('AUTO-') || matchByNo.firstName === 'Bilinmeyen'))) {
           updates.firstName = fn;
           updates.lastName = ln;
         }
@@ -222,8 +226,11 @@ class Database {
       }
     }
 
-    // 2. Match by full name
-    if (cleanName.length >= 2) {
+    // 2. Match by full name - SADECE gelen kayıtta güvenilir bir okul no'su
+    // YOKSA (aksi halde aynı okulda aynı ada sahip İKİ FARKLI gerçek öğrenci
+    // - büyük bir okulda kaçınılmaz - yanlışlıkla TEK KAYITTA birleşir;
+    // bkz. server.py api_import_roster'daki aynı düzeltme/yorum).
+    if (isAutoSNum && cleanName.length >= 2) {
       const matchByName = allStudents.find(s => {
         const sFullName = normalizeTrText(`${s.firstName} ${s.lastName}`);
         return sFullName === cleanName;

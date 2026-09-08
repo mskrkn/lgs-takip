@@ -1393,7 +1393,10 @@ const App = {
             <div class="empty-icon">👥</div>
             <h3>Henüz öğrenci eklenmedi</h3>
             <p>Veri girişi sayfasından öğrenci ekleyebilir veya Excel/PDF dosyası yükleyebilirsiniz.</p>
-            <button class="btn btn-primary" onclick="App.navigateTo('import')">➕ Veri Girişi</button>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="App.navigateTo('import')">➕ Veri Girişi</button>
+              <button class="btn btn-secondary" onclick="RosterImport.openModal({mode:'local', onDone: () => App.renderStudents()})">📋 Sınıf Listesi PDF Yükle</button>
+            </div>
           </div>
         </div>
       `;
@@ -1436,6 +1439,7 @@ const App = {
             ${this._userLimitReached(students.length)
               ? `<button class="btn btn-secondary btn-sm" disabled title="Kullanıcı limitinize ulaştınız (${students.length}/${this.currentUser.userLimit})">➕ Öğrenci Ekle</button>`
               : `<button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>`}
+            <button class="btn btn-secondary btn-sm" onclick="RosterImport.openModal({mode:'local', onDone: () => App.renderStudents()})">📋 Sınıf Listesi PDF Yükle</button>
             <button class="btn btn-danger btn-sm" onclick="App.clearAllStudents()" title="Tüm kayıtlı öğrencileri ve sonuçlarını sil">🗑️ Tümünü Sil</button>
           </div>
         </div>
