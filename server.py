@@ -7510,8 +7510,6 @@ def print_banner(ip):
 
 
 def main():
-    os.chdir(BASE_DIR)
-    init_db()
     ip = get_local_ip()
     print_banner(ip)
     try:
@@ -7520,6 +7518,14 @@ def main():
         pass
     app.run(host="0.0.0.0", port=PORT, debug=False)
 
+
+# gunicorn "server:app" ile MODUL olarak import eder, __name__ != "__main__"
+# olur - bu yuzden os.chdir/init_db() burada, kosulsuz, modul yuklenirken
+# calisir (gunicorn --preload olmadan HER worker sureci modulu kendi basina
+# import eder, yani init_db() worker sayisi kadar calisir - zararsiz, tum
+# ifadeler CREATE TABLE IF NOT EXISTS / idempotent ALTER TABLE'dir).
+os.chdir(BASE_DIR)
+init_db()
 
 if __name__ == "__main__":
     main()
