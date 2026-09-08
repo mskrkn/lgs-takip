@@ -6678,10 +6678,19 @@ _MAX_PDF_PAGES = 60
 # anda PDF yuklerken) her istek kendi tesseract sureclerini paralel
 # baslatiyordu; bugun tam olarak bu yuzden (4 es zamanli tesseract sureci)
 # VM'nin bellegi tukendi. Bu semaphore SURECe (worker'a) OZGU - ayni anda
-# SADECE 1 PDF/OCR isi calisir, digerleri sirada bekler (60s icinde slot
-# acilmazsa 503 doner). 2 gunicorn worker'i oldugu icin platform genelinde
-# en kotu durumda 2 es zamanli OCR isi olur (eskiden sinirsizdi).
+# SADECE 1 PDF/OCR isi calisir, digerleri sirada bekler. gunicorn artik TEK
+# worker calistirdigi icin (bkz. deploy notlari, bellek tasarrufu) bu artik
+# PLATFORM GENELINDE tek bir OCR isi demek.
 _OCR_SEMAPHORE = threading.Semaphore(1)
+# Taranmis/OCR gerektiren gercek sinav PDF'leri 3-4 dakikaya kadar
+# surebiliyor (olculdu - bkz. pdf_question_extractor.py sure tahmini
+# sabitleri). Eskiden bu bekleme 60s'ydi - ikinci bir yukleme neredeyse HER
+# ZAMAN "baska bir PDF isleniyor" hatasi aliyordu, cunku ilk isin gercek
+# suresi zaten 60s'yi asiyordu. gunicorn --timeout (deploy notlarinda,
+# ExecStart) bu bekleme + kendi isleme suresini karsilayacak kadar UZUN
+# tutulmali - aksi halde worker, OCR bitmeden SIGKILL edilir (sessiz,
+# "hayalet" bos set birakan DAHA KOTU bir hata).
+_OCR_SEMAPHORE_WAIT_SECONDS = 240
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
@@ -6722,6 +6731,26 @@ def api_question_bank_upload():
 
     now = datetime.now().isoformat()
     safe_name = secure_filename(file.filename) or "yuklenen.pdf"
+
+    # 1.1 düzeltmesi: dosya önce GEÇİCİ bir ada kaydedilir, OCR kilidi
+    # alınmadan question_import_batches satırı YAZILMAZ - eskiden kilit
+    # açılmazsa (60s içinde) bile bir batch satırı zaten oluşmuş oluyordu,
+    # bu da üretimde admin sayfayı yenileyip tekrar deneyince kalıcı, hiç
+    # temizlenmeyen BOŞ ("hayalet") setler biriktiriyordu (gerçek olayla
+    # doğrulandı, bkz. proje notu). Artık kilit alınamazsa hiçbir iz kalmaz.
+    source_dir = os.path.join(UPLOADS_DIR, "source_pdfs")
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
+    temp_pdf_path = os.path.join(source_dir, f"_pending_{secrets.token_hex(8)}.pdf")
+    file.save(temp_pdf_path)
+
+    if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SEMAPHORE_WAIT_SECONDS):
+        try:
+            os.remove(temp_pdf_path)
+        except OSError:
+            pass
+        return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç dakika sonra tekrar deneyin."}), 503
+
     cur = db.execute(
         "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, booklet_code, created_at) "
         "VALUES (?,?,?,?,?,?)",
@@ -6729,17 +6758,9 @@ def api_question_bank_upload():
     )
     batch_id = cur.lastrowid
     db.commit()
-
-    source_dir = os.path.join(UPLOADS_DIR, "source_pdfs")
-    os.makedirs(source_dir, exist_ok=True)
-    os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
     pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
-    file.save(pdf_path)
+    os.rename(temp_pdf_path, pdf_path)
 
-    if not _OCR_SEMAPHORE.acquire(timeout=60):
-        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
-        db.commit()
-        return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç saniye sonra tekrar deneyin."}), 503
     try:
         result = pdf_question_extractor.extract_questions(
             pdf_path, subject_name=subject_name, booklet_code=booklet_code,
@@ -7007,6 +7028,11 @@ def api_question_bank_delete_batch(batch_id):
     db.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
     db.execute("DELETE FROM question_import_batches WHERE id=?", (batch_id,))
     db.commit()
+    # Bu islem KALICI ve GERI ALINAMAZ (onaylanmis/yayinlanmis sorular dahil
+    # her seyi siler) - daha once hicbir izi yoktu, gercek bir olayda
+    # (bkz. proje notu) hangi setlerin ne zaman/kim tarafindan silindigini
+    # gostermenin imkansiz oldugu ortaya cikti.
+    log_audit(db, "QUESTION_BATCH_DELETED", resource_type="question_import_batch", resource_id=batch_id)
 
     for r in image_rows:
         path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(r["image_path"]))
