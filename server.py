@@ -31,6 +31,7 @@ import secrets
 import zipfile
 import base64
 import difflib
+import threading
 import webbrowser
 from datetime import datetime, timedelta
 from functools import wraps
@@ -2071,7 +2072,25 @@ def _safe_send(filename):
     if not os.path.isfile(full_path):
         return ("Bulunamadı.", 404)
     resp = send_from_directory(BASE_DIR, filename)
-    resp.headers["Cache-Control"] = "no-cache"
+    # Kritik (500 ogrenci + 10 admin olcek analizi): eskiden HER statik
+    # dosyaya (css/js/resim dahil) "no-cache" konuyordu - bu, tarayicinin VE
+    # Cloudflare'in edge cache'inin bu dosyalari HIC tutmamasina, yani ayni
+    # css/js dosyasinin her sayfa yuklemesinde tekrar tekrar Flask'a (bu kucuk
+    # VM'ye) istek dusmesine yol aciyordu. HTML sayfalari icin "no-cache"
+    # hala DOGRU (oturum bazli, ortam banner'i enjekte ediliyor) - ama
+    # statik varliklar icin kisa/orta sureli bir cache, ozellikle "cok
+    # sayida ogrenci ayni anda giris yapiyor" gibi yuk anlarinda VM'ye
+    # gereksiz tekrar istek dusmesini onemli olcude azaltir. 1 saat -
+    # deploy sonrasi eski dosyanin gorulme penceresi kucuk tutuluyor
+    # (icerik-hash'li dosya adi yok, o yuzden cok uzun bir sure guvenli
+    # olmazdi).
+    if filename.lower().endswith((
+        ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".ico",
+        ".woff", ".woff2", ".gif", ".webp",
+    )):
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+    else:
+        resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 
@@ -3719,24 +3738,31 @@ def api_admin_sync():
     db.execute("DELETE FROM exams WHERE organization_id=? AND source='browser_sync'", (org_id,))
     db.execute("DELETE FROM results WHERE organization_id=? AND source='browser_sync'", (org_id,))
 
-    for s in students:
-        db.execute(
+    # Kritik (500 ogrenci + 10 admin olcek analizi): tek tek db.execute()
+    # yerine executemany() - satir basina Python<->SQLite gidis-gelisini
+    # ortadan kaldirir, bu YAZMA transaction'ini (WAL altinda bile diger
+    # YAZICILARI busy_timeout suresince bekletebilen) mumkun oldugunca
+    # kisaltir.
+    if students:
+        db.executemany(
             "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
             "VALUES (?,?,?,?,?,?,'browser_sync')",
-            (sid(s.get("id")), org_id, s.get("schoolNumber"), s.get("firstName"), s.get("lastName"),
-             s.get("className")),
+            [(sid(s.get("id")), org_id, s.get("schoolNumber"), s.get("firstName"), s.get("lastName"),
+              s.get("className")) for s in students],
         )
-    for e in exams:
-        db.execute(
+    if exams:
+        db.executemany(
             "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) "
             "VALUES (?,?,?,?,?,?,'browser_sync')",
-            (sid(e.get("id")), org_id, e.get("name"), e.get("date"), e.get("examType"), json.dumps(e)),
+            [(sid(e.get("id")), org_id, e.get("name"), e.get("date"), e.get("examType"), json.dumps(e))
+             for e in exams],
         )
-    for r in results:
-        db.execute(
+    if results:
+        db.executemany(
             "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) "
             "VALUES (?,?,?,?,?,'browser_sync')",
-            (sid(r.get("id")), org_id, sid(r.get("studentId")), sid(r.get("examId")), json.dumps(r)),
+            [(sid(r.get("id")), org_id, sid(r.get("studentId")), sid(r.get("examId")), json.dumps(r))
+             for r in results],
         )
 
     new_student_ids = {sid(s.get("id")) for s in students}
@@ -6286,6 +6312,17 @@ def api_admin_demo_talepleri():
 # (henüz yazılmadı, bkz. question_bank.status).
 
 _MAX_PDF_PAGES = 60
+# Kritik (500 ogrenci + 10 admin olcek analizi): pdf_question_extractor
+# sayfa basina bir "tesseract" alt sureci baslatiyor (bkz. o dosyadaki
+# _get_page_lines) - eskiden BIRDEN FAZLA istek ayni anda buraya dusunce
+# (ornegin ayni admin coklu kitapcik yuklerken, ya da iki farkli admin ayni
+# anda PDF yuklerken) her istek kendi tesseract sureclerini paralel
+# baslatiyordu; bugun tam olarak bu yuzden (4 es zamanli tesseract sureci)
+# VM'nin bellegi tukendi. Bu semaphore SURECe (worker'a) OZGU - ayni anda
+# SADECE 1 PDF/OCR isi calisir, digerleri sirada bekler (60s icinde slot
+# acilmazsa 503 doner). 2 gunicorn worker'i oldugu icin platform genelinde
+# en kotu durumda 2 es zamanli OCR isi olur (eskiden sinirsizdi).
+_OCR_SEMAPHORE = threading.Semaphore(1)
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
@@ -6325,14 +6362,20 @@ def api_question_bank_upload():
     pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
     file.save(pdf_path)
 
+    if not _OCR_SEMAPHORE.acquire(timeout=60):
+        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
+        db.commit()
+        return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç saniye sonra tekrar deneyin."}), 503
     try:
         result = pdf_question_extractor.extract_questions(pdf_path)
         if result["page_count"] > _MAX_PDF_PAGES:
             raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
     except Exception as exc:
+        _OCR_SEMAPHORE.release()
         db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
         db.commit()
         return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
+    _OCR_SEMAPHORE.release()
 
     created = []
     for q in result["questions"]:
