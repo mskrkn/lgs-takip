@@ -3924,6 +3924,268 @@ def api_platform_add_student():
     return jsonify({"ok": True, "id": new_id})
 
 
+# ============================================================
+# e-Okul "Sınıf Listesi" PDF'inden toplu öğrenci içe aktarma
+# ============================================================
+# MEB e-Okul'un okul/kademe bazında ürettiği resmi sınıf listesi PDF'i
+# (S.No/Öğrenci No/Adı/Soyadı/Cinsiyeti sütunlu, her şube ayrı bir
+# başlıkla) - bir okulun TÜM sınıf ve öğrencilerini tek PDF yüklemeyle
+# eklemek/güncellemek için. İki adımlı: (1) parse-roster-pdf sadece
+# ayrıştırır, HİÇBİR ŞEY YAZMAZ (admin önizlemeyi görüp onaylar - AI
+# taksonomi önerileri gibi "asla sessizce yazma" ilkesiyle tutarlı);
+# (2) import-roster onaylanan listeyi gerçekten yazar.
+
+def _tr_lower(s):
+    """Python'un str.lower()'ı Türkçe İ/I harflerini yanlış çevirir (İ->'i̇',
+    I->'i') - eşleştirme için tr-TR doğru küçük harfe çevirme."""
+    return s.replace("İ", "i").replace("I", "ı").lower()
+
+
+def _normalize_tr_text(text):
+    """js/db.js normalizeTrText'in Python karşılığı - aynı öğrenciyi farklı
+    yazımlarla (büyük/küçük harf, noktalama) eşleştirebilmek için."""
+    if not text:
+        return ""
+    s = _tr_lower(str(text))
+    s = re.sub(r"[.,/#!$%^&*;:{}=\-_`~()?\"']", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _normalize_school_no_py(num):
+    """js/db.js normalizeSchoolNo'nun Python karşılığı - baştaki sıfırları
+    ve ondalık kalıntısını temizler (ör. '00557' ve '557' aynı öğrenci)."""
+    if not num:
+        return ""
+    s = str(num).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    if s.isdigit():
+        return str(int(s))
+    return s
+
+
+_ROSTER_HEADER_RE = re.compile(
+    r"(\d{1,2})\.\s*Sınıf(?:-[^/]+)?\s*/\s*([A-ZÇĞİÖŞÜ])\s*Şubesi\s*Sınıf\s*Listesi",
+    re.IGNORECASE,
+)
+_ROSTER_COL_LABELS = {"S.No": "sno", "Öğrenci No": "no", "Adı": "ad", "Soyadı": "soyad", "Cinsiyeti": "cinsiyet"}
+_ROSTER_COL_TOLERANCE_PT = 8.0
+
+
+def _parse_student_roster_pdf(pdf_bytes):
+    """e-Okul sınıf listesi PDF'ini ayrıştırır. Sütun x-konumları HER
+    SAYFANIN KENDİ başlık satırından okunur (sabit kodlanmaz) - farklı okul/
+    kenar boşluğu varyasyonlarına dayanıklı olsun diye. Satırlar y0'a göre
+    kümelenir (S.No hücresi diğer 4 sütuna göre ~1-2pt kaymış olabiliyor,
+    bu yüzden tolerans payı kullanılır). Bir satır kümesinde no/ad/soyad/
+    cinsiyet alanlarının HEPSİ net bir sütuna oturmuyorsa (ör. alt bilgi
+    satırı "Kız Öğrenci Sayısı: ...") o küme sessizce atlanır - ayrı bir
+    "alt bilgiyi tanı" kuralına gerek kalmadan doğal bir güvenlik filtresi."""
+    doc = pdf_question_extractor.fitz.open(stream=pdf_bytes, filetype="pdf")
+    classes = []
+    school_name_guess = None
+
+    for pno in range(doc.page_count):
+        page = doc[pno]
+        raw_lines = []
+        for block in page.get_text("dict").get("blocks", []):
+            for line in block.get("lines", []):
+                text = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+                if not text:
+                    continue
+                bbox = line["bbox"]
+                raw_lines.append((bbox[1], bbox[0], text))  # y0, x0, text
+
+        header_match = None
+        col_x = {}
+        col_header_y0 = None  # sütun başlık satırının (S.No/Öğrenci No/...) y0'ı - başlık kendisi veri satırı sayılmasın diye
+        for y0, x0, text in raw_lines:
+            if header_match is None:
+                m = _ROSTER_HEADER_RE.search(text)
+                if m:
+                    header_match = m
+            key = _ROSTER_COL_LABELS.get(text.strip())
+            if key:
+                col_x[key] = x0
+                col_header_y0 = y0 if col_header_y0 is None else max(col_header_y0, y0)
+        if not header_match or len(col_x) < 5:
+            continue  # bu sayfa tanınan bir sınıf listesi sayfası değil
+
+        if school_name_guess is None:
+            for _y0, _x0, text in raw_lines:
+                if "Müdürlüğü" in text:
+                    school_name_guess = text
+                    break
+
+        grade = int(header_match.group(1))
+        sube = header_match.group(2).upper()
+
+        data_lines = [(y0, x0, text) for y0, x0, text in raw_lines if y0 > col_header_y0 + 3]
+        data_lines.sort()
+
+        rows = []  # her biri {"y0": ref_y0, "no":.., "ad":.., "soyad":.., "cinsiyet":..}
+        for y0, x0, text in data_lines:
+            best_key, best_dist = None, _ROSTER_COL_TOLERANCE_PT
+            for key, kx in col_x.items():
+                dist = abs(kx - x0)
+                if dist < best_dist:
+                    best_key, best_dist = key, dist
+            if not best_key:
+                continue
+            row = next((r for r in rows if abs(r["_y0"] - y0) <= 3.0), None)
+            if not row:
+                row = {"_y0": y0}
+                rows.append(row)
+            row[best_key] = text.strip()
+
+        students = []
+        for row in rows:
+            if not all(k in row for k in ("no", "ad", "soyad", "cinsiyet")):
+                continue  # eksik alanlı küme (ör. alt bilgi satırı) - atla
+            students.append({
+                "schoolNumber": row["no"],
+                "firstName": row["ad"],
+                "lastName": row["soyad"],
+                "gender": row["cinsiyet"],
+            })
+        if not students:
+            continue
+
+        # Kalabalık bir şube (ör. 57 öğrenci) e-Okul dışa aktarımında BİRDEN
+        # FAZLA sayfaya (her sayfa kendi başlığını tekrarlayarak) yayılabilir
+        # - aynı (grade, sube) ile daha önce görülmüş bir sınıf varsa yeni
+        # sayfa AYRI bir sınıf değil, o sınıfın DEVAMI sayılıp birleştirilir.
+        existing_class = next((c for c in classes if c["grade"] == grade and c["sube"] == sube), None)
+        if existing_class:
+            existing_class["students"].extend(students)
+        else:
+            classes.append({
+                "grade": grade, "sube": sube, "className": f"{grade}/{sube}",
+                "label": header_match.group(0), "students": students,
+            })
+
+    doc.close()
+    return {"schoolNameGuess": school_name_guess, "classes": classes}
+
+
+@app.route("/api/admin/students/parse-roster-pdf", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_parse_roster_pdf():
+    file = request.files.get("file")
+    if not file or not (file.filename or "").lower().endswith(".pdf"):
+        return jsonify({"error": "Geçerli bir PDF dosyası seçin."}), 400
+    try:
+        result = _parse_student_roster_pdf(file.read())
+    except Exception as exc:
+        return jsonify({"error": f"PDF ayrıştırılamadı: {exc}"}), 400
+    if not result["classes"]:
+        return jsonify({"error": "Bu PDF'te tanınan bir sınıf listesi bulunamadı (beklenen format: e-Okul 'Sınıf Listesi')."}), 400
+    total_students = sum(len(c["students"]) for c in result["classes"])
+    return jsonify({
+        "schoolNameGuess": result["schoolNameGuess"],
+        "classes": result["classes"],
+        "totalClasses": len(result["classes"]),
+        "totalStudents": total_students,
+    })
+
+
+@app.route("/api/admin/students/import-roster", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_import_roster():
+    """parse-roster-pdf'in döndürdüğü (admin panelinde önizlenip onaylanan)
+    öğrenci listesini gerçekten yazar. Eşleştirme js/db.js
+    findOrMatchStudent ile AYNI iki aşamalı mantığı izler (okul no, sonra
+    ad-soyad) - farkı: burada eşleşen bir kayıt bulunduğunda sınıf VE isim
+    HER ZAMAN PDF'teki (resmi e-Okul) değerine güncellenir, sadece boşsa
+    doldurulmaz - admin panelinde bu davranış açıkça onaylanmadan
+    çağrılmaz."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    incoming = data.get("students")
+    if not isinstance(incoming, list) or not incoming:
+        return jsonify({"error": "students (liste) gerekli."}), 400
+
+    existing = db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students WHERE organization_id=?",
+        (org_id,),
+    ).fetchall()
+    by_school_no = {}
+    by_name = {}
+    for r in existing:
+        no_key = _normalize_school_no_py(r["school_number"])
+        if no_key:
+            by_school_no[no_key] = r
+        name_key = _normalize_tr_text(f"{r['first_name']} {r['last_name']}")
+        if name_key:
+            by_name[name_key] = r
+
+    next_id = _platform_admin_next_id(db, "students", org_id)
+    created, updated, unchanged = 0, 0, 0
+    now = datetime.now().isoformat()
+
+    for s in incoming:
+        first_name = (s.get("firstName") or "").strip()
+        last_name = (s.get("lastName") or "").strip()
+        school_number = (s.get("schoolNumber") or "").strip()
+        class_name = (s.get("className") or "").strip()
+        if not first_name or not last_name:
+            continue
+
+        no_key = _normalize_school_no_py(school_number)
+        name_key = _normalize_tr_text(f"{first_name} {last_name}")
+        match = by_school_no.get(no_key) if no_key else None
+        # Ada göre eşleştirme SADECE gelen satırda güvenilir bir okul no'su
+        # YOKSA denenir (js/db.js findOrMatchStudent'taki isAutoSNum kontrolüyle
+        # aynı ilke) - aksi halde aynı okulda aynı ada sahip İKİ FARKLI gerçek
+        # öğrenci (büyük bir okulda kaçınılmaz) yanlışlıkla TEK KAYITTA
+        # birleştirilir. e-Okul listesinde her satırın gerçek bir okul no'su
+        # olduğu için bu yol pratikte hemen hiç tetiklenmez - sadece savunma.
+        if not match and not no_key:
+            match = by_name.get(name_key)
+
+        if match:
+            fields, params = [], []
+            if class_name and match["class_name"] != class_name:
+                fields.append("class_name=?"); params.append(class_name)
+            if match["first_name"] != first_name or match["last_name"] != last_name:
+                fields.append("first_name=?"); params.append(first_name)
+                fields.append("last_name=?"); params.append(last_name)
+            if school_number and _normalize_school_no_py(match["school_number"]) != no_key:
+                fields.append("school_number=?"); params.append(school_number)
+            if fields:
+                params.append(match["id"])
+                db.execute(f"UPDATE students SET {', '.join(fields)} WHERE id=?", params)
+                updated += 1
+            else:
+                unchanged += 1
+            continue
+
+        db.execute(
+            "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+            "VALUES (?,?,?,?,?,?,'platform_admin')",
+            (next_id, org_id, school_number or None, first_name, last_name, class_name or None),
+        )
+        # yeni eklenen ogrenci de sonraki eslesmeler icin (ayni PDF icinde
+        # tekrar gecmez ama tutarlilik icin) arama tablolarina eklenir
+        new_row = {"id": next_id, "school_number": school_number, "first_name": first_name,
+                   "last_name": last_name, "class_name": class_name}
+        if no_key:
+            by_school_no[no_key] = new_row
+        if name_key:
+            by_name[name_key] = new_row
+        next_id += 1
+        created += 1
+
+    db.commit()
+    log_audit(db, "STUDENT_ROSTER_IMPORTED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "created": created, "updated": updated, "unchanged": unchanged})
+
+
 @app.route("/api/teacher/exams", methods=["POST"])
 @login_required(role=("admin", "super_admin"), permission="exams.create")
 def api_platform_add_exam():
