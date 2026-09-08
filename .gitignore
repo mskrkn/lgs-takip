@@ -8,6 +8,7 @@ deneme_sonuclari.csv
 *.py
 !server.py
 !pdf_question_extractor.py
+!diagnose_pdf_extraction.py
 __pycache__/
 
 # Soru Havuzu: yüklenen kaynak PDF'ler ve kırpılan soru görüntüleri -
