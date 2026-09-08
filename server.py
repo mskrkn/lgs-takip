@@ -396,6 +396,48 @@ SUBJECT_SEED = [
     ("ayt_cografya2", "Coğrafya-2"), ("ayt_felsefe", "Felsefe Grubu"), ("ayt_din", "Din Kültürü (Seçmeli)"),
 ]
 
+# seeds/curriculum_seed.json'daki kısa ders etiketini (ör. "MAT") subjects.code'a
+# eşler - seed dosyasını her ders için ayrıca yeniden kodlamamak için.
+CURRICULUM_SEED_SUBJECT_MAP = {"MAT": "matematik"}
+
+
+def _load_curriculum_seed(conn):
+    """seeds/curriculum_seed.json içindeki MEB müfredat ağacını (tema/konu/
+    kazanım) curriculum_nodes'a idempotent şekilde yükler. Dosya sort_order'a
+    göre üst düğüm alt düğümden önce geldiğinden, tek geçişte code->id
+    haritası kurarak parent_id çözülür."""
+    seed_path = os.path.join(BASE_DIR, "seeds", "curriculum_seed.json")
+    if not os.path.exists(seed_path):
+        return
+    with open(seed_path, encoding="utf-8") as f:
+        entries = json.load(f)
+
+    subject_ids = {code: row["id"] for code, row in (
+        (code, conn.execute("SELECT id FROM subjects WHERE code=?", (code,)).fetchone())
+        for code in set(CURRICULUM_SEED_SUBJECT_MAP.values())
+    ) if row}
+
+    now = datetime.now().isoformat()
+    code_to_id = {}
+    for entry in entries:
+        subject_code = CURRICULUM_SEED_SUBJECT_MAP.get(entry["subject"], entry["subject"])
+        subject_id = subject_ids.get(subject_code)
+        if not subject_id:
+            continue
+        parent_id = code_to_id.get(entry["parent_code"]) if entry["parent_code"] else None
+        conn.execute(
+            "INSERT INTO curriculum_nodes (code, parent_id, level, subject_id, grade_level, name, sort_order, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(code) DO UPDATE SET parent_id=excluded.parent_id, level=excluded.level, "
+            "subject_id=excluded.subject_id, grade_level=excluded.grade_level, name=excluded.name, "
+            "sort_order=excluded.sort_order",
+            (entry["code"], parent_id, entry["level"], subject_id, str(entry["grade"]), entry["name"],
+             entry["sort_order"], now),
+        )
+        row = conn.execute("SELECT id FROM curriculum_nodes WHERE code=?", (entry["code"],)).fetchone()
+        code_to_id[entry["code"]] = row["id"]
+
+
 ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "ASSISTANT_ADMIN", "INSTITUTION_ADMIN",
              "SCHOOL_ADMIN_DELEGATE", "DATA_ADMIN", "COORDINATOR", "TEACHER", "PARENT", "STUDENT"]
 
@@ -931,6 +973,42 @@ def _create_question_bank_tables(conn):
             UNIQUE(topic_id, name)
         );
 
+        -- MEB müfredat ağacı (tema/konu/kazanım) - topics/learning_outcomes'ın
+        -- (yukarıda, hâlâ boş) yerini alan asıl taksonomi. seeds/curriculum_seed.json
+        -- içinden _load_curriculum_seed() ile idempotent şekilde doldurulur.
+        CREATE TABLE IF NOT EXISTS curriculum_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            parent_id INTEGER REFERENCES curriculum_nodes(id) ON DELETE CASCADE,
+            level TEXT NOT NULL CHECK(level IN ('tema','konu','kazanim')),
+            subject_id INTEGER NOT NULL REFERENCES subjects(id),
+            grade_level TEXT NOT NULL,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_curriculum_nodes_parent ON curriculum_nodes(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_curriculum_nodes_subject_grade ON curriculum_nodes(subject_id, grade_level);
+
+        -- Bir sorunun birden çok kazanıma (ağırlıklı) etiketlenmesi -
+        -- question_bank.topic_id/learning_outcome_id (tekli, hep NULL) yerine.
+        CREATE TABLE IF NOT EXISTS question_curriculum_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id INTEGER NOT NULL REFERENCES question_bank(id) ON DELETE CASCADE,
+            curriculum_node_id INTEGER NOT NULL REFERENCES curriculum_nodes(id) ON DELETE RESTRICT,
+            weight REAL NOT NULL DEFAULT 1.0 CHECK(weight > 0 AND weight <= 1),
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(question_id, curriculum_node_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_qct_question ON question_curriculum_tags(question_id);
+        CREATE INDEX IF NOT EXISTS idx_qct_node ON question_curriculum_tags(curriculum_node_id);
+        -- Soru başına en fazla bir birincil (is_primary=1) etiket.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_qct_one_primary
+            ON question_curriculum_tags(question_id) WHERE is_primary = 1;
+
         CREATE TABLE IF NOT EXISTS question_import_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -1380,6 +1458,8 @@ def _seed_reference_data(conn):
 
     for code, name in SUBJECT_SEED:
         conn.execute("INSERT OR IGNORE INTO subjects (code, name) VALUES (?,?)", (code, name))
+
+    _load_curriculum_seed(conn)
 
     if not conn.execute("SELECT id FROM academic_years WHERE is_active = 1 LIMIT 1").fetchone():
         conn.execute(
@@ -6447,7 +6527,7 @@ def api_question_bank_batch(batch_id):
     if not batch:
         return jsonify({"error": "Bulunamadı."}), 404
     rows = db.execute(
-        "SELECT id, subject_id, question_number, source_page_number, crop_x, crop_y, "
+        "SELECT id, subject_id, grade_level, question_number, source_page_number, crop_x, crop_y, "
         "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
         "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code, "
         "difficulty, question_pattern, tags, source, ai_confidence, ai_suggested_json, ai_classified_at, "
@@ -7121,6 +7201,37 @@ def api_question_bank_create_learning_outcome():
 
 
 # ============================================================
+# MEB müfredat ağacı (curriculum_nodes) - topics/learning_outcomes'ın
+# (yukarıda, hâlâ boş) yerini alan asıl taksonomi; seeds/curriculum_seed.json
+# ile doldurulur (bkz. _load_curriculum_seed). Sadece 'kazanim' seviyesindeki
+# düğümler bir soruya etiketlenebilir (bkz. api_question_bank_question_curriculum_tags).
+# ============================================================
+
+@app.route("/api/admin/question-bank/curriculum")
+@login_required(role="admin", permission="questions.view")
+def api_question_bank_curriculum():
+    db = get_db()
+    subject_id = request.args.get("subject_id", type=int)
+    grade_level = request.args.get("grade_level")
+    if not subject_id or not grade_level:
+        return jsonify({"error": "subject_id ve grade_level gerekli."}), 400
+    rows = db.execute(
+        "SELECT id, code, parent_id, level, name, sort_order FROM curriculum_nodes "
+        "WHERE subject_id=? AND grade_level=? ORDER BY sort_order",
+        (subject_id, str(grade_level)),
+    ).fetchall()
+    nodes = {r["id"]: dict(r) | {"children": []} for r in rows}
+    tree = []
+    for r in rows:
+        node = nodes[r["id"]]
+        if r["parent_id"] and r["parent_id"] in nodes:
+            nodes[r["parent_id"]]["children"].append(node)
+        else:
+            tree.append(node)
+    return jsonify({"curriculum": tree})
+
+
+# ============================================================
 # Beceri (Skill) sistemi - admin-panel-soru-havuzu-2 bölüm 10.3
 # ============================================================
 # organization_id YOK: merkezi soru bankası gibi TÜM okullarda ortak/
@@ -7273,6 +7384,69 @@ def api_question_bank_question_skills(question_id):
         db.execute(
             "INSERT INTO question_skills (question_id, skill_id, weight) VALUES (?,?,?)",
             (question_id, skill_id, weight),
+        )
+    db.commit()
+    return jsonify({"ok": True, "count": len(clean_items)})
+
+
+@app.route("/api/admin/question-bank/questions/<int:question_id>/curriculum-tags", methods=["GET", "PUT"])
+@login_required(role="admin", permission="questions.update")
+def api_question_bank_question_curriculum_tags(question_id):
+    """Bir soruya bağlı kazanımları (ve ağırlıklarını) okur/günceller - bkz.
+    question_skills sync deseni (yukarıda) ile aynı yaklaşım, farkla: ağırlık
+    toplamı %100 değil 1.00 ve tam olarak bir kazanım is_primary olmalı
+    (radio seçim - hangi kazanımın 'asıl' olduğunu netleştirir)."""
+    db = get_db()
+    row = _get_owned_question(db, question_id, _current_org_id(db))
+    if not row:
+        return jsonify({"error": "Bulunamadı."}), 404
+
+    if request.method == "GET":
+        rows = db.execute(
+            "SELECT qct.curriculum_node_id, qct.weight, qct.is_primary, "
+            "cn.code, cn.name, cn.level FROM question_curriculum_tags qct "
+            "JOIN curriculum_nodes cn ON cn.id = qct.curriculum_node_id "
+            "WHERE qct.question_id=? ORDER BY qct.is_primary DESC, qct.weight DESC",
+            (question_id,),
+        ).fetchall()
+        return jsonify({"tags": [dict(r) | {"is_primary": bool(r["is_primary"])} for r in rows]})
+
+    data = request.get_json(silent=True) or {}
+    items = data.get("tags")
+    if not isinstance(items, list):
+        return jsonify({"error": "tags (liste) gerekli."}), 400
+    total_weight = 0.0
+    primary_count = 0
+    clean_items = []
+    for item in items:
+        node_id = item.get("curriculumNodeId")
+        weight = item.get("weight")
+        is_primary = bool(item.get("isPrimary"))
+        try:
+            weight = float(weight)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Geçersiz ağırlık değeri."}), 400
+        if not node_id or not (0 < weight <= 1):
+            return jsonify({"error": "Her etiket için geçerli bir kazanım id ve 0-1 arası ağırlık gerekli."}), 400
+        node_row = db.execute("SELECT level FROM curriculum_nodes WHERE id=?", (node_id,)).fetchone()
+        if not node_row or node_row["level"] != "kazanim":
+            return jsonify({"error": "Sadece kazanım seviyesindeki düğümler bir soruya etiketlenebilir."}), 400
+        clean_items.append((node_id, weight, is_primary))
+        total_weight += weight
+        if is_primary:
+            primary_count += 1
+    if clean_items and abs(total_weight - 1.0) > 0.01:
+        return jsonify({"error": f"Ağırlıkların toplamı 1.00 olmalı (şu an: {total_weight:.2f})."}), 400
+    if clean_items and primary_count != 1:
+        return jsonify({"error": "Tam olarak bir kazanım birincil (isPrimary) olarak işaretlenmeli."}), 400
+
+    db.execute("DELETE FROM question_curriculum_tags WHERE question_id=?", (question_id,))
+    now = datetime.now().isoformat()
+    for node_id, weight, is_primary in clean_items:
+        db.execute(
+            "INSERT INTO question_curriculum_tags (question_id, curriculum_node_id, weight, is_primary, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (question_id, node_id, weight, int(is_primary), now),
         )
     db.commit()
     return jsonify({"ok": True, "count": len(clean_items)})
