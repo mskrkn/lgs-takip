@@ -112,6 +112,10 @@ const ImportOptical = {
           </button>
         </div>
 
+        <!-- Ayrıştırılamayan satır uyarısı - kapatılamaz, kullanıcı görmeden
+             unutamasın diye (bkz. importOptical.js#evaluateOpticalData) -->
+        <div id="optical-failed-lines-warning" style="display:none;" class="mt-3"></div>
+
         <!-- Önizleme ve Sonuç Tablosu Bölümü -->
         <div id="optical-preview-section" style="display:none;" class="mt-3">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -868,16 +872,22 @@ const ImportOptical = {
       });
     });
 
-    const lines = rawText.split(/\r?\n/).filter(l => l.trim().length > 5);
-    if (lines.length === 0) {
+    // Orijinal metindeki satır numaraları (1-tabanlı) korunur ki başarısız
+    // satırlar kullanıcıya textarea'daki gerçek konumlarıyla gösterilebilsin
+    // (bkz. aşağıdaki failedLines - önceden filtrelenmiş bir dizi kullanılsaydı
+    // bu numaralar kayardı).
+    const allLines = rawText.split(/\r?\n/);
+    if (allLines.every(l => l.trim().length <= 5)) {
       UI.toast('Geçerli uzunlukta optik satırı bulunamadı', 'warning');
       return;
     }
 
     const rawRows = [];
-    lines.forEach(line => {
+    const failedLines = [];
+    allLines.forEach((line, idx) => {
+      if (line.trim().length <= 5) return; // boş/anlamsız satır - sessizce atlanır
       const rec = OptikProfiles.extractLine(profile, line, this._opticalBlockOverrides);
-      if (!rec) return;
+      if (!rec) { failedLines.push(idx + 1); return; }
 
       const activeKey = keys[rec.booklet] || keys['A'];
       const rowSubjects = {};
@@ -900,6 +910,8 @@ const ImportOptical = {
       });
     });
 
+    this._renderFailedLinesWarning(failedLines);
+
     if (rawRows.length === 0) {
       UI.toast('Satırlar ayrıştırılamadı. Formatı ve cevap anahtarlarını kontrol ediniz.', 'danger');
       return;
@@ -912,6 +924,31 @@ const ImportOptical = {
     this._opticalResultsExamType = examType;
     this.renderOpticalPreview(results, examType);
     UI.toast(`${results.length} öğrenci başarıyla değerlendirildi!`, 'success');
+  },
+
+  // Kapatılamayan uyarı bandı - bir UI.toast gibi kullanıcı fark etmeden
+  // kaybolmasın diye kalıcı bir <div> olarak gösterilir (bkz. FAZ 1.2,
+  // ölçülen kanıt: 7.txt'de %25, narharuniye9.txt'de %4 satır sessizce
+  // atlanıyordu ve kullanıcı arayüzünde hiçbir izi yoktu).
+  _renderFailedLinesWarning(failedLines) {
+    const el = document.getElementById('optical-failed-lines-warning');
+    if (!el) return;
+    if (!failedLines.length) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    el.style.display = '';
+    el.innerHTML = `
+      <div class="card" style="padding:12px 16px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.35)">
+        <div style="font-weight:700;color:#ef4444;font-size:13px">
+          ⚠️ ${failedLines.length} satır ayrıştırılamadı ve değerlendirmeye dahil EDİLMEDİ
+        </div>
+        <div style="font-size:12px;margin-top:4px;color:var(--text-muted)">
+          Satır no: ${failedLines.join(', ')}. Bu öğrenciler eksik kalabilir - yukarıdaki
+          metin kutusunda bu satırları bulup formatla uyumlu olup olmadığını gözle kontrol edin.
+        </div>
+      </div>`;
   },
 
   // Aynı öğrenciye (okul no, yoksa ad-soyad ile) ait birden fazla satırı
@@ -1020,6 +1057,7 @@ const ImportOptical = {
     document.getElementById('optical-preview-section').style.display = 'none';
     document.getElementById('optical-preview-table').innerHTML = '';
     document.getElementById('optical-summary-cards').innerHTML = '';
+    this._renderFailedLinesWarning([]);
     this.opticalResults = [];
     if (clearText) {
       const textarea = document.getElementById('optical-raw-textarea');

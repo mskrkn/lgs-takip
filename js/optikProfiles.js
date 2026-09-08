@@ -237,6 +237,23 @@ const OptikProfiles = {
       // tipi). 3 cevap bloğunun uzunlukları (64/37/22) resmi TYT ders soru
       // sayılarıyla örtüşmüyor - bu yüzden hangi bloğun hangi derse ait
       // olduğu bilinmiyor, içe aktarımda kullanıcıya sorulur.
+      //
+      // 1.3 düzeltmesi (26 satırın TAMAMI üzerinden ölçüldü, gerçek dosya):
+      // İKİ ayrı sorun vardı, ikisi de bu profili %0 eşleşmeye düşürüyordu:
+      //  1) Alan tanımları 199'da bitiyordu ama gerçek satır uzunluğu 220 -
+      //     bu 1 karakterlik fark _lineMatchesFields'ın üst tolerans sınırını
+      //     (maxEnd+20=219) aşıyordu. [199,219) her satırda İSTİSNASIZ boş,
+      //     [219,220) her satırda İSTİSNASIZ "1" - blok 3'ün bir parçası
+      //     DEĞİL (blok 3 gerçekten 177-199, 22 karakter - "Blok 3"
+      //     etiketiyle tutarlı), sabit bir kuyruk alanı/işaretçi.
+      //  2) className (33-35) ile blok 1 (59) arasındaki [35,59) aralığı
+      //     "boş olmalı" varsayılıyordu, ama pozisyon 48 26 satırın
+      //     TAMAMINDA İSTİSNASIZ "0" - rastgele değil, tanımlanmamış sabit
+      //     bir işaretçi alanı.
+      // Her iki aralık da (anlamı bilinmediği için, ama içeriği her satırda
+      // tutarlı olduğu doğrulandığı için) alan sınırını GENİŞLETMEK yerine
+      // (ki bu, komşu answerBlock'un ham cevap dizesine anlamsız karakterler
+      // karıştırırdı) ayrı 'ignore' alanları olarak tanımlandı.
       id: 'haruniye-3d-tyt',
       label: 'Haruniye 3D TYT Optik (Sabit Genişlik)',
       examType: 'TYT',
@@ -250,9 +267,11 @@ const OptikProfiles = {
         { role: 'schoolNumber', start: 26, end: 32 },
         { role: 'booklet', start: 32, end: 33 },
         { role: 'className', start: 33, end: 35 },
+        { role: 'ignore', start: 35, end: 59 },
         { role: 'answerBlock', start: 59, end: 123, label: 'Blok 1 (64 karakter)' },
         { role: 'answerBlock', start: 139, end: 176, label: 'Blok 2 (37 karakter)' },
         { role: 'answerBlock', start: 177, end: 199, label: 'Blok 3 (22 karakter)' },
+        { role: 'ignore', start: 199, end: 220 },
       ],
     },
     {
@@ -292,6 +311,102 @@ const OptikProfiles = {
         { role: 'answerBlock', start: 221, end: 231, subjectKey: 'ingilizce', label: 'İngilizce' },
         { role: 'answerBlock', start: 241, end: 261, subjectKey: 'matematik', label: 'Matematik' },
         { role: 'answerBlock', start: 261, end: 281, subjectKey: 'fen', label: 'Fen Bilgisi' },
+      ],
+    },
+    {
+      // İrfanlı Ata Sözel (irfanlı-ata-sözel-8sınıf-optik2167.txt) örneğinden
+      // 175 satırın TAMAMI, %100 eşleşme ile bire bir ölçüldü (sabit 127
+      // karakter). "2167" kurum kodu ve "00744439" ikinci sabit alt-kodu
+      // birkaç satırda kayıyor (muhtemelen elle farklı girilmiş öğrenci no'su
+      // yüzünden) - bu yüzden ikisi de tek bir geniş 'ignore' alanında
+      // toplandı, gerçek okul no'suna dokunmuyor. [44,45) alanı bazı
+      // satırlarda "1" bazılarında boş - anlamı çözülemedi ama içeriği
+      // kullanılmadığı için (ignore) sorun teşkil etmiyor. Booklet (A/B)
+      // göstergesi bulunamadı - bu vendor'un dökümünde tek kitapçık var gibi
+      // görünüyor. 3 cevap bloğunun (32/10/10) hangi derse ait olduğu
+      // bilinmiyor, içe aktarımda kullanıcıya sorulur.
+      id: 'irfanli-ata-sozel-fixedwidth',
+      label: 'İrfanlı Ata Sözel Optik (Sabit Genişlik)',
+      examType: 'LGS',
+      kind: 'fixedWidth',
+      optionCount: 4,
+      builtIn: true,
+      fields: [
+        { role: 'ignore', start: 0, end: 4 },
+        { role: 'ignore', start: 4, end: 12 },
+        { role: 'schoolNumber', start: 12, end: 17 },
+        { role: 'fullName', start: 17, end: 36 },
+        { role: 'ignore', start: 36, end: 42 },
+        { role: 'className', start: 42, end: 44 },
+        { role: 'ignore', start: 44, end: 45 },
+        { role: 'answerBlock', start: 45, end: 77, label: 'Blok 1 (32 karakter)' },
+        { role: 'ignore', start: 77, end: 87 },
+        { role: 'answerBlock', start: 87, end: 97, label: 'Blok 2 (10 karakter)' },
+        { role: 'ignore', start: 97, end: 107 },
+        { role: 'answerBlock', start: 107, end: 117, label: 'Blok 3 (10 karakter)' },
+        { role: 'ignore', start: 117, end: 127 },
+      ],
+    },
+    {
+      // İrfanlı Ata Sayısal (irfanlı-ata-sayısal-8sınıf-optik2168.txt)
+      // örneğinden 176 satırın TAMAMI, %100 eşleşme ile bire bir ölçüldü
+      // (sabit 87 karakter). Sözel dosyasıyla AYNI okul/vendor (aynı kurum
+      // kodu deseni "2168", aynı ad-soyad/sınıf alan yerleşimi) ama farklı
+      // (daha kısa, tek bloklu) bir cevap bölümü. Kritik ayrım: pozisyon 46
+      // SADECE "A"/"B" değeri alıyor (87/89 satır, hiç başka harf yok) -
+      // booklet göstergesi bu; pozisyon 45 ise K/E (cinsiyet, kullanılmıyor)
+      // ve bazı satırlarda boş. Bunlar cevap bloğuyla karıştırılmamalı -
+      // gerçek cevap bloğu (A-D karışık, gerçekçi dağılım) ancak 47'den
+      // başlıyor.
+      id: 'irfanli-ata-sayisal-fixedwidth',
+      label: 'İrfanlı Ata Sayısal Optik (Sabit Genişlik)',
+      examType: 'LGS',
+      kind: 'fixedWidth',
+      optionCount: 4,
+      builtIn: true,
+      fields: [
+        { role: 'ignore', start: 0, end: 4 },
+        { role: 'ignore', start: 4, end: 12 },
+        { role: 'schoolNumber', start: 12, end: 17 },
+        { role: 'fullName', start: 17, end: 36 },
+        { role: 'ignore', start: 36, end: 42 },
+        { role: 'className', start: 42, end: 44 },
+        { role: 'ignore', start: 44, end: 45 },
+        { role: 'ignore', start: 45, end: 46 },
+        { role: 'booklet', start: 46, end: 47 },
+        { role: 'answerBlock', start: 47, end: 87, label: 'Blok 1 (40 karakter)' },
+      ],
+    },
+    {
+      // KARACAÖREN.txt örneğinden 20 satırın TAMAMI, %100 eşleşme ile bire
+      // bir ölçüldü (sabit 216 karakter). "7841" kurum kodu; [4,12) genelde
+      // boş ama bir satırda okul no'sunun taştığı gözlendi (o satır için
+      // 'ignore' olması yeterli - okul no o satırda boş kalır, isim/ders
+      // bilgisi etkilenmez). Pozisyon 48 cinsiyet (E/K), 49 sabit "1"
+      // işaretçisi (anlamı bilinmiyor), 50 kitapçık (A/B). İki cevap bloğu
+      // (65/10 kr.) - hangi derse ait olduğu bilinmiyor, içe aktarımda
+      // kullanıcıya sorulur.
+      id: 'karacoren-fixedwidth',
+      label: 'KARAÇÖREN Optik (Sabit Genişlik)',
+      examType: 'LGS',
+      kind: 'fixedWidth',
+      optionCount: 4,
+      builtIn: true,
+      fields: [
+        { role: 'ignore', start: 0, end: 4 },
+        { role: 'ignore', start: 4, end: 12 },
+        { role: 'schoolNumber', start: 12, end: 17 },
+        { role: 'fullName', start: 17, end: 35 },
+        { role: 'className', start: 35, end: 37 },
+        { role: 'ignore', start: 37, end: 48 },
+        { role: 'ignore', start: 48, end: 49 },
+        { role: 'ignore', start: 49, end: 50 },
+        { role: 'booklet', start: 50, end: 51 },
+        { role: 'ignore', start: 51, end: 126 },
+        { role: 'answerBlock', start: 126, end: 191, label: 'Blok 1 (65 karakter)' },
+        { role: 'ignore', start: 191, end: 201 },
+        { role: 'answerBlock', start: 201, end: 211, label: 'Blok 2 (10 karakter)' },
+        { role: 'ignore', start: 211, end: 216 },
       ],
     },
   ],
@@ -399,6 +514,20 @@ const OptikProfiles = {
   // satırları import.js'teki mergeOpticalRows ile tek sonuçta birleştirilir.
   extractLine(profile, rawLine, blockSubjectOverrides) {
     if (!rawLine || !rawLine.trim()) return null;
+
+    // _scoreProfile ile AYNI yapısal kontrol - onsuz, yanlış profil seçilmiş
+    // (ya da doğru profil ama uyumsuz bir dosya) olsa bile extractLine hiçbir
+    // hata vermeden yanlış pozisyonlardan veri keser (bkz. HARUNİYE 8 ALTIN
+    // KARMA 3.txt: lgs-iki-oturum-sayisal-dosya profiliyle %50 "eşleşiyor"
+    // ama bu satırların yarısı aslında UYUMSUZ, sessizce yanlış kesiliyordu).
+    // Variant seçimi ÖNCESİ temel alanların (sessionField hariç) yapısal
+    // olarak uyduğu doğrulanır - variant'a özgü alanlar sessionField
+    // okunduktan SONRA belli olduğu için, tam kontrol variant seçildikten
+    // sonra ikinci kez yapılır (aşağıda).
+    if (!OptikProfiles._lineMatchesFields(profile, rawLine, profile.fields)) {
+      return null;
+    }
+
     const isDelimited = profile.kind === 'delimited';
     const parts = isDelimited ? rawLine.split(profile.delimiter) : null;
 
@@ -418,6 +547,9 @@ const OptikProfiles = {
       const variant = profile.variants[sessionVal];
       if (!variant) return null; // taninmayan/bos oturum degeri - satir atlanir
       fieldsToUse = [...profile.fields, ...variant.fields];
+      if (!OptikProfiles._lineMatchesFields(profile, rawLine, fieldsToUse)) {
+        return null; // oturum hanesi geçerli ama seçilen variant'ın alan yapısı uymuyor
+      }
     }
 
     const rec = { schoolNumber: '', firstName: '', lastName: '', className: '', booklet: 'A', meta: {}, answerBlocks: [] };
