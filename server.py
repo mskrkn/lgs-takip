@@ -6769,6 +6769,7 @@ def api_question_bank_upload():
             raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
     except Exception as exc:
         _OCR_SEMAPHORE.release()
+        pdf_question_extractor.release_pdf_cache()
         db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
         db.commit()
         return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
@@ -6796,6 +6797,7 @@ def api_question_bank_upload():
             "imageUrl": f"/api/admin/question-bank/image/{qcur.lastrowid}",
         })
 
+    pdf_question_extractor.release_pdf_cache()
     db.execute(
         "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
         (result["page_count"], batch_id),
