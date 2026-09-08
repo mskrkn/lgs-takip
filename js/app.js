@@ -2990,6 +2990,16 @@ const App = {
   async uploadQuestionBankPdf(file) {
     const statusEl = document.getElementById('qb-status');
     const resultsEl = document.getElementById('qb-results');
+    const dropZone = document.getElementById('qb-drop-zone');
+
+    // Taranmış/OCR gerektiren PDF'ler 3-4 dakikaya kadar sürebiliyor -
+    // bu süre boyunca yükleme alanı kilitlenir ki sabırsızlanıp tekrar
+    // tıklamak ya da sayfayı yenileyip tekrar denemek (eskiden her
+    // denemede boş bir "hayalet" set biriktiriyordu) mümkün olmasın.
+    if (this._qbUploadInProgress) {
+      UI.toast('Bir PDF zaten işleniyor, lütfen tamamlanmasını bekleyin.', 'warning');
+      return;
+    }
     resultsEl.innerHTML = '';
 
     if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
@@ -2999,7 +3009,9 @@ const App = {
     const subjectCode = document.getElementById('qb-subject-select').value;
     const bookletCode = document.getElementById('qb-booklet-select').value;
     const gradeLevelId = document.getElementById('qb-grade-select')?.value || '';
-    statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (birkaç saniye sürebilir)</p>`;
+    statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... Taranmış sayfalarda bu <b>birkaç dakika</b> sürebilir, sayfayı yenilemeden bekleyin.</p>`;
+    this._qbUploadInProgress = true;
+    if (dropZone) { dropZone.style.opacity = '0.5'; dropZone.style.pointerEvents = 'none'; }
 
     const formData = new FormData();
     formData.append('file', file);
@@ -3031,6 +3043,9 @@ const App = {
       this.loadQuestionBankBatches();
     } catch (err) {
       statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
+    } finally {
+      this._qbUploadInProgress = false;
+      if (dropZone) { dropZone.style.opacity = ''; dropZone.style.pointerEvents = ''; }
     }
   },
 
