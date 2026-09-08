@@ -197,9 +197,21 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # Soru Havuzu PDF yükleme 
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(DB_PATH, timeout=10)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        # WAL: yazma islemleri okuyuculari kilitlemez (varsayilan 'delete'
+        # modda TEK bir yazma tum okuma/yazmalari bloke ediyordu - 500
+        # ogrenci + 10 admin eszamanli kullanimda "database is locked"
+        # hatasina dogrudan yol aciyordu). WAL bir kez ayarlaninca DB
+        # dosyasinda kalici olur (baglanti ozelligi degil), ama her
+        # baglantida tekrar istemek zararsiz/idempotent.
+        g.db.execute("PRAGMA journal_mode=WAL")
+        # busy_timeout: WAL'da bile es zamanli iki YAZMA ayni anda olursa
+        # (SQLite'ta tek yazici kurali hala gecerli) sqlite3 varsayilan
+        # olarak ANINDA "database is locked" hatasi firlatirdi - bunun
+        # yerine baglanti 5 saniyeye kadar diger yazicinin bitmesini bekler.
+        g.db.execute("PRAGMA busy_timeout=5000")
     return g.db
 
 
@@ -1657,6 +1669,7 @@ def _org_student_count(db, org_id):
 def init_db():
     os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")  # bkz. get_db() - dosya genelinde kalici bir ayar
 
     # 1) Önce 'users' tablosunu oluştur/düzelt - diğer tablolar buna FK ile
     #    bağlı olacağı için bu adım kesinlikle önce tamamlanmalı.
