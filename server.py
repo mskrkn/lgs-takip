@@ -29,7 +29,6 @@ import socket
 import sqlite3
 import secrets
 import zipfile
-import base64
 import difflib
 import threading
 import webbrowser
@@ -76,15 +75,23 @@ except ImportError as exc:
     sys.exit(1)
 
 # AI destekli soru sınıflandırma (admin-panel-soru-havuzu-1.md) OPSİYONEL bir
-# özellik - paket kurulu değilse ya da ANTHROPIC_API_KEY ayarlanmamışsa sunucu
+# özellik - paket kurulu değilse ya da GEMINI_API_KEY ayarlanmamışsa sunucu
 # ÇÖKMEMELİ, sadece o tek özellik (🤖 AI ile Sınıflandır butonu) devre dışı
 # kalmalı. Bu yüzden pdf_question_extractor'ın aksine burada sys.exit YOK.
+# Not (2026-09): Anthropic'ten Gemini'ye geçildi - Anthropic'te bakiye
+# bitince özellik hiç fark edilmeden sessizce durmuştu (gerçek bir
+# ücretsiz katmanı yoktu); Gemini'nin ücretsiz katmanı bu riski ortadan
+# kaldırıyor.
 try:
-    import anthropic
-    ANTHROPIC_SDK_AVAILABLE = True
+    from google import genai as gemini_sdk
+    from google.genai import types as gemini_types
+    from google.genai import errors as gemini_errors
+    GEMINI_SDK_AVAILABLE = True
 except ImportError:
-    anthropic = None
-    ANTHROPIC_SDK_AVAILABLE = False
+    gemini_sdk = None
+    gemini_types = None
+    gemini_errors = None
+    GEMINI_SDK_AVAILABLE = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
@@ -6911,14 +6918,17 @@ def _build_question_taxonomy_context(db, subject_id):
 
 
 def _classify_question_with_ai(db, question_row):
-    if not ANTHROPIC_SDK_AVAILABLE:
+    if not GEMINI_SDK_AVAILABLE:
         raise AIClassificationError("AI sınıflandırma için gerekli kütüphane sunucuda kurulu değil.")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise AIClassificationError("AI sınıflandırma yapılandırılmamış (GEMINI_API_KEY ayarlanmamış).")
 
     image_full_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(question_row["image_path"]))
     if not os.path.isfile(image_full_path):
         raise AIClassificationError("Soru görseli bulunamadı.")
     with open(image_full_path, "rb") as f:
-        image_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+        image_bytes = f.read()
 
     subject_row = db.execute("SELECT name FROM subjects WHERE id=?", (question_row["subject_id"],)).fetchone()
     subject_name = subject_row["name"] if subject_row else "Bilinmiyor"
@@ -6931,50 +6941,45 @@ def _classify_question_with_ai(db, question_row):
         outcomes_list=", ".join(outcomes) or "(henüz yok)",
     )
 
-    client = anthropic.Anthropic()
+    client = gemini_sdk.Client(api_key=api_key)
     try:
-        response = client.messages.create(
-            # Bu bir sınıflandırma görevi (JSON alan doldurma), derin
-            # muhakeme gerektirmiyor - Opus yerine çok daha ucuz Haiku
-            # yeterli ve görsel destekliyor (maliyet düşürme kararı).
-            model="claude-haiku-4-5-20251001",
-            max_tokens=2048,
-            system=system_prompt,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
-                    {"type": "text", "text": "Bu soruyu analiz et ve JSON formatında sınıflandır."},
-                ],
-            }],
+        response = client.models.generate_content(
+            # 2.5-flash yeni kullanıcılara kapatılmış (gerçek API çağrısıyla
+            # doğrulandı, 2026-09) - Google'ın kendi hata mesajının önerdiği
+            # güncel model.
+            model="gemini-3.6-flash",
+            contents=[
+                gemini_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                "Bu soruyu analiz et ve JSON formatında sınıflandır.",
+            ],
+            config=gemini_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                # Gemini'nin yerleşik JSON modu - Anthropic sürümündeki
+                # kırılgan "```json bloğunu ayıkla" mantığına gerek bırakmıyor,
+                # yanıt zaten geçerli JSON garantili geliyor.
+                response_mime_type="application/json",
+                max_output_tokens=2048,
+            ),
         )
-    except anthropic.AuthenticationError:
-        raise AIClassificationError("AI sınıflandırma yapılandırılmamış (ANTHROPIC_API_KEY eksik veya geçersiz).")
-    except anthropic.RateLimitError:
-        raise AIClassificationError("AI servisi şu an yoğun (rate limit). Birazdan tekrar deneyin.")
-    except anthropic.APIConnectionError:
-        raise AIClassificationError("AI servisine bağlanılamadı. İnternet bağlantısını kontrol edin.")
-    except anthropic.APIStatusError as exc:
-        raise AIClassificationError(f"AI servisi hata döndü: {exc.message}")
-    except TypeError as exc:
-        # Ortamda HİÇBİR kimlik bilgisi (ne ANTHROPIC_API_KEY ne ant CLI
-        # profili) yoksa SDK, bir istek bile göndermeden header oluşturma
-        # aşamasında düz bir TypeError fırlatır (AuthenticationError DEĞİL -
-        # o sadece sunucu 401 döndüğünde oluşur). Aynı "yapılandırılmamış"
-        # mesajını burada da vermek için ayrıca yakalanır.
-        if "authentication" in str(exc).lower():
-            raise AIClassificationError("AI sınıflandırma yapılandırılmamış (ANTHROPIC_API_KEY ayarlanmamış).")
-        raise
+    except gemini_errors.ClientError as exc:
+        if exc.code in (401, 403):
+            raise AIClassificationError("AI sınıflandırma yapılandırılmamış (GEMINI_API_KEY eksik veya geçersiz).")
+        if exc.code == 429:
+            raise AIClassificationError("AI servisi şu an yoğun (rate limit). Birazdan tekrar deneyin.")
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.ServerError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.APIError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except Exception as exc:
+        # DNS/timeout gibi baglanti hatalari SDK'nin kendi hata tiplerinin
+        # disinda kalabiliyor - kullaniciya yine de anlasilir bir mesaj
+        # dönmesi icin genel bir fallback.
+        raise AIClassificationError(f"AI servisine bağlanılamadı: {exc}")
 
-    text_content = next((b.text for b in response.content if b.type == "text"), "")
-    cleaned = text_content.strip()
-    if cleaned.startswith("```"):
-        parts = cleaned.split("```")
-        cleaned = parts[1] if len(parts) > 1 else cleaned
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
+    text_content = (response.text or "").strip()
     try:
-        return json.loads(cleaned)
+        return json.loads(text_content)
     except ValueError:
         raise AIClassificationError("AI yanıtı ayrıştırılamadı (beklenmeyen format).")
 
