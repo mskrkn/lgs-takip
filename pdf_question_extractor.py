@@ -190,6 +190,107 @@ def _last_question_bottom(ink_blocks, col_x0, col_x1, y0, page_bottom):
     return max(y0 + 15, min(bottom, page_bottom))
 
 
+# ---- FAZ 1.4: Genel sütun sayısı tespiti (1/2/3 sütun) ----
+# Eskiden HER sayfa "mid = pw/2" sabitiyle iki sütun varsayılıyordu - tek
+# sütunlu (düz metin, örn. bazı fen bilimleri paragraf soruları) sayfalarda
+# bu, tek bir soruyu ortadan ikiye bölüp bozabiliyordu.
+_COLUMN_HISTOGRAM_BINS = 20
+_MAX_COLUMNS = 3
+
+
+_COLUMN_MIN_GAP_PT = 8.0
+# Sayfanin bu orandan (yukaridan) daha yukarida biten oguler (baslik/logo
+# seridi) sutun sayimina dahil edilmez - bkz. _detect_questions'taki
+# column_detect_entries filtresi ve gercek ornekte bulunan gerekce.
+_HEADER_BAND_RATIO = 0.12
+
+
+def _detect_column_count(entries, page_width):
+    """Tam-genişlik olmayan (zaten filtrelenmiş) satırların x-ARALIKLARINI
+    (sadece merkez noktası değil) SÜREKLİ koordinat uzayında birleştirip
+    (interval merge) aralarında GERÇEK bir boşluk (>= _COLUMN_MIN_GAP_PT)
+    kalan ayrı kümeleri (sütunları) sayar. Kümeler net ayrılmıyorsa (örn.
+    tek geniş bir gövde metni) GÜVENLİ VARSAYILAN olarak 1 döner - 2/3
+    sütun varsayıp aslında tek sütunlu bir sayfayı yanlışlıkla bölmek,
+    olduğundan az sütun varsaymaktan daha kötü bir hatadır.
+
+    NOT: iki önceki deneme başarısız oldu - (1) x-merkezini sabit sayıda
+    bin'e histogramlamak, aynı sütun içindeki KISA satırların (örn.
+    "A) B) C) D)" şık listesi) farklı bir merkeze düşmesini sahte bir
+    "boşluk" sanıyordu; (2) x-ARALIĞINI bin'lere izdüşürmek bunu düzeltti
+    ama gerçek örnekte sütunlar arası boşluk sadece ~12pt iken bin genişliği
+    (sayfa/20) bundan daha genişti - iki sütun AYNI bin'e denk gelip
+    birleşiyordu. Sürekli koordinatlarda aralık birleştirme her iki sorunu
+    da çözüyor: sütun içi genişlik farkı asla gerçek bir boşluk yaratmaz,
+    ve boşluk çözünürlüğü bin genişliğine değil gerçek noktaya bağlıdır."""
+    if not entries or page_width <= 0:
+        return 1
+    intervals = sorted((block_bbox[0], block_bbox[2]) for _, _, block_bbox in entries)
+    merged = []
+    for x0, x1 in intervals:
+        if merged and x0 - merged[-1][1] <= _COLUMN_MIN_GAP_PT:
+            if x1 > merged[-1][1]:
+                merged[-1][1] = x1
+        else:
+            merged.append([x0, x1])
+    return min(max(len(merged), 1), _MAX_COLUMNS)
+
+
+# ---- FAZ 1.5: Görsel/vektör nesnelerini soru sınırına dahil etme ----
+# Sınır tespiti sadece metin satırlarının bbox'larına dayanıyordu - metinle
+# görsel (şekil/grafik/tablo) arasında dikey boşluk varsa, bir sonraki "N."
+# metin satırından önce bitmiş gibi kabul edilip görsel kırpma dışında
+# kalabiliyordu. Bu fonksiyon aday y_end'i SADECE GENİŞLETİR (asla daraltmaz,
+# asla upper_limit'i - bir sonraki sorunun y0'ını - geçmez).
+_FULL_PAGE_IMAGE_WIDTH_RATIO = 0.9
+_FULL_PAGE_IMAGE_HEIGHT_RATIO = 0.5
+
+
+def _collect_visual_rects(page):
+    """Sayfadaki resim/çizim nesnelerinin sınırlarını BİR KEZ toplar -
+    page.get_images()/get_drawings() sayfa başına pahalı bir PyMuPDF
+    çağrısıdır, bu yüzden _detect_questions sayfa döngüsünde SORU BAŞINA
+    değil, sayfa başına bir kez çağrılıp _extend_for_visuals'a geçirilir.
+    Taranmış (OCR'lı) sayfada TÜM sayfa tek bir resimdir - bu "sayfa
+    içindeki bir şekil" değil, sayfanın kendisidir; sayfa boyutuna yakın
+    nesneler burada zaten elenir."""
+    pw, ph = page.rect.width, page.rect.height
+    rects = []
+    try:
+        for img in page.get_images(full=True):
+            try:
+                bbox = page.get_image_bbox(img)
+            except Exception:
+                continue
+            if (bbox.x1 - bbox.x0) > _FULL_PAGE_IMAGE_WIDTH_RATIO * pw and \
+                    (bbox.y1 - bbox.y0) > _FULL_PAGE_IMAGE_HEIGHT_RATIO * ph:
+                continue
+            rects.append((bbox.x0, bbox.y0, bbox.x1, bbox.y1))
+    except Exception:
+        pass
+    try:
+        for d in page.get_drawings():
+            rect = d.get("rect")
+            if rect is None:
+                continue
+            rects.append((rect.x0, rect.y0, rect.x1, rect.y1))
+    except Exception:
+        pass
+    return rects
+
+
+def _extend_for_visuals(visual_rects, col_x0, col_x1, y0, y_end, upper_limit):
+    extended = y_end
+    for rx0, ry0, rx1, ry1 in visual_rects:
+        if rx1 <= col_x0 or rx0 >= col_x1:
+            continue  # sütunla örtüşmüyor
+        if ry0 < y0 - 5:
+            continue  # bu sorudan ÖNCE başlıyor, ait değil
+        if ry1 > extended and ry1 <= upper_limit:
+            extended = ry1
+    return extended
+
+
 def _page_lines(page):
     """Bir sayfadaki her metin satırını (text, bbox) olarak döndürür."""
     d = page.get_text("dict")
@@ -493,21 +594,40 @@ def _detect_questions(doc, skip_pages, page_lines_cache, boilerplate=frozenset()
             continue
         page = doc[pno]
         pw, ph = page.rect.width, page.rect.height
-        mid = pw / 2
-        # Sadece gerçekten gerekirse (bir sütunun son sorusu için) hesaplanır -
-        # her sayfa için gereksiz cv2 render/işlem maliyetini önler.
+        # Sadece gerçekten gerekirse hesaplanır - her sayfa için gereksiz
+        # cv2 render/PyMuPDF çağrısı maliyetinden kaçınmak için (ink_blocks:
+        # bir sütunun son sorusu için; visual_rects: FAZ 1.5, sayfa başına
+        # BİR KEZ - soru başına değil, bkz. _collect_visual_rects docstring).
         ink_blocks = None
+        visual_rects = None
 
-        cols = {"L": [], "R": []}
         page_lines, is_ocr = page_lines_cache[pno]
+        filtered_entries = []
         for text, bbox, block in page_lines:
             if text.strip() in boilerplate:
                 continue
             bx0, by0, bx1, by1 = block["bbox"]
             if (bx1 - bx0) > _FULL_WIDTH_BLOCK_RATIO * pw:
                 continue
-            col = "L" if (bx0 + bx1) / 2 < mid else "R"
-            cols[col].append((text, bbox, block["bbox"]))
+            filtered_entries.append((text, bbox, block["bbox"]))
+
+        # Sutun tespiti icin sayfanin UST BANDINI (baslik/logo seridi -
+        # bkz. _HEADER_BAND_RATIO) hesaba katma: gercek ornekte, sayfa
+        # basligindaki dekoratif bir metin ("LGS DENEME 9" gibi, sayfa
+        # basina degistigi icin _detect_boilerplate_lines'in TAM ESLESME
+        # kontrolunu atlatiyordu) beklenmedik genislikte bir bbox'a sahipti
+        # ve iki gercek sutun arasindaki bosluga koprü kuruyordu - baslik
+        # seridi soru icerigi degil, sutun sayimina hic girmemeli.
+        column_detect_entries = [
+            e for e in filtered_entries if e[2][3] > ph * _HEADER_BAND_RATIO
+        ]
+        n_cols = _detect_column_count(column_detect_entries, pw)
+        col_width = pw / n_cols
+        cols = {i: [] for i in range(n_cols)}
+        for text, bbox, bb in filtered_entries:
+            center = (bb[0] + bb[2]) / 2
+            idx = min(max(int(center / col_width), 0), n_cols - 1)
+            cols[idx].append((text, bbox, bb))
 
         for col_name, entries in cols.items():
             if not entries:
@@ -524,11 +644,20 @@ def _detect_questions(doc, skip_pages, page_lines_cache, boilerplate=frozenset()
 
             for i, (num, y0) in enumerate(starts):
                 if i + 1 < len(starts):
-                    y_end = starts[i + 1][1]
+                    upper_limit = starts[i + 1][1]
+                    y_end = upper_limit
                 else:
                     if ink_blocks is None:
                         ink_blocks = _detect_ink_blocks(page)
-                    y_end = _last_question_bottom(ink_blocks, col_x0, col_x1, y0, ph - 20)
+                    upper_limit = ph - 20
+                    y_end = _last_question_bottom(ink_blocks, col_x0, col_x1, y0, upper_limit)
+                if not is_ocr:
+                    # get_images/get_drawings taranmış (OCR'lı) sayfalarda
+                    # anlamsız (bkz. _collect_visual_rects) - sadece dijital
+                    # PDF'lerde denenir, gereksiz maliyetten kaçınılır.
+                    if visual_rects is None:
+                        visual_rects = _collect_visual_rects(page)
+                    y_end = _extend_for_visuals(visual_rects, col_x0, col_x1, y0, y_end, upper_limit)
                 rect = fitz.Rect(
                     max(col_x0 - 8, 0), max(y0 - 6, 0),
                     min(col_x1 + 8, pw), min(y_end - 4, ph),
