@@ -85,6 +85,14 @@ _FULL_WIDTH_BLOCK_RATIO = 0.92
 # Kırpma çözünürlüğü (dpi) - ekran önizlemesi için yeterli, dosya boyutu makul.
 _CROP_DPI = 200
 
+# FAZ 1.6 - PDF Health Check: dosya boyutu/sayfa oranından kaba süre tahmini.
+# Gerçek ölçümle kalibre edildi (bkz. commit mesajı) - dijital bir PDF
+# (~126 KB/sayfa) saniyeler sürerken taranmış bir PDF (~290-330 KB/sayfa,
+# her sayfa OCR'a düşer) ONLARCA saniye/sayfa sürebiliyor.
+_HEALTH_SCANNED_KB_PER_PAGE_THRESHOLD = 200
+_HEALTH_DIGITAL_SEC_PER_PAGE = 1.5
+_HEALTH_SCANNED_SEC_PER_PAGE = 20.0
+
 # pytesseract kelime güven skoru (0-100, boş/gürültü kutuları için -1 döner).
 # Bu eşiğin altındaki kelimeler satır/blok bbox hesabına hiç katılmaz - aksi
 # halde tek bir yanlış-okunan gürültü kelimesi satırın sınırını genişletip
@@ -682,14 +690,42 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
       "answer_key": {soru_no: "A"/"B"/...},
       "questions": [
         {"number": int, "page": int (0-index), "rect": fitz.Rect}, ...
-      ]  # soru numarasına göre sıralı
+      ],  # soru numarasına göre sıralı
+      "estimated_seconds": float,  # FAZ 1.6 - bkz. asağısı
     }
 
     Görüntüyü kaydetmek çağıranın işi (render_question_crop) - bu fonksiyon
     sadece tespiti yapar, disk I/O'ya karışmaz.
+
+    FAZ 1.6 - PDF Health Check: işlemeye başlamadan önce iki hafif kontrol.
+    Şifreli PDF'ler eskiden belirsiz bir iç hatayla patlıyordu - artık net
+    bir mesajla erken durur (server.py'nin mevcut try/except'i bunu zaten
+    "PDF işlenemedi: ..." olarak kullanıcıya gösteriyor, ek bir değişiklik
+    gerekmedi). _MAX_PDF_PAGES kontrolü server.py'de zaten var, burada
+    tekrarlanmıyor.
     """
     doc = fitz.open(pdf_path)
     try:
+        if doc.is_encrypted:
+            raise ValueError("Bu PDF şifre korumalı - lütfen önce şifresini kaldırıp tekrar yükleyin.")
+
+        # Dosya boyutu/sayfa oranından KABACA "bu ne kadar sürer" tahmini -
+        # buyuk KB/sayfa oranı, taranmış/fotokopi bir PDF'e (her sayfa
+        # OCR'a düşer, saniyeler değil onlarca saniye sürebilir) işaret
+        # eder; küçük oran dijital bir PDF'e (hızlı) işaret eder. server.py
+        # bunu kullanıcıya göstermek isterse kullanabilir, extract_questions
+        # kendisi bunu göstermez/loglamaz.
+        try:
+            file_size = os.path.getsize(pdf_path)
+        except OSError:
+            file_size = 0
+        kb_per_page = (file_size / 1024) / doc.page_count if doc.page_count else 0
+        sec_per_page = (
+            _HEALTH_SCANNED_SEC_PER_PAGE if kb_per_page >= _HEALTH_SCANNED_KB_PER_PAGE_THRESHOLD
+            else _HEALTH_DIGITAL_SEC_PER_PAGE
+        )
+        estimated_seconds = round(doc.page_count * sec_per_page, 1)
+
         page_lines_cache = _build_page_lines_cache(doc)
         boilerplate = _detect_boilerplate_lines(doc, page_lines_cache)
         answer_key_pages, answer_key = _detect_answer_key_pages(doc, page_lines_cache, boilerplate)
@@ -707,6 +743,7 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
             "page_count": doc.page_count,
             "answer_key": answer_key,
             "questions": ordered,
+            "estimated_seconds": estimated_seconds,
         }
     finally:
         doc.close()
