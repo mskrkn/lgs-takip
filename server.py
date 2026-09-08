@@ -6339,10 +6339,11 @@ def api_question_bank_upload():
     booklet_code = (request.form.get("booklet_code") or "A").strip().upper()[:1] or "A"
 
     db = get_db()
-    subject_row = db.execute("SELECT id FROM subjects WHERE code=?", (subject_code,)).fetchone()
+    subject_row = db.execute("SELECT id, name FROM subjects WHERE code=?", (subject_code,)).fetchone()
     if not subject_row:
         return jsonify({"error": "Geçersiz ders."}), 400
     subject_id = subject_row["id"]
+    subject_name = subject_row["name"]
     user_id = session["user_id"]
     org_id = _current_org_id(db)
 
@@ -6367,7 +6368,9 @@ def api_question_bank_upload():
         db.commit()
         return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç saniye sonra tekrar deneyin."}), 503
     try:
-        result = pdf_question_extractor.extract_questions(pdf_path)
+        result = pdf_question_extractor.extract_questions(
+            pdf_path, subject_name=subject_name, booklet_code=booklet_code,
+        )
         if result["page_count"] > _MAX_PDF_PAGES:
             raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
     except Exception as exc:
