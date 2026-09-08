@@ -1,0 +1,1658 @@
+[
+  {
+    "code": "MAT-05-T1",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Sayılar ve Nicelikler",
+    "sort_order": 1
+  },
+  {
+    "code": "MAT-05-T1-K01",
+    "parent_code": "MAT-05-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Doğal Sayılar ve İşlemler",
+    "sort_order": 2
+  },
+  {
+    "code": "MAT-05-T1-K01-01",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "En çok dokuz basamaklı doğal sayıların bölüklerini, basamaklarını ve basamak değerlerini belirtir.",
+    "sort_order": 3
+  },
+  {
+    "code": "MAT-05-T1-K01-02",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "En çok dokuz basamaklı doğal sayıları okur ve yazar.",
+    "sort_order": 4
+  },
+  {
+    "code": "MAT-05-T1-K01-03",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Kuralı verilen sayı ve şekil örüntülerinin istenen adımlarını belirler.",
+    "sort_order": 5
+  },
+  {
+    "code": "MAT-05-T1-K01-04",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "En çok beş basamaklı doğal sayılarla toplama ve çıkarma işlemi yapar.",
+    "sort_order": 6
+  },
+  {
+    "code": "MAT-05-T1-K01-05",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "En çok üç basamaklı doğal sayıları en çok iki basamaklı doğal sayılarla çarpar.",
+    "sort_order": 7
+  },
+  {
+    "code": "MAT-05-T1-K01-06",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "En çok dört basamaklı bir doğal sayıyı en çok iki basamaklı bir doğal sayıya böler.",
+    "sort_order": 8
+  },
+  {
+    "code": "MAT-05-T1-K01-07",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Bir doğal sayının karesini ve küpünü üslü ifade olarak gösterir ve değerini hesaplar.",
+    "sort_order": 9
+  },
+  {
+    "code": "MAT-05-T1-K01-08",
+    "parent_code": "MAT-05-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Parantezli işlemleri yapar ve işlem önceliğine dikkat eder.",
+    "sort_order": 10
+  },
+  {
+    "code": "MAT-05-T1-K02",
+    "parent_code": "MAT-05-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Kesirler ve Kesirlerle İşlemler",
+    "sort_order": 11
+  },
+  {
+    "code": "MAT-05-T1-K02-01",
+    "parent_code": "MAT-05-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Birim kesirleri karşılaştırır ve sayı doğrusunda gösterir.",
+    "sort_order": 12
+  },
+  {
+    "code": "MAT-05-T1-K02-02",
+    "parent_code": "MAT-05-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Tam sayılı kesrin bir bileşik kesir, bileşik kesrin de bir tam sayılı kesir olduğunu kavrar.",
+    "sort_order": 13
+  },
+  {
+    "code": "MAT-05-T1-K02-03",
+    "parent_code": "MAT-05-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Bir çokluğun istenen basit kesir kadarını ve basit kesir kadarı verilen çokluğun tamamını bulur.",
+    "sort_order": 14
+  },
+  {
+    "code": "MAT-05-T1-K02-04",
+    "parent_code": "MAT-05-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Kesirlerde sadeleştirme ve genişletme yaparak denk kesirler oluşturur.",
+    "sort_order": 15
+  },
+  {
+    "code": "MAT-05-T1-K02-05",
+    "parent_code": "MAT-05-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Paydaları eşit veya birbiri katı olan kesirlerle toplama ve çıkarma işlemleri yapar.",
+    "sort_order": 16
+  },
+  {
+    "code": "MAT-05-T1-K03",
+    "parent_code": "MAT-05-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Ondalık Gösterim ve Yüzdeler",
+    "sort_order": 17
+  },
+  {
+    "code": "MAT-05-T1-K03-01",
+    "parent_code": "MAT-05-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Paydası 10, 100 veya 1000 olan kesirleri ondalık gösterimle ifade eder.",
+    "sort_order": 18
+  },
+  {
+    "code": "MAT-05-T1-K03-02",
+    "parent_code": "MAT-05-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Ondalık gösterimlerde basamak isimlerini ve basamak değerlerini belirler.",
+    "sort_order": 19
+  },
+  {
+    "code": "MAT-05-T1-K03-03",
+    "parent_code": "MAT-05-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Ondalık gösterimleri verilen sayıları karşılaştırır ve sıralar.",
+    "sort_order": 20
+  },
+  {
+    "code": "MAT-05-T1-K03-04",
+    "parent_code": "MAT-05-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Paydası 100 olan kesirleri yüzde sembolü (%) ile gösterir.",
+    "sort_order": 21
+  },
+  {
+    "code": "MAT-05-T1-K03-05",
+    "parent_code": "MAT-05-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Bir çokluğun belirtilen bir yüzde kadarını hesaplar.",
+    "sort_order": 22
+  },
+  {
+    "code": "MAT-05-T2",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Geometri ve Mekânsal İlişkiler",
+    "sort_order": 23
+  },
+  {
+    "code": "MAT-05-T2-K01",
+    "parent_code": "MAT-05-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Temel Geometrik Kavramlar ve Çizimler",
+    "sort_order": 24
+  },
+  {
+    "code": "MAT-05-T2-K01-01",
+    "parent_code": "MAT-05-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Doğru, doğru parçası ve ışını tanır ve sembolle gösterir.",
+    "sort_order": 25
+  },
+  {
+    "code": "MAT-05-T2-K01-02",
+    "parent_code": "MAT-05-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Bir noktanın diğer bir noktaya göre konumunu yön ve birim kullanarak ifade eder.",
+    "sort_order": 26
+  },
+  {
+    "code": "MAT-05-T2-K01-03",
+    "parent_code": "MAT-05-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Paralel, dik ve kesişen doğruları belirler ve çizer.",
+    "sort_order": 27
+  },
+  {
+    "code": "MAT-05-T2-K01-04",
+    "parent_code": "MAT-05-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Dar, dik, geniş ve doğru açıları tanımlar ve ölçer.",
+    "sort_order": 28
+  },
+  {
+    "code": "MAT-05-T2-K02",
+    "parent_code": "MAT-05-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Üçgenler ve Dörtgenler",
+    "sort_order": 29
+  },
+  {
+    "code": "MAT-05-T2-K02-01",
+    "parent_code": "MAT-05-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Üçgenleri açı ve kenar özelliklerine göre sınıflandırır.",
+    "sort_order": 30
+  },
+  {
+    "code": "MAT-05-T2-K02-02",
+    "parent_code": "MAT-05-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Dikdörtgen, kare, paralelkenar, eşkenar dörtgen ve yamuğun temel özelliklerini belirler.",
+    "sort_order": 31
+  },
+  {
+    "code": "MAT-05-T2-K02-03",
+    "parent_code": "MAT-05-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Üçgen ve dörtgenlerin iç açılarının ölçüleri toplamını hesaplar.",
+    "sort_order": 32
+  },
+  {
+    "code": "MAT-05-T3",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Veri İşleme ve İstatistik",
+    "sort_order": 33
+  },
+  {
+    "code": "MAT-05-T3-K01",
+    "parent_code": "MAT-05-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Veri Toplama ve Düzenleme",
+    "sort_order": 34
+  },
+  {
+    "code": "MAT-05-T3-K01-01",
+    "parent_code": "MAT-05-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Bir veri toplama süreci için araştırma soruları oluşturur.",
+    "sort_order": 35
+  },
+  {
+    "code": "MAT-05-T3-K01-02",
+    "parent_code": "MAT-05-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Toplanan verileri sıklık tablosu ve çetele tablosu ile gösterir.",
+    "sort_order": 36
+  },
+  {
+    "code": "MAT-05-T3-K01-03",
+    "parent_code": "MAT-05-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Verileri sütun grafiği ile gösterir ve sütun grafiğini yorumlar.",
+    "sort_order": 37
+  },
+  {
+    "code": "MAT-05-T4",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Nicelikler ve Ölçme",
+    "sort_order": 38
+  },
+  {
+    "code": "MAT-05-T4-K01",
+    "parent_code": "MAT-05-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Uzunluk, Zaman ve Alan Ölçme",
+    "sort_order": 39
+  },
+  {
+    "code": "MAT-05-T4-K01-01",
+    "parent_code": "MAT-05-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Uzunluk ölçme birimlerini tanır ve birbirine dönüştürür (mm, cm, m, km).",
+    "sort_order": 40
+  },
+  {
+    "code": "MAT-05-T4-K01-02",
+    "parent_code": "MAT-05-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Zaman ölçme birimlerini (saat, dakika, saniye, gün, hafta, ay, yıl) dönüştürür.",
+    "sort_order": 41
+  },
+  {
+    "code": "MAT-05-T4-K01-03",
+    "parent_code": "MAT-05-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Dikdörtgenin alan bağıntısını oluşturur ve hesaplar.",
+    "sort_order": 42
+  },
+  {
+    "code": "MAT-05-T4-K02",
+    "parent_code": "MAT-05-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Geometrik Cisimler ve Hacim",
+    "sort_order": 43
+  },
+  {
+    "code": "MAT-05-T4-K02-01",
+    "parent_code": "MAT-05-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Dikdörtgenler prizmasını tanır, temel elemanlarını (köşe, ayrıt, yüz) belirler.",
+    "sort_order": 44
+  },
+  {
+    "code": "MAT-05-T4-K02-02",
+    "parent_code": "MAT-05-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 5,
+    "name": "Dikdörtgenler prizmasının yüzey açınımını çizer ve yüzey alanını hesaplar.",
+    "sort_order": 45
+  },
+  {
+    "code": "MAT-06-T1",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Sayılar ve İşlemler",
+    "sort_order": 46
+  },
+  {
+    "code": "MAT-06-T1-K01",
+    "parent_code": "MAT-06-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Çarpanlar ve Katlar",
+    "sort_order": 47
+  },
+  {
+    "code": "MAT-06-T1-K01-01",
+    "parent_code": "MAT-06-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Doğal sayıların çarpanlarını ve katlarını belirler.",
+    "sort_order": 48
+  },
+  {
+    "code": "MAT-06-T1-K01-02",
+    "parent_code": "MAT-06-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "2, 3, 4, 5, 6, 9 ve 10'a kalansız bölünebilme kurallarını açıklar ve uygular.",
+    "sort_order": 49
+  },
+  {
+    "code": "MAT-06-T1-K01-03",
+    "parent_code": "MAT-06-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Asal sayıları belirler ve doğal sayıları asal çarpanlarına ayırır.",
+    "sort_order": 50
+  },
+  {
+    "code": "MAT-06-T1-K01-04",
+    "parent_code": "MAT-06-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "İki doğal sayının ortak bölenleri ile ortak katlarını belirler.",
+    "sort_order": 51
+  },
+  {
+    "code": "MAT-06-T1-K02",
+    "parent_code": "MAT-06-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Tam Sayılar",
+    "sort_order": 52
+  },
+  {
+    "code": "MAT-06-T1-K02-01",
+    "parent_code": "MAT-06-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Tam sayıları tanımlar ve sayı doğrusunda gösterir.",
+    "sort_order": 53
+  },
+  {
+    "code": "MAT-06-T1-K02-02",
+    "parent_code": "MAT-06-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Tam sayıları karşılaştırır ve sıralar.",
+    "sort_order": 54
+  },
+  {
+    "code": "MAT-06-T1-K02-03",
+    "parent_code": "MAT-06-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Bir tam sayının mutlak değerini kavrar ve anlamlandırır.",
+    "sort_order": 55
+  },
+  {
+    "code": "MAT-06-T1-K03",
+    "parent_code": "MAT-06-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Kesirlerle İşlemler",
+    "sort_order": 56
+  },
+  {
+    "code": "MAT-06-T1-K03-01",
+    "parent_code": "MAT-06-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Kesirlerle çarpma işlemini yapar ve görselleştirir.",
+    "sort_order": 57
+  },
+  {
+    "code": "MAT-06-T1-K03-02",
+    "parent_code": "MAT-06-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Kesirlerle bölme işlemini yapar ve problem çözer.",
+    "sort_order": 58
+  },
+  {
+    "code": "MAT-06-T1-K03-03",
+    "parent_code": "MAT-06-T1-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Kesirlerle yapılan işlemlerin sonuçlarını tahmin eder.",
+    "sort_order": 59
+  },
+  {
+    "code": "MAT-06-T1-K04",
+    "parent_code": "MAT-06-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Ondalık Gösterim ve Oran",
+    "sort_order": 60
+  },
+  {
+    "code": "MAT-06-T1-K04-01",
+    "parent_code": "MAT-06-T1-K04",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Ondalık gösterimleri verilen sayılarla çarpma ve bölme işlemleri yapar.",
+    "sort_order": 61
+  },
+  {
+    "code": "MAT-06-T1-K04-02",
+    "parent_code": "MAT-06-T1-K04",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Ondalık gösterimleri verilen sayıları belirli bir basamağa göre yuvarlar.",
+    "sort_order": 62
+  },
+  {
+    "code": "MAT-06-T1-K04-03",
+    "parent_code": "MAT-06-T1-K04",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Oran kavramını açıklar, iki çokluğun birbirine oranını gösterir.",
+    "sort_order": 63
+  },
+  {
+    "code": "MAT-06-T1-K04-04",
+    "parent_code": "MAT-06-T1-K04",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Birimli ve birimsiz oran kavramlarını ayırt eder.",
+    "sort_order": 64
+  },
+  {
+    "code": "MAT-06-T2",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Cebir",
+    "sort_order": 65
+  },
+  {
+    "code": "MAT-06-T2-K01",
+    "parent_code": "MAT-06-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Cebirsel İfadeler",
+    "sort_order": 66
+  },
+  {
+    "code": "MAT-06-T2-K01-01",
+    "parent_code": "MAT-06-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Sözel olarak verilen bir duruma uygun cebirsel ifade yazar.",
+    "sort_order": 67
+  },
+  {
+    "code": "MAT-06-T2-K01-02",
+    "parent_code": "MAT-06-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Cebirsel ifadelerdeki değişken, terim, katsayı ve sabit terimi belirler.",
+    "sort_order": 68
+  },
+  {
+    "code": "MAT-06-T2-K01-03",
+    "parent_code": "MAT-06-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Cebirsel ifadenin değerini, değişkene verilen farklı doğal sayı değerleri için hesaplar.",
+    "sort_order": 69
+  },
+  {
+    "code": "MAT-06-T3",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Geometri ve Ölçme",
+    "sort_order": 70
+  },
+  {
+    "code": "MAT-06-T3-K01",
+    "parent_code": "MAT-06-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Açılar",
+    "sort_order": 71
+  },
+  {
+    "code": "MAT-06-T3-K01-01",
+    "parent_code": "MAT-06-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Açı kavramını ve açıların sembolle gösterimini açıklar.",
+    "sort_order": 72
+  },
+  {
+    "code": "MAT-06-T3-K01-02",
+    "parent_code": "MAT-06-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Komşu, tümler, bütünler ve ters açıların özelliklerini keşfeder.",
+    "sort_order": 73
+  },
+  {
+    "code": "MAT-06-T3-K02",
+    "parent_code": "MAT-06-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Alan Ölçme",
+    "sort_order": 74
+  },
+  {
+    "code": "MAT-06-T3-K02-01",
+    "parent_code": "MAT-06-T3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Paralelkenarın alan bağıntısını oluşturur ve alanını hesaplar.",
+    "sort_order": 75
+  },
+  {
+    "code": "MAT-06-T3-K02-02",
+    "parent_code": "MAT-06-T3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Üçgenin alan bağıntısını oluşturur ve alanını hesaplar.",
+    "sort_order": 76
+  },
+  {
+    "code": "MAT-06-T3-K02-03",
+    "parent_code": "MAT-06-T3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Arazi ve alan ölçme birimlerini tanıtır ve dönüştürmeler yapar.",
+    "sort_order": 77
+  },
+  {
+    "code": "MAT-06-T3-K03",
+    "parent_code": "MAT-06-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Çember ve Daire",
+    "sort_order": 78
+  },
+  {
+    "code": "MAT-06-T3-K03-01",
+    "parent_code": "MAT-06-T3-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Çemberin merkezini, yarıçapını ve çapını tanır.",
+    "sort_order": 79
+  },
+  {
+    "code": "MAT-06-T3-K03-02",
+    "parent_code": "MAT-06-T3-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Pi sayısını açıklar ve çemberin çevre uzunluğunu hesaplar.",
+    "sort_order": 80
+  },
+  {
+    "code": "MAT-06-T4",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Veri İşleme ve Hacim",
+    "sort_order": 81
+  },
+  {
+    "code": "MAT-06-T4-K01",
+    "parent_code": "MAT-06-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Veri Analizi",
+    "sort_order": 82
+  },
+  {
+    "code": "MAT-06-T4-K01-01",
+    "parent_code": "MAT-06-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "İki gruba ait verileri ikili sütun grafiği ile gösterir.",
+    "sort_order": 83
+  },
+  {
+    "code": "MAT-06-T4-K01-02",
+    "parent_code": "MAT-06-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Veri grubuna ait aritmetik ortalama ve açıklığı hesaplar, yorumlar.",
+    "sort_order": 84
+  },
+  {
+    "code": "MAT-06-T4-K02",
+    "parent_code": "MAT-06-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Hacim Ölçme",
+    "sort_order": 85
+  },
+  {
+    "code": "MAT-06-T4-K02-01",
+    "parent_code": "MAT-06-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Dikdörtgenler prizmasının hacim bağıntısını oluşturur ve hesaplar.",
+    "sort_order": 86
+  },
+  {
+    "code": "MAT-06-T4-K02-02",
+    "parent_code": "MAT-06-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Hacim ölçme birimlerini (m^3, dm^3, cm^3, mm^3) birbiri türünden yazar.",
+    "sort_order": 87
+  },
+  {
+    "code": "MAT-06-T4-K02-03",
+    "parent_code": "MAT-06-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 6,
+    "name": "Sıvı ölçme birimlerini (L, dL, cL, mL) tanımlar ve hacim ölçüleriyle ilişkilendirir.",
+    "sort_order": 88
+  },
+  {
+    "code": "MAT-07-T1",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Sayılar ve İşlemler",
+    "sort_order": 89
+  },
+  {
+    "code": "MAT-07-T1-K01",
+    "parent_code": "MAT-07-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Tam Sayılarla İşlemler",
+    "sort_order": 90
+  },
+  {
+    "code": "MAT-07-T1-K01-01",
+    "parent_code": "MAT-07-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Tam sayılarla toplama ve çıkarma işlemlerini yapar.",
+    "sort_order": 91
+  },
+  {
+    "code": "MAT-07-T1-K01-02",
+    "parent_code": "MAT-07-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Tam sayılarla çarpma ve bölme işlemlerini yapar.",
+    "sort_order": 92
+  },
+  {
+    "code": "MAT-07-T1-K01-03",
+    "parent_code": "MAT-07-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Tam sayıların kendileri ile tekrarlı çarpımını üslü nicelik olarak ifade eder.",
+    "sort_order": 93
+  },
+  {
+    "code": "MAT-07-T1-K01-04",
+    "parent_code": "MAT-07-T1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Tam sayılarla işlem yapmayı gerektiren problemleri çözer.",
+    "sort_order": 94
+  },
+  {
+    "code": "MAT-07-T1-K02",
+    "parent_code": "MAT-07-T1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Rasyonel Sayılar",
+    "sort_order": 95
+  },
+  {
+    "code": "MAT-07-T1-K02-01",
+    "parent_code": "MAT-07-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Rasyonel sayıları tanımlar, sayı doğrusunda gösterir ve devirli ondalık açılımları açıklar.",
+    "sort_order": 96
+  },
+  {
+    "code": "MAT-07-T1-K02-02",
+    "parent_code": "MAT-07-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Rasyonel sayıları karşılaştırır ve sıralar.",
+    "sort_order": 97
+  },
+  {
+    "code": "MAT-07-T1-K02-03",
+    "parent_code": "MAT-07-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Rasyonel sayılarla dört işlem (toplama, çıkarma, çarpma, bölme) yapar.",
+    "sort_order": 98
+  },
+  {
+    "code": "MAT-07-T1-K02-04",
+    "parent_code": "MAT-07-T1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Rasyonel sayılarla çok adımlı işlemleri ve problemleri çözer.",
+    "sort_order": 99
+  },
+  {
+    "code": "MAT-07-T2",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Cebir, Oran ve Orantı",
+    "sort_order": 100
+  },
+  {
+    "code": "MAT-07-T2-K01",
+    "parent_code": "MAT-07-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Cebirsel İfadeler ve Denklemler",
+    "sort_order": 101
+  },
+  {
+    "code": "MAT-07-T2-K01-01",
+    "parent_code": "MAT-07-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Cebirsel ifadelerle toplama ve çıkarma işlemleri yapar.",
+    "sort_order": 102
+  },
+  {
+    "code": "MAT-07-T2-K01-02",
+    "parent_code": "MAT-07-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Bir doğal sayı ile cebirsel ifadeyi çarpar.",
+    "sort_order": 103
+  },
+  {
+    "code": "MAT-07-T2-K01-03",
+    "parent_code": "MAT-07-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Birinci dereceden bir bilinmeyenli denklemleri çözer.",
+    "sort_order": 104
+  },
+  {
+    "code": "MAT-07-T2-K01-04",
+    "parent_code": "MAT-07-T2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Birinci dereceden bir bilinmeyenli denklem kurmayı gerektiren problemleri çözer.",
+    "sort_order": 105
+  },
+  {
+    "code": "MAT-07-T2-K02",
+    "parent_code": "MAT-07-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Oran ve Orantı",
+    "sort_order": 106
+  },
+  {
+    "code": "MAT-07-T2-K02-01",
+    "parent_code": "MAT-07-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Orantıda verilmeyen terimi bulur (içler-dışlar çarpımı).",
+    "sort_order": 107
+  },
+  {
+    "code": "MAT-07-T2-K02-02",
+    "parent_code": "MAT-07-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Doğru orantılı ve ters orantılı nicelikleri belirler ve problem çözer.",
+    "sort_order": 108
+  },
+  {
+    "code": "MAT-07-T2-K02-03",
+    "parent_code": "MAT-07-T2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Doğru orantılı iki çokluğa ait orantı sabitini belirler ve grafik üzerinde gösterir.",
+    "sort_order": 109
+  },
+  {
+    "code": "MAT-07-T2-K03",
+    "parent_code": "MAT-07-T2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Yüzdeler",
+    "sort_order": 110
+  },
+  {
+    "code": "MAT-07-T2-K03-01",
+    "parent_code": "MAT-07-T2-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Bir çokluğun belirtilen bir yüzde kadarını veya yüzdesi verilen çokluğu bulur.",
+    "sort_order": 111
+  },
+  {
+    "code": "MAT-07-T2-K03-02",
+    "parent_code": "MAT-07-T2-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Bir çokluğu belirli bir yüzde ile artırmaya veya azaltmaya yönelik hesaplamalar yapar.",
+    "sort_order": 112
+  },
+  {
+    "code": "MAT-07-T2-K03-03",
+    "parent_code": "MAT-07-T2-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Yüzde ile ilgili kâr-zarar, indirim ve faiz problemlerini çözer.",
+    "sort_order": 113
+  },
+  {
+    "code": "MAT-07-T3",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Geometri ve Ölçme",
+    "sort_order": 114
+  },
+  {
+    "code": "MAT-07-T3-K01",
+    "parent_code": "MAT-07-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Doğrular ve Açılar",
+    "sort_order": 115
+  },
+  {
+    "code": "MAT-07-T3-K01-01",
+    "parent_code": "MAT-07-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Bir açının açıortayını çizer ve belirler.",
+    "sort_order": 116
+  },
+  {
+    "code": "MAT-07-T3-K01-02",
+    "parent_code": "MAT-07-T3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "İki paralel doğruyla bir keseninin oluşturduğu yöndeş, iç ters, dış ters ve karşı konumlu açıları belirler.",
+    "sort_order": 117
+  },
+  {
+    "code": "MAT-07-T3-K02",
+    "parent_code": "MAT-07-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Çokgenler ve Dörtgenler",
+    "sort_order": 118
+  },
+  {
+    "code": "MAT-07-T3-K02-01",
+    "parent_code": "MAT-07-T3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Düzgün çokgenlerin iç ve dış açılarının ölçülerini hesaplar.",
+    "sort_order": 119
+  },
+  {
+    "code": "MAT-07-T3-K02-02",
+    "parent_code": "MAT-07-T3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Eşkenar dörtgen ve yamuğun alan bağıntılarını oluşturur ve alanlarını hesaplar.",
+    "sort_order": 120
+  },
+  {
+    "code": "MAT-07-T3-K03",
+    "parent_code": "MAT-07-T3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Çember ve Daire",
+    "sort_order": 121
+  },
+  {
+    "code": "MAT-07-T3-K03-01",
+    "parent_code": "MAT-07-T3-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Çemberde merkez açıyı, gördüğü yayı ve yay uzunluğunu hesaplar.",
+    "sort_order": 122
+  },
+  {
+    "code": "MAT-07-T3-K03-02",
+    "parent_code": "MAT-07-T3-K03",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Dairenin ve daire diliminin alanını hesaplar.",
+    "sort_order": 123
+  },
+  {
+    "code": "MAT-07-T4",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Veri Analizi ve Görünüm",
+    "sort_order": 124
+  },
+  {
+    "code": "MAT-07-T4-K01",
+    "parent_code": "MAT-07-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Veri Analizi",
+    "sort_order": 125
+  },
+  {
+    "code": "MAT-07-T4-K01-01",
+    "parent_code": "MAT-07-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Verileri çizgi ve daire grafiği ile gösterir ve grafikleri yorumlar.",
+    "sort_order": 126
+  },
+  {
+    "code": "MAT-07-T4-K01-02",
+    "parent_code": "MAT-07-T4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Bir veri grubuna ait ortanca (medyan) ve tepe değeri (mod) bulur ve yorumlar.",
+    "sort_order": 127
+  },
+  {
+    "code": "MAT-07-T4-K02",
+    "parent_code": "MAT-07-T4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Cismin Farklı Yönlerden Görünüşü",
+    "sort_order": 128
+  },
+  {
+    "code": "MAT-07-T4-K02-01",
+    "parent_code": "MAT-07-T4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 7,
+    "name": "Üç boyutlu cisimlerin farklı yönlerden (ön, arka, sağ, sol, üst) iki boyutlu görünümlerini çizer.",
+    "sort_order": 129
+  },
+  {
+    "code": "MAT-08-U1",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Çarpanlar, Katlar ve Üslü İfadeler",
+    "sort_order": 130
+  },
+  {
+    "code": "MAT-08-U1-K01",
+    "parent_code": "MAT-08-U1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Çarpanlar ve Katlar",
+    "sort_order": 131
+  },
+  {
+    "code": "MAT-08-U1-K01-01",
+    "parent_code": "MAT-08-U1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Pozitif tam sayıların pozitif tam sayı çarpanlarını bulur, asal çarpanlarına ayırır.",
+    "sort_order": 132
+  },
+  {
+    "code": "MAT-08-U1-K01-02",
+    "parent_code": "MAT-08-U1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "İki doğal sayının en büyük ortak bölenini (EBOB) ve en küçük ortak katını (EKOK) hesaplar, ilgili problemleri çözer.",
+    "sort_order": 133
+  },
+  {
+    "code": "MAT-08-U1-K01-03",
+    "parent_code": "MAT-08-U1-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Verilen iki doğal sayının aralarında asal olup olmadığını belirler.",
+    "sort_order": 134
+  },
+  {
+    "code": "MAT-08-U1-K02",
+    "parent_code": "MAT-08-U1",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üslü İfadeler",
+    "sort_order": 135
+  },
+  {
+    "code": "MAT-08-U1-K02-01",
+    "parent_code": "MAT-08-U1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Tam sayıların tam sayı kuvvetlerini hesaplar.",
+    "sort_order": 136
+  },
+  {
+    "code": "MAT-08-U1-K02-02",
+    "parent_code": "MAT-08-U1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üslü ifadelerle ilgili temel kuralları anlar ve çarpma/bölme işlemlerini yapar.",
+    "sort_order": 137
+  },
+  {
+    "code": "MAT-08-U1-K02-03",
+    "parent_code": "MAT-08-U1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Çok büyük ve çok küçük sayıları 10'un tam sayı kuvvetleriyle ifade eder.",
+    "sort_order": 138
+  },
+  {
+    "code": "MAT-08-U1-K02-04",
+    "parent_code": "MAT-08-U1-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Sayıları bilimsel gösterimle ifade eder ve karşılaştırır.",
+    "sort_order": 139
+  },
+  {
+    "code": "MAT-08-U2",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Kareköklü İfadeler ve Veri Analizi",
+    "sort_order": 140
+  },
+  {
+    "code": "MAT-08-U2-K01",
+    "parent_code": "MAT-08-U2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Kareköklü İfadeler",
+    "sort_order": 141
+  },
+  {
+    "code": "MAT-08-U2-K01-01",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Tam kare pozitif tam sayılarla bu sayıların karekökleri arasındaki ilişkiyi belirler.",
+    "sort_order": 142
+  },
+  {
+    "code": "MAT-08-U2-K01-02",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Tam kare olmayan kareköklü bir sayının hangi iki doğal sayı arasında olduğunu belirler.",
+    "sort_order": 143
+  },
+  {
+    "code": "MAT-08-U2-K01-03",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Kareköklü bir ifadeyi a√b şeklinde yazar veya a√b şeklindeki ifadede katsayıyı kök içine alır.",
+    "sort_order": 144
+  },
+  {
+    "code": "MAT-08-U2-K01-04",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Kareköklü ifadelerde toplama, çıkarma, çarpma ve bölme işlemlerini yapar.",
+    "sort_order": 145
+  },
+  {
+    "code": "MAT-08-U2-K01-05",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Kareköklü bir ifade ile çarpıldığında sonucu doğal sayı yapan çarpanları bulur.",
+    "sort_order": 146
+  },
+  {
+    "code": "MAT-08-U2-K01-06",
+    "parent_code": "MAT-08-U2-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Gerçek sayıları tanır; rasyonel ve irrasyonel sayılarla ilişkilendirir.",
+    "sort_order": 147
+  },
+  {
+    "code": "MAT-08-U2-K02",
+    "parent_code": "MAT-08-U2",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Veri Analizi",
+    "sort_order": 148
+  },
+  {
+    "code": "MAT-08-U2-K02-01",
+    "parent_code": "MAT-08-U2-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "En fazla iki veri grubuna ait verileri daire ve çizgi grafikleriyle gösterir ve dönüşümlerini yapar.",
+    "sort_order": 149
+  },
+  {
+    "code": "MAT-08-U3",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Olasılık ve Cebirsel İfadeler",
+    "sort_order": 150
+  },
+  {
+    "code": "MAT-08-U3-K01",
+    "parent_code": "MAT-08-U3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Basit Olayların Olma Olasılığı",
+    "sort_order": 151
+  },
+  {
+    "code": "MAT-08-U3-K01-01",
+    "parent_code": "MAT-08-U3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Bir olaya ait olası durumları belirler ve olasılık değerinin 0 ile 1 arasında olduğunu kavrar.",
+    "sort_order": 152
+  },
+  {
+    "code": "MAT-08-U3-K01-02",
+    "parent_code": "MAT-08-U3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Eşit şansa sahip olan ve olmayan olayları ayırt eder.",
+    "sort_order": 153
+  },
+  {
+    "code": "MAT-08-U3-K01-03",
+    "parent_code": "MAT-08-U3-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Basit bir olayın olma olasılığını hesaplar (Olasılık = İstenen Durum Sayısı / Tüm Durumların Sayısı).",
+    "sort_order": 154
+  },
+  {
+    "code": "MAT-08-U3-K02",
+    "parent_code": "MAT-08-U3",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Cebirsel İfadeler ve Özdeşlikler",
+    "sort_order": 155
+  },
+  {
+    "code": "MAT-08-U3-K02-01",
+    "parent_code": "MAT-08-U3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Cebirsel ifadelerin çarpımını yapar.",
+    "sort_order": 156
+  },
+  {
+    "code": "MAT-08-U3-K02-02",
+    "parent_code": "MAT-08-U3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Özdeşlik ile denklem arasındaki farkı açıklar.",
+    "sort_order": 157
+  },
+  {
+    "code": "MAT-08-U3-K02-03",
+    "parent_code": "MAT-08-U3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Tam kare özdeşlikleri (a+b)^2, (a-b)^2 ve iki kare farkı özdeşliğini a^2-b^2 modeller ve kullanır.",
+    "sort_order": 158
+  },
+  {
+    "code": "MAT-08-U3-K02-04",
+    "parent_code": "MAT-08-U3-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Cebirsel ifadeleri çarpanlara ayırır.",
+    "sort_order": 159
+  },
+  {
+    "code": "MAT-08-U4",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Denklemler ve Eşitsizlikler",
+    "sort_order": 160
+  },
+  {
+    "code": "MAT-08-U4-K01",
+    "parent_code": "MAT-08-U4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Doğrusal Denklemler",
+    "sort_order": 161
+  },
+  {
+    "code": "MAT-08-U4-K01-01",
+    "parent_code": "MAT-08-U4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Birinci dereceden bir bilinmeyenli denklemleri çözer.",
+    "sort_order": 162
+  },
+  {
+    "code": "MAT-08-U4-K01-02",
+    "parent_code": "MAT-08-U4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Koordinat sistemini tanır, noktaları sıralı ikililerle gösterir.",
+    "sort_order": 163
+  },
+  {
+    "code": "MAT-08-U4-K01-03",
+    "parent_code": "MAT-08-U4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Doğrusal denklemlerin grafiklerini çizer.",
+    "sort_order": 164
+  },
+  {
+    "code": "MAT-08-U4-K01-04",
+    "parent_code": "MAT-08-U4-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Doğrusal ilişkinin eğimini modeller, hazırlar ve hesaplar.",
+    "sort_order": 165
+  },
+  {
+    "code": "MAT-08-U4-K02",
+    "parent_code": "MAT-08-U4",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Eşitsizlikler",
+    "sort_order": 166
+  },
+  {
+    "code": "MAT-08-U4-K02-01",
+    "parent_code": "MAT-08-U4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Birinci dereceden bir bilinmeyenli eşitsizlik içeren durumlara uygun matematik cümleleri yazar.",
+    "sort_order": 167
+  },
+  {
+    "code": "MAT-08-U4-K02-02",
+    "parent_code": "MAT-08-U4-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Birinci dereceden bir bilinmeyenli eşitsizlikleri çözer ve sayı doğrusunda gösterir.",
+    "sort_order": 168
+  },
+  {
+    "code": "MAT-08-U5",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üçgenler ve Benzerlik",
+    "sort_order": 169
+  },
+  {
+    "code": "MAT-08-U5-K01",
+    "parent_code": "MAT-08-U5",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üçgenler",
+    "sort_order": 170
+  },
+  {
+    "code": "MAT-08-U5-K01-01",
+    "parent_code": "MAT-08-U5-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üçgende kenarortay, açıortay ve yüksekliği çizer.",
+    "sort_order": 171
+  },
+  {
+    "code": "MAT-08-U5-K01-02",
+    "parent_code": "MAT-08-U5-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üçgenin iki kenar uzunluğunun toplamı veya farkı ile üçüncü kenarının uzunluğu arasındaki ilişkiyi (üçgen eşitsizliği) belirler.",
+    "sort_order": 172
+  },
+  {
+    "code": "MAT-08-U5-K01-03",
+    "parent_code": "MAT-08-U5-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Üçgenin kenar uzunlukları ile açı ölçüleri arasındaki ilişkiyi belirler.",
+    "sort_order": 173
+  },
+  {
+    "code": "MAT-08-U5-K01-04",
+    "parent_code": "MAT-08-U5-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Pisagor bağıntısını oluşturur ve ilgili problemleri çözer.",
+    "sort_order": 174
+  },
+  {
+    "code": "MAT-08-U5-K02",
+    "parent_code": "MAT-08-U5",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Eşlik ve Benzerlik",
+    "sort_order": 175
+  },
+  {
+    "code": "MAT-08-U5-K02-01",
+    "parent_code": "MAT-08-U5-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Benzer ve eş çokgenlerin kenar ve açı ilişkilerini belirler, benzerlik oranını hesaplar.",
+    "sort_order": 176
+  },
+  {
+    "code": "MAT-08-U6",
+    "parent_code": null,
+    "level": "tema",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dönüşüm Geometrisi ve Geometrik Cisimler",
+    "sort_order": 177
+  },
+  {
+    "code": "MAT-08-U6-K01",
+    "parent_code": "MAT-08-U6",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dönüşüm Geometrisi",
+    "sort_order": 178
+  },
+  {
+    "code": "MAT-08-U6-K01-01",
+    "parent_code": "MAT-08-U6-K01",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Nokta, doğru parçası ve diğer şekillerin öteleme ve yansıma altındaki görüntülerini oluşturur.",
+    "sort_order": 179
+  },
+  {
+    "code": "MAT-08-U6-K02",
+    "parent_code": "MAT-08-U6",
+    "level": "konu",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Geometrik Cisimler",
+    "sort_order": 180
+  },
+  {
+    "code": "MAT-08-U6-K02-01",
+    "parent_code": "MAT-08-U6-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dik prizmaları tanır, temel elemanlarını belirler ve açınımını çizer.",
+    "sort_order": 181
+  },
+  {
+    "code": "MAT-08-U6-K02-02",
+    "parent_code": "MAT-08-U6-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dik dairesel silindirin temel elemanlarını, açınımını ve yüzey alanını hesaplar.",
+    "sort_order": 182
+  },
+  {
+    "code": "MAT-08-U6-K02-03",
+    "parent_code": "MAT-08-U6-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dik dairesel silindirin hacim bağıntısını oluşturur ve hesaplar.",
+    "sort_order": 183
+  },
+  {
+    "code": "MAT-08-U6-K02-04",
+    "parent_code": "MAT-08-U6-K02",
+    "level": "kazanim",
+    "subject": "MAT",
+    "grade": 8,
+    "name": "Dik piramit ve dik koniyi tanır, temel elemanlarını belirler.",
+    "sort_order": 184
+  }
+]

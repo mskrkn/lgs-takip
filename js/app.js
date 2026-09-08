@@ -3164,6 +3164,7 @@ const App = {
         batchId, questions: data.questions, index: Math.min(startIndex, data.questions.length - 1),
         contextUrl: null, pageWidthPt: 0, pageHeightPt: 0, cropRect: null, cropDrag: null,
         topicsCache: {}, outcomesCache: {}, bookletRows: [],
+        curriculumTreeCache: {}, curriculumTree: [], curriculumTagsState: {},
       };
       this._qbMount();
       await this._qbShowCurrent();
@@ -3291,6 +3292,23 @@ const App = {
                 <div style="display:flex;gap:6px;align-items:center">
                   <span id="qbr-skills-total" class="text-muted" style="font-size:12px"></span>
                   <button class="btn btn-secondary btn-sm" onclick="App._qbSaveSkills()">💾 Becerileri Kaydet</button>
+                </div>
+              </div>
+              <div class="form-group" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
+                <label class="form-label">🧭 MEB Kazanımları <span class="text-muted" style="font-weight:400">(ağırlıklar toplamı 1.00 olmalı, bir tanesi birincil)</span></label>
+                <div style="display:flex;gap:6px;margin-bottom:6px">
+                  <select class="form-select" id="qbr-curr-tema-select" style="flex:1"></select>
+                  <select class="form-select" id="qbr-curr-konu-select" style="flex:1"></select>
+                </div>
+                <div id="qbr-curr-kazanim-list" style="display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;margin-bottom:8px;border:1px solid var(--bg-glass-border);border-radius:6px;padding:6px"></div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <span class="text-muted" style="font-size:12px">Etiketli kazanımlar:</span>
+                  <button class="btn btn-ghost btn-sm" onclick="App._qbAutoBalanceCurriculumWeights()">⚖️ Otomatik Dengele</button>
+                </div>
+                <div id="qbr-curr-tagged-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <span id="qbr-curr-total" class="text-muted" style="font-size:12px"></span>
+                  <button class="btn btn-secondary btn-sm" onclick="App._qbSaveCurriculumTags()">💾 Kazanımları Kaydet</button>
                 </div>
               </div>
               <div class="form-group">
@@ -3424,6 +3442,7 @@ const App = {
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
     await this._qbLoadSkillsForQuestion(q.id);
+    await this._qbLoadCurriculumForQuestion(q);
   },
 
   // admin-panel-soru-havuzu-1.md tasarım önerisi #2: tek genel skor yerine
@@ -3601,6 +3620,183 @@ const App = {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
       UI.toast('Beceriler kaydedildi 💾', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  // ---- MEB Kazanımları (curriculum_nodes / question_curriculum_tags) ----
+  async _qbLoadCurriculumForQuestion(q) {
+    const s = this._qbState;
+    if (!s) return;
+    const gradeLevel = (q.grade_level ?? '').toString();
+    const cacheKey = `${q.subject_id}_${gradeLevel}`;
+    if (!(cacheKey in s.curriculumTreeCache)) {
+      const res = await fetch(`/api/admin/question-bank/curriculum?subject_id=${q.subject_id}&grade_level=${encodeURIComponent(gradeLevel)}`);
+      const data = await res.json();
+      s.curriculumTreeCache[cacheKey] = res.ok ? (data.curriculum || []) : [];
+    }
+    s.curriculumTree = s.curriculumTreeCache[cacheKey];
+
+    const res = await fetch(`/api/admin/question-bank/questions/${q.id}/curriculum-tags`);
+    const data = await res.json();
+    s.curriculumTagsState = {};
+    (res.ok ? data.tags || [] : []).forEach(t => {
+      s.curriculumTagsState[t.curriculum_node_id] = { weight: t.weight, isPrimary: t.is_primary, code: t.code, name: t.name };
+    });
+
+    this._qbRenderCurriculumTemaSelect();
+    this._qbRenderCurriculumTaggedRows();
+  },
+
+  _qbRenderCurriculumTemaSelect() {
+    const s = this._qbState;
+    const temaSelect = document.getElementById('qbr-curr-tema-select');
+    if (!s || !temaSelect) return;
+    const tree = s.curriculumTree || [];
+    temaSelect.innerHTML = tree.length
+      ? tree.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
+      : `<option value="">— Bu sınıf/ders için müfredat yok —</option>`;
+    temaSelect.onchange = () => this._qbRenderCurriculumKonuSelect();
+    this._qbRenderCurriculumKonuSelect();
+  },
+
+  _qbRenderCurriculumKonuSelect() {
+    const s = this._qbState;
+    const temaSelect = document.getElementById('qbr-curr-tema-select');
+    const konuSelect = document.getElementById('qbr-curr-konu-select');
+    if (!s || !temaSelect || !konuSelect) return;
+    const tema = (s.curriculumTree || []).find(t => String(t.id) === temaSelect.value);
+    const konular = tema ? (tema.children || []) : [];
+    konuSelect.innerHTML = konular.length
+      ? konular.map(k => `<option value="${k.id}">${k.name}</option>`).join('')
+      : `<option value="">—</option>`;
+    konuSelect.onchange = () => this._qbRenderCurriculumKazanimList();
+    this._qbRenderCurriculumKazanimList();
+  },
+
+  _qbRenderCurriculumKazanimList() {
+    const s = this._qbState;
+    const temaSelect = document.getElementById('qbr-curr-tema-select');
+    const konuSelect = document.getElementById('qbr-curr-konu-select');
+    const wrap = document.getElementById('qbr-curr-kazanim-list');
+    if (!s || !wrap) return;
+    const tema = (s.curriculumTree || []).find(t => String(t.id) === temaSelect.value);
+    const konu = tema ? (tema.children || []).find(k => String(k.id) === konuSelect.value) : null;
+    const kazanimlar = konu ? (konu.children || []) : [];
+    if (!kazanimlar.length) {
+      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Bu konuda kazanım yok.</span>`;
+      return;
+    }
+    wrap.innerHTML = kazanimlar.map(k => {
+      const checked = k.id in s.curriculumTagsState;
+      return `<label style="display:flex;align-items:flex-start;gap:6px;font-size:12.5px;cursor:pointer">
+        <input type="checkbox" class="qbr-curr-check" data-node-id="${k.id}" data-code="${k.code}"
+               data-name="${k.name.replace(/"/g, '&quot;')}" ${checked ? 'checked' : ''} onchange="App._qbToggleCurriculumTag(this)">
+        <span>${k.name}</span>
+      </label>`;
+    }).join('');
+  },
+
+  _qbToggleCurriculumTag(checkbox) {
+    const s = this._qbState;
+    if (!s) return;
+    const nodeId = parseInt(checkbox.dataset.nodeId);
+    if (checkbox.checked) {
+      const hasPrimary = Object.values(s.curriculumTagsState).some(t => t.isPrimary);
+      s.curriculumTagsState[nodeId] = { weight: 0, isPrimary: !hasPrimary, code: checkbox.dataset.code, name: checkbox.dataset.name };
+    } else {
+      delete s.curriculumTagsState[nodeId];
+      const remaining = Object.keys(s.curriculumTagsState);
+      if (remaining.length && !Object.values(s.curriculumTagsState).some(t => t.isPrimary)) {
+        s.curriculumTagsState[remaining[0]].isPrimary = true;
+      }
+    }
+    this._qbAutoBalanceCurriculumWeights();
+  },
+
+  _qbAutoBalanceCurriculumWeights() {
+    const s = this._qbState;
+    if (!s) return;
+    const ids = Object.keys(s.curriculumTagsState);
+    if (ids.length) {
+      const even = Math.floor((1 / ids.length) * 100) / 100;
+      const remainder = Math.round((1 - even * (ids.length - 1)) * 100) / 100;
+      ids.forEach((id, i) => {
+        s.curriculumTagsState[id].weight = i === ids.length - 1 ? remainder : even;
+      });
+    }
+    this._qbRenderCurriculumTaggedRows();
+  },
+
+  _qbRenderCurriculumTaggedRows() {
+    const s = this._qbState;
+    const wrap = document.getElementById('qbr-curr-tagged-rows');
+    if (!s || !wrap) return;
+    const entries = Object.entries(s.curriculumTagsState);
+    wrap.innerHTML = entries.length
+      ? entries.map(([id, t]) => `
+        <div style="display:flex;gap:6px;align-items:center;font-size:12px">
+          <input type="radio" name="qbr-curr-primary" ${t.isPrimary ? 'checked' : ''} onchange="App._qbSetCurriculumPrimary(${id})" title="Birincil kazanım">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.name}">${t.code}</span>
+          <input type="number" class="form-control qbr-curr-weight" data-node-id="${id}" style="width:70px" min="0.01" max="1" step="0.01"
+                 value="${t.weight}" oninput="App._qbUpdateCurriculumWeight(${id}, this.value)">
+          <button class="btn btn-ghost btn-sm" onclick="App._qbRemoveCurriculumTag(${id})" title="Kaldır">🗑️</button>
+        </div>`).join('')
+      : `<span class="text-muted" style="font-size:12px">Henüz kazanım etiketlenmedi.</span>`;
+    this._qbUpdateCurriculumTotal();
+  },
+
+  _qbUpdateCurriculumTotal() {
+    const s = this._qbState;
+    const totalEl = document.getElementById('qbr-curr-total');
+    if (!s || !totalEl) return;
+    const total = Object.values(s.curriculumTagsState).reduce((sum, t) => sum + (parseFloat(t.weight) || 0), 0);
+    totalEl.textContent = `Toplam: ${total.toFixed(2)}`;
+    totalEl.style.color = Math.abs(total - 1) < 0.01 ? 'var(--success)' : (total === 0 ? '' : 'var(--danger)');
+  },
+
+  _qbSetCurriculumPrimary(nodeId) {
+    const s = this._qbState;
+    if (!s) return;
+    Object.keys(s.curriculumTagsState).forEach(id => { s.curriculumTagsState[id].isPrimary = (id == nodeId); });
+    this._qbRenderCurriculumTaggedRows();
+  },
+
+  _qbUpdateCurriculumWeight(nodeId, value) {
+    const s = this._qbState;
+    if (!s || !s.curriculumTagsState[nodeId]) return;
+    s.curriculumTagsState[nodeId].weight = parseFloat(value) || 0;
+    this._qbUpdateCurriculumTotal();
+  },
+
+  _qbRemoveCurriculumTag(nodeId) {
+    const s = this._qbState;
+    if (!s) return;
+    delete s.curriculumTagsState[nodeId];
+    const remaining = Object.keys(s.curriculumTagsState);
+    if (remaining.length && !Object.values(s.curriculumTagsState).some(t => t.isPrimary)) {
+      s.curriculumTagsState[remaining[0]].isPrimary = true;
+    }
+    this._qbRenderCurriculumKazanimList();
+    this._qbRenderCurriculumTaggedRows();
+  },
+
+  async _qbSaveCurriculumTags() {
+    const s = this._qbState;
+    const q = this._qbCurrentQuestion;
+    if (!s || !q) return;
+    const tags = Object.entries(s.curriculumTagsState).map(([id, t]) => ({
+      curriculumNodeId: parseInt(id), weight: parseFloat(t.weight) || 0, isPrimary: !!t.isPrimary,
+    }));
+    try {
+      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/curriculum-tags`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+      UI.toast('Kazanımlar kaydedildi 💾', 'success');
     } catch (err) {
       UI.toast(err.message, 'danger');
     }
