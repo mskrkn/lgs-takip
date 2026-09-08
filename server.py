@@ -2415,10 +2415,41 @@ def api_superadmin_dashboard():
         "AND (SELECT COUNT(*) FROM students s WHERE s.organization_id = o.id) >= o.user_limit * 0.8"
     ).fetchone()["c"]
 
+    # Komuta Merkezi (yeni master prompt, Bölüm 5): "Kullanıcı" KPI kartı için
+    # platform çapında kota kullanımı - SADECE user_limit'i olan okullar dahil
+    # edilir (sınırsız okulların öğrencisi payda/pay'a girmez, aksi halde
+    # kota yüzdesi yapay şekilde düşük görünürdü).
+    quota_row = db.execute(
+        "SELECT COALESCE(SUM(o.user_limit), 0) AS limit_sum, "
+        "COALESCE(SUM((SELECT COUNT(*) FROM students s WHERE s.organization_id = o.id)), 0) AS used_sum "
+        "FROM organizations o WHERE o.user_limit IS NOT NULL"
+    ).fetchone()
+    user_quota = None
+    if quota_row["limit_sum"] > 0:
+        user_quota = {
+            "used": quota_row["used_sum"], "limit": quota_row["limit_sum"],
+            "pct": round(quota_row["used_sum"] / quota_row["limit_sum"] * 100),
+        }
+
+    # Bölüm 7: "Abonelik" KPI kartı - trial'ların ne kadarı yakında bitiyor
+    # (_compute_attention_items'taki 'expiring_trial' ile aynı 7 günlük pencere).
+    soon_cutoff = (datetime.now() + timedelta(days=7)).isoformat()
+    expiring_trial_count = db.execute(
+        "SELECT COUNT(*) c FROM organizations WHERE status='trial' "
+        "AND trial_ends_at IS NOT NULL AND trial_ends_at <= ?", (soon_cutoff,)
+    ).fetchone()["c"]
+
     today = datetime.now().strftime("%Y-%m-%d")
     week_ago = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    prev_week_start = (datetime.now() - timedelta(days=13)).strftime("%Y-%m-%d")
+    month_ago = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d")
     exams_today = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date = ?", (today,)).fetchone()["c"]
     exams_this_week = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date >= ?", (week_ago,)).fetchone()["c"]
+    exams_this_month = db.execute("SELECT COUNT(*) AS c FROM exams WHERE date >= ?", (month_ago,)).fetchone()["c"]
+    exams_prev_week = db.execute(
+        "SELECT COUNT(*) AS c FROM exams WHERE date >= ? AND date < ?", (prev_week_start, week_ago)
+    ).fetchone()["c"]
+    exams_week_change_pct = round((exams_this_week - exams_prev_week) / exams_prev_week * 100) if exams_prev_week else None
 
     recent_exams = db.execute(
         "SELECT e.id, e.name, e.date, o.name AS org_name, "
@@ -2465,8 +2496,12 @@ def api_superadmin_dashboard():
         "totalStudents": total_students,
         "userRoleBreakdown": role_breakdown,
         "schoolsNearLimit": schools_near_limit,
+        "userQuota": user_quota,
+        "expiringTrialCount": expiring_trial_count,
         "examsToday": exams_today,
         "examsThisWeek": exams_this_week,
+        "examsThisMonth": exams_this_month,
+        "examsWeekChangePct": exams_week_change_pct,
         "recentExams": [{
             "id": r["id"], "name": r["name"], "date": r["date"],
             "organizationName": r["org_name"], "participantCount": r["participant_count"],
@@ -2570,11 +2605,16 @@ def api_superadmin_school_rankings():
 @app.route("/api/superadmin/pusi-insights")
 @login_required(role=("admin", "super_admin"), permission="organizations.view")
 def api_superadmin_pusi_insights():
-    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 5): 'Pusi'nin
-    Günlük Analizi' - KURAL TABANLI (gerçek bir LLM çağrısı YOK, bkz.
-    server.py'deki mevcut AI-STUB yorumu, ai.analyze/generate_* ile aynı
-    yaklaşım). Faz A-D'nin ürettiği verilerin üzerine ek bir sorgu katmanı
-    değil, çoğunlukla onların BASİT bir yeniden özetlemesi."""
+    """Komuta Merkezi (Ana Sayfa Geliştirme Önerileri madde 5; yeni master
+    prompt Bölüm 12): 'Pusi'nin Günlük Analizi' - KURAL TABANLI (gerçek bir
+    LLM çağrısı YOK, bkz. server.py'deki mevcut AI-STUB yorumu,
+    ai.analyze/generate_* ile aynı yaklaşım). Faz A-D'nin ürettiği verilerin
+    üzerine ek bir sorgu katmanı değil, çoğunlukla onların BASİT bir yeniden
+    özetlemesi. Her içgörü artık düz metin değil, {category, text, anchor}
+    - category rozet rengini/ikonunu belirler (Fırsat/Risk/Öneri/Başarı/
+    Analiz), anchor (varsa) frontend'de o DOM id'sine scroll eder (bkz.
+    js/schools.js - Pusi ile aynı sayfada oldukları için ayrı bir sayfaya
+    YÖNLENDİRME yok, sadece sayfa içi kaydırma)."""
     db = get_db()
     now = datetime.now()
     this_week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
@@ -2591,9 +2631,11 @@ def api_superadmin_pusi_insights():
     if exams_last_week > 0:
         change_pct = round((exams_this_week - exams_last_week) / exams_last_week * 100)
         if change_pct > 0:
-            insights.append(f"📈 Bu hafta platform kullanımı geçen haftaya göre %{change_pct} arttı.")
+            insights.append({"category": "Fırsat", "anchor": "schools-growth-card",
+                              "text": f"Bu hafta platform kullanımı geçen haftaya göre %{change_pct} arttı."})
         elif change_pct < 0:
-            insights.append(f"📉 Bu hafta platform kullanımı geçen haftaya göre %{abs(change_pct)} azaldı.")
+            insights.append({"category": "Risk", "anchor": "schools-growth-card",
+                              "text": f"Bu hafta platform kullanımı geçen haftaya göre %{abs(change_pct)} azaldı."})
 
     declining_count = db.execute(
         "SELECT COUNT(*) c FROM ("
@@ -2605,7 +2647,8 @@ def api_superadmin_pusi_insights():
         (this_week_start, last_week_start, last_week_end),
     ).fetchone()["c"]
     if declining_count > 0:
-        insights.append(f"⚠️ {declining_count} okulda deneme girişleri geçen haftaya göre ciddi şekilde azaldı.")
+        insights.append({"category": "Risk", "anchor": "schools-rankings-card",
+                          "text": f"{declining_count} okulda deneme girişleri geçen haftaya göre ciddi şekilde azaldı."})
 
     new_school_cutoff = (now - timedelta(days=30)).isoformat()
     new_schools = db.execute(
@@ -2617,7 +2660,8 @@ def api_superadmin_pusi_insights():
     ).fetchone()["c"]
     if new_schools > 0:
         completion_pct = round(new_schools_with_exam / new_schools * 100)
-        insights.append(f"🟢 Son 30 günde kayıt olan okulların %{completion_pct}'i ilk denemesini tamamladı.")
+        insights.append({"category": "Başarı" if completion_pct >= 50 else "Analiz", "anchor": "schools-table-card",
+                          "text": f"Son 30 günde kayıt olan okulların %{completion_pct}'i ilk denemesini tamamladı."})
 
     near_limit_count = db.execute(
         "SELECT COUNT(*) c FROM organizations o WHERE o.user_limit IS NOT NULL "
@@ -2625,10 +2669,12 @@ def api_superadmin_pusi_insights():
         "AND o.status != 'inactive'"
     ).fetchone()["c"]
     if near_limit_count > 0:
-        insights.append(f"💡 {near_limit_count} okulun kullanıcı limiti dolmak üzere - paket yükseltme önerisi yapılabilir.")
+        insights.append({"category": "Öneri", "anchor": "schools-table-card",
+                          "text": f"{near_limit_count} okulun kullanıcı limiti dolmak üzere - paket yükseltme önerisi yapılabilir."})
 
     if not insights:
-        insights.append("✅ Platform genelinde dikkat çeken bir değişiklik yok, her şey yolunda görünüyor.")
+        insights.append({"category": "Analiz", "anchor": None,
+                          "text": "Platform genelinde dikkat çeken bir değişiklik yok, her şey yolunda görünüyor."})
 
     return jsonify(insights)
 

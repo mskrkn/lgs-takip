@@ -91,7 +91,7 @@ const Schools = {
       ${dashboard ? this._renderDashboardSection(dashboard) : ''}
       ${rankings ? this._renderRankings(rankings) : ''}
 
-      <div class="card mt-2" style="border:1px solid rgba(20,184,166,0.3)">
+      <div class="card mt-2" id="schools-table-card" style="border:1px solid rgba(20,184,166,0.3)">
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">🏫</span> Okullar</h3>
         </div>
@@ -215,6 +215,21 @@ const Schools = {
 
   // Madde 5: "Pusi'nin Günlük Analizi" - kural tabanlı (LLM değil, mevcut
   // AI-stub'larla aynı yaklaşım), Faz A-D verisinin basit bir özeti.
+  // Yeni master prompt Bölüm 12: her içgörü artık {category, text, anchor}
+  // - kategori rozeti (Fırsat/Risk/Öneri/Başarı/Analiz) + anchor varsa
+  // tıklanınca aynı sayfada ilgili karta kaydırır (bkz. server.py'deki
+  // api_superadmin_pusi_insights docstring'i).
+  _pusiCategoryMeta(category) {
+    const meta = {
+      'Fırsat': { icon: '📈', color: '#22C55E' },
+      'Risk': { icon: '⚠️', color: '#EF4444' },
+      'Öneri': { icon: '💡', color: '#8B5CF6' },
+      'Başarı': { icon: '🎯', color: '#22C55E' },
+      'Analiz': { icon: '📊', color: '#3B82F6' },
+    };
+    return meta[category] || meta['Analiz'];
+  },
+
   _renderPusiPanel(insights) {
     if (!insights || !insights.length) return '';
     return `
@@ -223,10 +238,29 @@ const Schools = {
           <h3 class="card-title"><span class="card-icon">🧭</span> Pusi'nin Günlük Analizi</h3>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          ${insights.map(text => `<p style="margin:0;font-size:13px">${_schoolsEscapeHtml(text)}</p>`).join('')}
+          ${insights.map(item => {
+            const m = this._pusiCategoryMeta(item.category);
+            const clickable = !!item.anchor;
+            return `
+              <div ${clickable ? `onclick="Schools._scrollToId('${item.anchor}')" style="cursor:pointer"` : ''}
+                   style="display:flex;align-items:flex-start;gap:8px">
+                <span style="flex-shrink:0;font-size:10px;font-weight:800;color:${m.color};background:${m.color}1a;border-radius:99px;padding:2px 8px;white-space:nowrap">${m.icon} ${_schoolsEscapeHtml(item.category)}</span>
+                <p style="margin:0;font-size:13px">${_schoolsEscapeHtml(item.text)}</p>
+              </div>
+            `;
+          }).join('')}
         </div>
       </div>
     `;
+  },
+
+  _scrollToId(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.style.transition = 'box-shadow 0.3s';
+    el.style.boxShadow = '0 0 0 2px rgba(139,92,246,0.6)';
+    setTimeout(() => { el.style.boxShadow = ''; }, 1500);
   },
 
   // Faz H: "Sistem Sağlığı" - basitleştirilmiş sinyal (gerçek CPU/RAM/ağ
@@ -285,7 +319,7 @@ const Schools = {
           </div>`).join('')
       : '<p class="text-muted" style="font-size:13px">Belirgin bir aktivite düşüşü yok.</p>';
     return `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div id="schools-rankings-card" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
         <div class="card">
           <div class="card-header"><h3 class="card-title"><span class="card-icon">🏆</span> Bu Haftanın En Aktif Okulları</h3></div>
           ${topActiveHtml}
@@ -302,6 +336,11 @@ const Schools = {
     const sc = d.schoolCounts;
     const rb = d.userRoleBreakdown || {};
     const roleTooltip = `Öğrenci: ${rb.students ?? 0} · Öğretmen: ${rb.teachers ?? 0} · Okul Yöneticisi: ${rb.schoolAdmins ?? 0} · Platform Admin: ${rb.platformAdmins ?? 0}`;
+    const q = d.userQuota;
+    const quotaColor = q ? (q.pct >= 90 ? '#EF4444' : q.pct >= 70 ? '#F59E0B' : '#22C55E') : null;
+    const changeLine = d.examsWeekChangePct === null || d.examsWeekChangePct === undefined
+      ? ''
+      : `<div class="stat-change" style="color:${d.examsWeekChangePct >= 0 ? '#4ade80' : '#f87171'}">${d.examsWeekChangePct >= 0 ? '📈' : '📉'} Geçen haftaya göre %${Math.abs(d.examsWeekChangePct)} ${d.examsWeekChangePct >= 0 ? 'artış' : 'düşüş'}</div>`;
     return `
       <div class="stats-grid stats-grid-compact">
         <div class="stat-card">
@@ -315,22 +354,31 @@ const Schools = {
           <div class="stat-icon blue">👥</div>
           <div class="stat-value">${d.totalStudents}</div>
           <div class="stat-label">Toplam Öğrenci (Tüm Okullar)</div>
-          <div class="stat-change" style="color:var(--text-muted)">👨‍🏫 ${rb.teachers ?? 0} öğretmen · 🏫 ${rb.schoolAdmins ?? 0} yönetici</div>
+          ${q ? `
+            <div style="margin-top:6px;height:6px;border-radius:99px;background:rgba(255,255,255,0.08);overflow:hidden">
+              <div style="height:100%;width:${Math.min(q.pct, 100)}%;background:${quotaColor}"></div>
+            </div>
+            <div class="stat-change" style="color:${quotaColor}">${q.used}/${q.limit} kota (%${q.pct})</div>
+          ` : `<div class="stat-change" style="color:var(--text-muted)">👨‍🏫 ${rb.teachers ?? 0} öğretmen · 🏫 ${rb.schoolAdmins ?? 0} yönetici</div>`}
         </div>
         <div class="stat-card">
           <div class="stat-icon green">📝</div>
           <div class="stat-value">${d.examsToday}</div>
           <div class="stat-label">Bugün Yapılan Deneme</div>
-          <div class="stat-change" style="color:var(--text-muted)">Bu hafta: ${d.examsThisWeek}</div>
+          <div class="stat-change" style="color:var(--text-muted)">Bu hafta: ${d.examsThisWeek} · Bu ay: ${d.examsThisMonth}</div>
+          ${changeLine}
         </div>
         <div class="stat-card">
-          <div class="stat-icon orange">⚠️</div>
-          <div class="stat-value">${d.schoolsNearLimit}</div>
-          <div class="stat-label">Limite Yaklaşan/Dolu Okul</div>
+          <div class="stat-icon orange">⏱</div>
+          <div class="stat-value">${sc.active}</div>
+          <div class="stat-label">Aktif Abonelik</div>
+          <div class="stat-change" style="color:var(--text-muted)">🔵 ${sc.trial} Trial</div>
+          ${d.expiringTrialCount ? `<div class="stat-change" style="color:#F59E0B">🟡 ${d.expiringTrialCount} trial 7 gün içinde bitiyor</div>` : ''}
         </div>
       </div>
+      ${d.schoolsNearLimit ? `<p class="text-muted mt-2" style="font-size:12px">⚠️ ${d.schoolsNearLimit} okul kullanıcı limitinin %80'ine ulaştı - detay için Dikkat Gerekenler panelini kontrol edin.</p>` : ''}
 
-      <div class="card mt-2">
+      <div class="card mt-2" id="schools-growth-card">
         <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
           <h3 class="card-title"><span class="card-icon">📈</span> Platform Büyümesi</h3>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
