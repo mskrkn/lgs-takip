@@ -31,6 +31,35 @@ def _ocr_page_ratio(doc):
     return ocr_pages, doc.page_count
 
 
+def _column_distribution(doc, page_lines_cache, boilerplate):
+    """FAZ 1.4: her sayfa için tespit edilen sütun sayısını döner -
+    {sutun_sayisi: sayfa_adedi}."""
+    dist = {}
+    for pno in range(doc.page_count):
+        pw, ph = doc[pno].rect.width, doc[pno].rect.height
+        lines, _is_ocr = page_lines_cache[pno]
+        filtered = [
+            (t, b, bl["bbox"]) for t, b, bl in lines
+            if t.strip() not in boilerplate and (bl["bbox"][2] - bl["bbox"][0]) <= pqe._FULL_WIDTH_BLOCK_RATIO * pw
+        ]
+        cd_entries = [e for e in filtered if e[2][3] > ph * pqe._HEADER_BAND_RATIO]
+        n = pqe._detect_column_count(cd_entries, pw)
+        dist[n] = dist.get(n, 0) + 1
+    return dist
+
+
+def _degenerate_crops(questions, min_height=15, min_width=30):
+    """FAZ 1.4/1.5 regresyon kontrolü: neredeyse sıfır boyutlu (bozuk)
+    kırpma dikdörtgeni var mı - sütun/görsel-genişletme mantığındaki bir
+    hata genelde önce burada, soru SAYISI hiç değişmeden ortaya çıkar
+    (bkz. FAZ 1.4 doğrulamasında bulunan gerçek örnek)."""
+    return [
+        (q["number"], q["page"], round(q["rect"].height, 1), round(q["rect"].width, 1))
+        for q in questions
+        if q["rect"].height < min_height or q["rect"].width < min_width
+    ]
+
+
 def diagnose(pdf_path):
     print(f"\n{'='*70}\n{os.path.basename(pdf_path)}\n{'='*70}")
     try:
@@ -51,8 +80,10 @@ def diagnose(pdf_path):
         page_lines_cache = pqe._build_page_lines_cache(doc)
         boilerplate = pqe._detect_boilerplate_lines(doc, page_lines_cache)
         grid_page = pqe._find_grid_answer_key_page(page_lines_cache)
+        col_dist = _column_distribution(doc, page_lines_cache, boilerplate)
     finally:
         doc.close()
+    degenerate = _degenerate_crops(result["questions"])
 
     print(f"  Sayfa sayısı        : {result['page_count']}")
     print(f"  Tespit edilen soru  : {len(result['questions'])}")
@@ -63,6 +94,8 @@ def diagnose(pdf_path):
     print(f"  OCR'a düşen sayfa   : {ocr_pages}/{total_pages}")
     print(f"  Boilerplate satırı  : {len(boilerplate)} tespit edildi"
           f"{' -> ' + repr(sorted(boilerplate)[0]) if boilerplate else ''}")
+    print(f"  Sütun dağılımı      : {col_dist} (sütun_sayısı: sayfa_adedi)")
+    print(f"  Dejenere kırpma     : {degenerate if degenerate else 'yok'}")
     print(f"  Matris cevap sayfası: {grid_page if grid_page is not None else 'yok'}"
           f"{' (subject_name/booklet_code verilirse denenir)' if grid_page is not None else ''}")
 
