@@ -749,6 +749,22 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
         doc.close()
 
 
+def release_pdf_cache():
+    """MuPDF, her fitz.open() çağrısında yazı tipi/görüntü verisini kendi
+    C-seviyesi 'store' önbelleğinde tutar - doc.close() bunu BOŞALTMAZ,
+    sadece dokümanın kendisini kapatır. Bu modüldeki fonksiyonlar tek bir
+    PDF için (özellikle soru başına ayrı render_question_crop çağrısıyla,
+    bkz. server.py'deki kırpma döngüsü) fitz.open()'ı onlarca kez art arda
+    çağırıyor - uzun ömürlü bir gunicorn worker'ında bu önbellek hiç
+    boşalmadan katlanarak büyür (görünüşte bir 'sızıntı', aslında MuPDF'in
+    kasıtlı ama proaktif olarak asla kendiliğinden küçülmeyen önbelleği).
+    server.py, bir PDF'in TÜM işlenmesi bittiğinde (upload/kırpma döngüsü
+    sonrası) bunu bir kez çağırır - sık çağırmak (soru başına) önbelleğin
+    işe yaradığı asıl senaryoyu (aynı dokümanı tekrar tekrar açma) da
+    etkisiz kılıp performansı gereksiz düşürür."""
+    fitz.TOOLS.store_shrink(100)
+
+
 def render_question_crop(pdf_path, page_index, rect, out_path):
     """Tek bir sorunun kırpılmış görüntüsünü PNG olarak diske kaydeder."""
     doc = fitz.open(pdf_path)
