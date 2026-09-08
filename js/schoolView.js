@@ -195,7 +195,10 @@ const SchoolView = {
         <div class="card mt-2">
           <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <h3 class="card-title"><span class="card-icon">🎓</span> Öğrenciler (${data.students.length})</h3>
-            <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddStudentForm(true)">➕ Öğrenci Ekle</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" onclick="SchoolView.toggleAddStudentForm(true)">➕ Öğrenci Ekle</button>
+              <button class="btn btn-secondary btn-sm" onclick="RosterImport.openModal({mode:'server', schoolQuery: SchoolView._schoolQuery(), onDone: () => { SchoolView._overviewCache = null; SchoolView.renderStudents(); }})">📋 Sınıf Listesi PDF Yükle</button>
+            </div>
           </div>
           ${this._addStudentFormHtml()}
           <div id="sv-students-body">${this._gradeCardsHtml(data.students)}</div>
