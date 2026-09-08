@@ -6647,7 +6647,10 @@ def _classify_question_with_ai(db, question_row):
     client = anthropic.Anthropic()
     try:
         response = client.messages.create(
-            model="claude-opus-5",
+            # Bu bir sınıflandırma görevi (JSON alan doldurma), derin
+            # muhakeme gerektirmiyor - Opus yerine çok daha ucuz Haiku
+            # yeterli ve görsel destekliyor (maliyet düşürme kararı).
+            model="claude-haiku-4-5-20251001",
             max_tokens=2048,
             system=system_prompt,
             messages=[{
