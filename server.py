@@ -6414,6 +6414,7 @@ def api_question_bank_upload():
         "questionCount": len(created),
         "answerKeyFound": len(result["answer_key"]) > 0,
         "questions": created,
+        "estimatedSeconds": result.get("estimated_seconds"),
     })
 
 
