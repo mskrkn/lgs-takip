@@ -98,6 +98,7 @@ def diagnose(pdf_path):
     print(f"  Dejenere kırpma     : {degenerate if degenerate else 'yok'}")
     print(f"  Matris cevap sayfası: {grid_page if grid_page is not None else 'yok'}"
           f"{' (subject_name/booklet_code verilirse denenir)' if grid_page is not None else ''}")
+    print(f"  Tahmini işlem süresi: {result['estimated_seconds']:.0f}s (health check, kaba tahmin)")
 
     return {
         "file": os.path.basename(pdf_path),
