@@ -1096,6 +1096,16 @@ def _create_question_bank_tables(conn):
             if col not in qb_cols:
                 conn.execute(f"ALTER TABLE question_bank ADD COLUMN {col} {decl}")
 
+    # grade_level (TEXT, ör. "8") hiç yazılmıyordu - bkz. api_question_bank_upload/
+    # api_question_bank_update. Tam bir FK'ye geçmek (units.grade_level_id ile aynı
+    # desen) yerine TEXT sütun DURUYOR - _smart_select_questions_for_student/
+    # _find_similar_question class_name.split("/")[0] ile üretilen serbest metinle
+    # bu sütunu karşılaştırıyor, INTEGER FK bu eşleşmeyi bozardı. grade_level_id
+    # sadece taksonomi/units bağlantısı (ör. gelecekte ünite listesini sınıfa göre
+    # filtrelemek) için EK bir sütun - ikisi UI'da her zaman birlikte set edilir.
+    if qb_cols and "grade_level_id" not in qb_cols:
+        conn.execute("ALTER TABLE question_bank ADD COLUMN grade_level_id INTEGER REFERENCES grade_levels(id) ON DELETE SET NULL")
+
     topics_cols = [r[1] for r in conn.execute("PRAGMA table_info(topics)").fetchall()]
     if topics_cols and "unit_id" not in topics_cols:
         conn.execute("ALTER TABLE topics ADD COLUMN unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL")
@@ -6427,6 +6437,20 @@ def api_question_bank_upload():
     user_id = session["user_id"]
     org_id = _current_org_id(db)
 
+    # 1.1(a): sınıf seviyesi ZORUNLU DEĞİL (mevcut PDF'ler zaten grade_level'sız
+    # yüklendi, geriye dönük veri bozulmasın) - ama seçilirse tüm batch'e (bir
+    # PDF neredeyse her zaman tek bir sınıf seviyesine ait olduğu için soru-soru
+    # değil batch seviyesinde) aynı değer yazılır. grade_level_id'den TEXT
+    # değeri sunucu tarafında çözülür - iki sütun asla desync olmasın diye
+    # (bkz. 2.2, aynı desen api_question_bank_update'te de kullanılıyor).
+    grade_level_id = request.form.get("grade_level_id", type=int)
+    grade_level = None
+    if grade_level_id:
+        gl_row = db.execute("SELECT name FROM grade_levels WHERE id=?", (grade_level_id,)).fetchone()
+        grade_level = gl_row["name"] if gl_row else None
+        if not gl_row:
+            grade_level_id = None
+
     now = datetime.now().isoformat()
     safe_name = secure_filename(file.filename) or "yuklenen.pdf"
     cur = db.execute(
@@ -6469,11 +6493,11 @@ def api_question_bank_upload():
         answer = result["answer_key"].get(q["number"])
         rect = q["rect"]
         qcur = db.execute(
-            "INSERT INTO question_bank (organization_id, batch_id, subject_id, image_path, "
+            "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, image_path, "
             "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
             "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (org_id, batch_id, subject_id, f"questions/{image_filename}",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (org_id, batch_id, subject_id, grade_level, grade_level_id, f"questions/{image_filename}",
              q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
              answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
         )
@@ -6527,7 +6551,7 @@ def api_question_bank_batch(batch_id):
     if not batch:
         return jsonify({"error": "Bulunamadı."}), 404
     rows = db.execute(
-        "SELECT id, subject_id, grade_level, question_number, source_page_number, crop_x, crop_y, "
+        "SELECT id, subject_id, grade_level, grade_level_id, question_number, source_page_number, crop_x, crop_y, "
         "crop_width, crop_height, correct_answer, correct_answer_source, explanation, "
         "status, topic_id, learning_outcome_id, difficulty_level, question_type, display_code, "
         "difficulty, question_pattern, tags, source, ai_confidence, ai_suggested_json, ai_classified_at, "
@@ -6578,6 +6602,7 @@ def _source_pdf_path(batch_id):
 # yeni bir taksonomi kaydı OLUŞTURMAZ.
 QUESTION_DIFFICULTIES = ("kolay", "orta", "zor")
 QUESTION_PATTERNS = ("islem_sorusu", "problem_sorusu", "yorum_sorusu", "yeni_nesil_soru")
+QUESTION_TYPES = ("coktan_secmeli", "acik_uclu", "dogru_yanlis", "eslestirme")
 
 _AI_CLASSIFIER_SYSTEM_PROMPT = """Sen bir soru sınıflandırma asistanısın. Sana bir soru görseli verilecek.
 Görseldeki soruyu analiz edip SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir açıklama ekleme:
@@ -6840,7 +6865,26 @@ def api_question_bank_ai_classify(question_id):
         ).fetchone()
         return r["id"] if r else None
 
-    topic_id = _match_id("topics", "name", "subject_id", row["subject_id"], suggestion.get("konu"))
+    # 1.2: unite önerisi önceden hiç kullanılmıyordu - units eşleşirse, topic
+    # aramasını sadece subject_id'ye göre değil o unit_id'ye göre de daraltır
+    # (isim çakışması riskini azaltır). unit_id BULUNAMAZSA eski davranışa
+    # (sadece subject_id) düşülür - geriye dönük kırılma olmaz. unit_id
+    # question_bank'e YAZILMAZ (şemada doğrudan sütunu yok, topic_id ->
+    # topics.unit_id üzerinden dolaylı geliyor) - sadece topic eşleşmesini
+    # isabetli hale getirmek için ara adım.
+    unit_id = _match_id("units", "name", "subject_id", row["subject_id"], suggestion.get("unite"))
+    if unit_id:
+        konu_name = suggestion.get("konu")
+        topic_row = (
+            db.execute(
+                "SELECT id FROM topics WHERE subject_id=? AND unit_id=? AND LOWER(name)=LOWER(?)",
+                (row["subject_id"], unit_id, konu_name),
+            ).fetchone()
+            if konu_name else None
+        )
+        topic_id = topic_row["id"] if topic_row else None
+    else:
+        topic_id = _match_id("topics", "name", "subject_id", row["subject_id"], suggestion.get("konu"))
     outcome_id = (
         _match_id("learning_outcomes", "name", "topic_id", topic_id, suggestion.get("beceri"))
         if topic_id else None
@@ -6848,6 +6892,10 @@ def api_question_bank_ai_classify(question_id):
 
     difficulty = suggestion.get("zorluk") if suggestion.get("zorluk") in QUESTION_DIFFICULTIES else None
     question_pattern = suggestion.get("soru_kalibi") if suggestion.get("soru_kalibi") in QUESTION_PATTERNS else None
+    # 1.3: soru_tipi AI önerisinden geliyordu ama hiçbir zaman question_type
+    # sütununa yazılmıyordu - difficulty/question_pattern ile AYNI "zaten
+    # doluysa üzerine yazma" deseni korunur.
+    question_type = suggestion.get("soru_tipi") if suggestion.get("soru_tipi") in QUESTION_TYPES else None
     tags = ",".join(suggestion.get("etiketler") or []) or None
     question_text = (suggestion.get("soru_metni") or "").strip() or None
     now = datetime.now().isoformat()
@@ -6861,6 +6909,8 @@ def api_question_bank_ai_classify(question_id):
         fields.append("difficulty=?"); params.append(difficulty)
     if question_pattern and not row["question_pattern"]:
         fields.append("question_pattern=?"); params.append(question_pattern)
+    if question_type and not row["question_type"]:
+        fields.append("question_type=?"); params.append(question_type)
     if tags and not row["tags"]:
         fields.append("tags=?"); params.append(tags)
     if question_text and not row["question_text"]:
@@ -6966,6 +7016,23 @@ def api_question_bank_update(question_id):
         fields.append("correct_answer_source=?")
         params.append("edited")
 
+    # 1.1(b) + 2.2: grade_level_id (FK) ve grade_level (TEXT, öğrenci eşleştirme
+    # için - bkz. init_db()'deki sütun yorumu) TEK giriş noktasından, AYNI ANDA
+    # set edilir ki iki sütun asla birbirinden kopmasın (correctAnswer/
+    # correct_answer_source ile aynı çift-sütun deseni, yukarıda).
+    if "gradeLevelId" in data:
+        gl_id = data.get("gradeLevelId")
+        gl_name = None
+        if gl_id:
+            gl_row = db.execute("SELECT name FROM grade_levels WHERE id=?", (gl_id,)).fetchone()
+            gl_name = gl_row["name"] if gl_row else None
+            if not gl_row:
+                gl_id = None
+        fields.append("grade_level_id=?")
+        params.append(gl_id)
+        fields.append("grade_level=?")
+        params.append(gl_name)
+
     status = data.get("status")
     if status and status not in _QUESTION_STATUSES:
         return jsonify({"error": "Geçersiz durum."}), 400
@@ -6993,6 +7060,27 @@ def api_question_bank_update(question_id):
         rejection_reason = (data.get("rejectionReason") or "").strip()
         if not rejection_reason:
             return jsonify({"error": "Reddetme gerekçesi zorunlu."}), 400
+
+    # 2.1: yayına almadan önce minimum etiket kontrolü - approved için değil
+    # (hâlâ düzeltilebilir bir ara durum), SADECE published için hard-block
+    # (öğrenciye görünür hale gelen nihai adım). Bu istekte AYNI ANDA
+    # gönderilmiş olabilecek alan güncellemeleri (bkz. _qbSaveFields, admin
+    # panelinde "Yayınla" butonu formdaki TÜM alanları status ile birlikte
+    # tek PATCH'te gönderiyor) satırdaki eski değerin üzerine yazılacağı için,
+    # kontrol `row`'un değil bu isteğin GEÇERLİ OLACAK değerlerine bakar.
+    if status == "published":
+        effective_topic_id = data["topicId"] if "topicId" in data else row["topic_id"]
+        effective_difficulty = data["difficulty"] if "difficulty" in data else row["difficulty"]
+        effective_grade_level = gl_name if "gradeLevelId" in data else row["grade_level"]
+        missing = []
+        if not effective_topic_id:
+            missing.append("konu")
+        if not effective_difficulty:
+            missing.append("zorluk")
+        if not effective_grade_level:
+            missing.append("sınıf seviyesi")
+        if missing:
+            return jsonify({"error": f"Yayınlanmadan önce eksik alanlar tamamlanmalı: {', '.join(missing)}."}), 400
 
     if not fields and not status:
         return jsonify({"error": "Güncellenecek alan gönderilmedi."}), 400

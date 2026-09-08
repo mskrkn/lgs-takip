@@ -2748,6 +2748,10 @@ const App = {
               ${['A', 'B', 'C', 'D', 'E'].map(c => `<option value="${c}">${c}</option>`).join('')}
             </select>
           </div>
+          <div class="form-group" style="max-width:160px;margin-bottom:0">
+            <label class="form-label">Sınıf Seviyesi <span class="text-muted" style="font-weight:400">(ops.)</span></label>
+            <select class="form-select" id="qb-grade-select"><option value="">— Seçilmedi —</option></select>
+          </div>
         </div>
         <div class="drop-zone" id="qb-drop-zone">
           <div class="drop-icon">📄</div>
@@ -2793,6 +2797,19 @@ const App = {
     ImportModule.setupDropZone('qb-drop-zone', 'qb-file-input', (file) => this.uploadQuestionBankPdf(file));
     this.loadQuestionBankBatches();
     this.loadSkills();
+    this._loadQbGradeLevels();
+  },
+
+  async _loadQbGradeLevels() {
+    const sel = document.getElementById('qb-grade-select');
+    if (!sel) return;
+    try {
+      const res = await fetch('/api/admin/question-bank/grade-levels');
+      const data = await res.json();
+      if (!res.ok) return;
+      sel.innerHTML = `<option value="">— Seçilmedi —</option>` +
+        (data.gradeLevels || []).map(g => `<option value="${g.id}">${g.name}. Sınıf</option>`).join('');
+    } catch (_) { /* opsiyonel alan - sessizce vazgeç */ }
   },
 
   async proposeSkill() {
@@ -2977,12 +2994,14 @@ const App = {
     }
     const subjectCode = document.getElementById('qb-subject-select').value;
     const bookletCode = document.getElementById('qb-booklet-select').value;
+    const gradeLevelId = document.getElementById('qb-grade-select')?.value || '';
     statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (birkaç saniye sürebilir)</p>`;
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('subject_code', subjectCode);
     formData.append('booklet_code', bookletCode);
+    if (gradeLevelId) formData.append('grade_level_id', gradeLevelId);
 
     try {
       const res = await fetch('/api/admin/question-bank/upload', { method: 'POST', body: formData });
@@ -3165,6 +3184,7 @@ const App = {
         contextUrl: null, pageWidthPt: 0, pageHeightPt: 0, cropRect: null, cropDrag: null,
         topicsCache: {}, outcomesCache: {}, bookletRows: [],
         curriculumTreeCache: {}, curriculumTree: [], curriculumTagsState: {},
+        gradeLevelsCache: null,
       };
       this._qbMount();
       await this._qbShowCurrent();
@@ -3220,6 +3240,10 @@ const App = {
                   <select class="form-select" id="qbr-outcome-select" style="flex:1"></select>
                   <button class="btn btn-secondary btn-sm" onclick="App._qbAddOutcome()" title="Yeni kazanım ekle">➕</button>
                 </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Sınıf Seviyesi</label>
+                <select class="form-select" id="qbr-grade-select"><option value="">— Seçilmedi —</option></select>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div class="form-group">
@@ -3423,6 +3447,8 @@ const App = {
     if (approveBtn) { approveBtn.disabled = !!q.isOwn; approveBtn.title = q.isOwn ? 'Kendi sorunuzu onaylayamazsınız - başka bir yetkili incelemeli.' : ''; }
     if (rejectBtn) { rejectBtn.disabled = !!q.isOwn; rejectBtn.title = q.isOwn ? 'Kendi sorunuzu reddedemezsiniz - başka bir yetkili incelemeli.' : ''; }
 
+    await this._qbLoadGradeLevels();
+    document.getElementById('qbr-grade-select').value = q.grade_level_id || '';
     document.getElementById('qbr-difficulty-select').value = q.difficulty_level || '';
     document.getElementById('qbr-answer-select').value = q.correct_answer || '';
     document.getElementById('qbr-type-select').value = q.question_type || '';
@@ -3924,6 +3950,19 @@ const App = {
     }
   },
 
+  async _qbLoadGradeLevels() {
+    const s = this._qbState;
+    const select = document.getElementById('qbr-grade-select');
+    if (!s || !select) return;
+    if (!s.gradeLevelsCache) {
+      const res = await fetch('/api/admin/question-bank/grade-levels');
+      const data = await res.json();
+      s.gradeLevelsCache = res.ok ? (data.gradeLevels || []) : [];
+    }
+    select.innerHTML = `<option value="">— Seçilmedi —</option>` +
+      s.gradeLevelsCache.map(g => `<option value="${g.id}">${g.name}. Sınıf</option>`).join('');
+  },
+
   async _qbLoadTopics(subjectId, selectedId) {
     const s = this._qbState;
     const select = document.getElementById('qbr-topic-select');
@@ -4017,6 +4056,7 @@ const App = {
     const payload = {
       topicId: parseInt(document.getElementById('qbr-topic-select').value) || null,
       learningOutcomeId: parseInt(document.getElementById('qbr-outcome-select').value) || null,
+      gradeLevelId: parseInt(document.getElementById('qbr-grade-select').value) || null,
       difficultyLevel: parseInt(document.getElementById('qbr-difficulty-select').value) || null,
       questionType: document.getElementById('qbr-type-select').value || null,
       correctAnswer: document.getElementById('qbr-answer-select').value || null,
@@ -4036,8 +4076,10 @@ const App = {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
 
+      const selectedGradeName = document.getElementById('qbr-grade-select').selectedOptions[0]?.textContent.replace('. Sınıf', '') || null;
       Object.assign(q, {
         topic_id: payload.topicId, learning_outcome_id: payload.learningOutcomeId,
+        grade_level_id: payload.gradeLevelId, grade_level: payload.gradeLevelId ? selectedGradeName : null,
         difficulty_level: payload.difficultyLevel, question_type: payload.questionType,
         correct_answer: payload.correctAnswer, explanation: payload.explanation,
         difficulty: payload.difficulty, question_pattern: payload.questionPattern, tags: payload.tags,
