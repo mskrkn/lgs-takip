@@ -793,6 +793,7 @@ const App = {
         <div style="display:flex;flex-wrap:wrap;gap:10px">
           <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('users')">👤 Kullanıcı Ekle</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.showAddExamModal()">📝 Yeni Deneme</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('import')">📥 Veri Girişi</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('question-bank')">📝 Soru Girişi</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('reports')">📊 Rapor Oluştur</button>
@@ -841,6 +842,7 @@ const App = {
         <div style="display:flex;flex-wrap:wrap;gap:10px">
           <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentModal()">➕ Öğrenci Ekle</button>
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('import')">📥 Veri Girişi</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('students')">⚠️ Hataları Görüntüle</button>
         </div>
       </div>
 
