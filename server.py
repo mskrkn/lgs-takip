@@ -7833,11 +7833,30 @@ def main():
 
 # gunicorn "server:app" ile MODUL olarak import eder, __name__ != "__main__"
 # olur - bu yuzden os.chdir/init_db() burada, kosulsuz, modul yuklenirken
-# calisir (gunicorn --preload olmadan HER worker sureci modulu kendi basina
-# import eder, yani init_db() worker sayisi kadar calisir - zararsiz, tum
-# ifadeler CREATE TABLE IF NOT EXISTS / idempotent ALTER TABLE'dir).
+# calisir. --preload olmadan HER worker sureci modulu kendi basina import
+# eder (init_db() worker sayisi kadar calisir) - TEK TEK calistiginda
+# zararsiz (CREATE TABLE IF NOT EXISTS / idempotent ALTER TABLE), ama AYNI
+# ANDA calisirlarsa yarisiyorlar: "if col not in cols: ALTER TABLE" gibi
+# check-then-act desenlerinde iki worker de sutunu "yok" gorup ikisi de
+# eklemeye kalkinca "duplicate column name" / "database is locked" ile
+# worker cokup gunicorn'un onu yeniden baslatmasina yol aciyordu (uretimde
+# 2026-09-08'de uc ayri deploy'da gozlemlendi - systemd her seferinde
+# otomatik toparladi, veri kaybi olmadi, ama birkac saniyelik kesinti
+# riski var). Dosya kilidi (fcntl.flock, POSIX - uretim/staging Linux VM)
+# init_db()'yi TEK SEFERDE bir worker'a kilitler; digerleri kilidi
+# beklerken sema zaten guncellenmis olur, onlarin kendi init_db()
+# cagrilari da idempotent kontroller sayesinde hizli birer no-op'a doner.
 os.chdir(BASE_DIR)
-init_db()
+try:
+    import fcntl
+    with open(os.path.join(BASE_DIR, ".init_db.lock"), "w") as _init_db_lock_file:
+        fcntl.flock(_init_db_lock_file, fcntl.LOCK_EX)
+        init_db()
+        fcntl.flock(_init_db_lock_file, fcntl.LOCK_UN)
+except ImportError:
+    # fcntl Windows'ta yok - yerel gelistirmede tek surec (python server.py)
+    # calistigi icin zaten yaris riski olmuyor, kilide gerek yok.
+    init_db()
 
 if __name__ == "__main__":
     main()

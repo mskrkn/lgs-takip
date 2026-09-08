@@ -32,6 +32,10 @@ tunnel_hata.txt
 yetki_veritabani.db
 .flask_secret_key
 
+# gunicorn worker'ları arasında init_db()'yi tek sıraya sokan dosya kilidi -
+# içeriği yok, sadece fcntl.flock için bir tutamaç (bkz. server.py init_db() çağrısı üstündeki not)
+.init_db.lock
+
 # Üçüncü taraf optik okuyucu tarayıcı yazılımı ayar dosyaları (referans
 # amaçlı tutuluyor, uygulamanın çalışması için gerekli değil, dağıtılmaması
 # daha uygun - bkz. js/optikProfiles.js üstündeki not)
