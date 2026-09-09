@@ -2732,6 +2732,11 @@ const App = {
   // tıklayınca _qbOpenReview açılır: tam boyut önizleme + elle kırpma
   // düzeltme + konu/kazanım/zorluk girme + onayla/hariç tut.
   async renderQuestionBank() {
+    // Sayfadan ayrılıp geri dönüldüğünde eski liste-yenileme döngüsü hâlâ
+    // çalışıyorsa (bkz. loadQuestionBankBatches) iki döngünün üst üste
+    // binmemesi için durdur - loadQuestionBankBatches zaten kendi eski
+    // timer'ını temizler, bu sadece ekstra güvence.
+    if (this._qbListPollTimer) { clearTimeout(this._qbListPollTimer); this._qbListPollTimer = null; }
     const container = document.getElementById('page-question-bank');
     const subjectOptionsHtml = Object.keys(SUBJECT_SETS).map(examType => {
       const opts = SUBJECT_SETS[examType]
@@ -2930,20 +2935,132 @@ const App = {
     }
   },
 
+  // Yükleme artık asenkron (bkz. uploadQuestionBankPdf): POST istek hemen
+  // batchId ile döner, gerçek OCR arka planda çalışır. İlerleme (gerçek
+  // sayfa sayısı, hem de iptal) bu LİSTE üzerinden takip edilir - ayrı bir
+  // sayfa-içi poll döngüsü değil, çünkü kalıcılığı DB sağlıyor (bkz.
+  // server.py pages_processed/cancel_requested): sekme kapatılıp saatler
+  // sonra bu sayfaya dönülse bile, hâlâ 'processing' bir set varsa liste
+  // kendini otomatik yeniler - kullanıcının "az önce ben mi yükledim" olup
+  // olmadığına bakmaz, DB'deki gerçek duruma bakar.
+  _qbListPollTimer: null,
+  _qbListPollCount: 0,
+  _qbJustUploadedBatchId: null,
+
   async loadQuestionBankBatches() {
     const listEl = document.getElementById('qb-batch-list');
-    if (!listEl) return;
+    if (this._qbListPollTimer) { clearTimeout(this._qbListPollTimer); this._qbListPollTimer = null; }
+    if (!listEl) return; // sayfadan ayrılınmış - döngüyü burada durdur
     try {
       const res = await fetch('/api/admin/question-bank/batches');
       const data = await res.json();
-      if (!data.batches || !data.batches.length) {
+      const batches = data.batches || [];
+      if (!batches.length) {
         listEl.innerHTML = `<p class="text-muted">Henüz PDF yüklenmemiş.</p>`;
-        return;
+      } else {
+        listEl.innerHTML = batches.map(b => this._qbRenderBatchRow(b)).join('');
       }
-      listEl.innerHTML = data.batches.map(b => `
+
+      // Az önce BU sekmeden yüklenen batch bitti mi? (toast + otomatik inceleme)
+      // 'queued' de HENÜZ BİTMEMİŞ sayılır (bkz. proje notu - basit DB
+      // kuyruğu) - aksi halde kuyrukta bekleyen bir iş "bitti" sanılıp
+      // _qbJustUploadedBatchId erkenden sıfırlanır, iş gerçekten bitince
+      // toast/otomatik inceleme açma hiç tetiklenmez.
+      if (this._qbJustUploadedBatchId) {
+        const mine = batches.find(b => b.id === this._qbJustUploadedBatchId);
+        if (mine && mine.status !== 'processing' && mine.status !== 'queued') {
+          if (mine.status === 'ready_for_review') {
+            UI.toast(`✅ ${mine.source_filename}: ${mine.question_count} soru tespit edildi.`, 'success');
+            this._qbShowBatchGrid(mine.id);
+          } else if (mine.status === 'cancelled') {
+            UI.toast('İşlem iptal edildi.', 'warning');
+          } else if (mine.status === 'failed') {
+            UI.toast('İşlem başarısız: ' + (mine.error_message || 'bilinmeyen hata'), 'danger');
+          }
+          this._qbJustUploadedBatchId = null;
+        }
+      }
+
+      const anyProcessing = batches.some(b => b.status === 'processing' || b.status === 'queued');
+      if (anyProcessing) {
+        this._qbListPollCount++;
+        // ~30dk üst sınır (3s * 600) - sunucu tarafında worker çökse bile
+        // sekme sonsuza dek ağ trafiği üretmesin (çok nadir bir durum,
+        // normalde her batch er ya da geç 'ready_for_review'/'failed'/
+        // 'cancelled' olur).
+        if (this._qbListPollCount < 600) {
+          this._qbListPollTimer = setTimeout(() => this.loadQuestionBankBatches(), 3000);
+        }
+      } else {
+        this._qbListPollCount = 0;
+      }
+    } catch (err) {
+      if (listEl) listEl.innerHTML = `<p style="color:var(--danger)">Set listesi yüklenemedi: ${err.message}</p>`;
+    }
+  },
+
+  _qbRenderBatchRow(b) {
+    const bookletLabel = `<span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span>`;
+    if (b.status === 'queued') {
+      // Basit DB-tabanli kuyruk (bkz. proje notu): eskiden bu durum hic
+      // yoktu, ikinci bir yukleme 240s sonra duz bir hataya dusuyordu.
+      const ahead = b.queue_position || 0;
+      const aheadText = ahead > 0 ? `önünüzde ${ahead} iş var` : 'sırada, az sonra başlayacak';
+      return `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
           <div>
-            <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
+            <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
+            <div class="text-muted" style="font-size:12.5px">🕒 Kuyrukta — ${aheadText} • ${UI.formatDate(b.created_at)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="App._qbCancelUpload(${b.id})">✖ İptal Et</button>
+        </div>`;
+    }
+    if (b.status === 'processing') {
+      const total = b.page_count;
+      const done = b.pages_processed || 0;
+      const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      const progressText = total ? `Sayfa ${done} / ${total} işlendi` : 'Başlıyor...';
+      const cancelling = !!b.cancel_requested;
+      return `
+        <div style="padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
+              <div class="text-muted" style="font-size:12.5px">
+                ${cancelling ? '✖ İptal ediliyor...' : '⏳ ' + progressText} • ${UI.formatDate(b.created_at)}
+              </div>
+              <div style="background:rgba(255,255,255,0.08);border-radius:4px;height:6px;margin-top:6px;overflow:hidden">
+                <div style="background:var(${cancelling ? '--warning' : '--accent-primary'});height:100%;width:${pct}%;transition:width .3s"></div>
+              </div>
+            </div>
+            <button class="btn btn-danger btn-sm" ${cancelling ? 'disabled' : ''} onclick="App._qbCancelUpload(${b.id})">✖ İptal Et</button>
+          </div>
+        </div>`;
+    }
+    if (b.status === 'failed') {
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
+            <div style="font-size:12.5px;color:var(--danger)">❌ ${b.error_message || 'Yükleme başarısız'} • ${UI.formatDate(b.created_at)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, 0, 0)" title="Bu seti sil">🗑️</button>
+        </div>`;
+    }
+    if (b.status === 'cancelled') {
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
+            <div class="text-muted" style="font-size:12.5px">✖ İptal edildi • ${UI.formatDate(b.created_at)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, 0, 0)" title="Bu seti sil">🗑️</button>
+        </div>`;
+    }
+    return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
             <div class="text-muted" style="font-size:12.5px">
               ${b.question_count} soru • ${UI.formatDate(b.created_at)}
               ${b.pending_count > 0 ? ` • <span style="color:var(--warning)">${b.pending_count} onay bekliyor</span>` : ' • tümü incelendi'}
@@ -2957,10 +3074,7 @@ const App = {
             <button class="btn btn-secondary btn-sm" onclick="App._qbShowBatchGrid(${b.id})">🔍 İncele</button>
             <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, ${b.question_count}, ${b.approved_count || 0})" title="Bu seti sil">🗑️</button>
           </div>
-        </div>`).join('');
-    } catch (err) {
-      listEl.innerHTML = `<p style="color:var(--danger)">Set listesi yüklenemedi: ${err.message}</p>`;
-    }
+        </div>`;
   },
 
   async deleteQuestionBankBatch(batchId, questionCount, approvedCount) {
@@ -2999,16 +3113,14 @@ const App = {
   async uploadQuestionBankPdf(file) {
     const statusEl = document.getElementById('qb-status');
     const resultsEl = document.getElementById('qb-results');
-    const dropZone = document.getElementById('qb-drop-zone');
 
-    // Taranmış/OCR gerektiren PDF'ler 3-4 dakikaya kadar sürebiliyor -
-    // bu süre boyunca yükleme alanı kilitlenir ki sabırsızlanıp tekrar
-    // tıklamak ya da sayfayı yenileyip tekrar denemek (eskiden her
-    // denemede boş bir "hayalet" set biriktiriyordu) mümkün olmasın.
-    if (this._qbUploadInProgress) {
-      UI.toast('Bir PDF zaten işleniyor, lütfen tamamlanmasını bekleyin.', 'warning');
-      return;
-    }
+    // İstek artık HEMEN döner (batch 'processing' ya da meşgulse 'queued'
+    // durumunda oluşturulup gerçek OCR - hemen ya da sırası gelince - arka
+    // planda başlar) - bu kısa süreli kilit sadece aynı dosyanın çift
+    // tıklama/çift drop ile iki kez POST edilmesini önler, eşzamanlılık
+    // sınırını (aynı anda en fazla 2 "processing"+"queued" batch) zaten
+    // sunucu (429) uyguluyor.
+    if (this._qbUploadInProgress) return;
     resultsEl.innerHTML = '';
 
     if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
@@ -3018,9 +3130,8 @@ const App = {
     const subjectCode = document.getElementById('qb-subject-select').value;
     const bookletCode = document.getElementById('qb-booklet-select').value;
     const gradeLevelId = document.getElementById('qb-grade-select')?.value || '';
-    statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... Taranmış sayfalarda bu <b>birkaç dakika</b> sürebilir, sayfayı yenilemeden bekleyin.</p>`;
     this._qbUploadInProgress = true;
-    if (dropZone) { dropZone.style.opacity = '0.5'; dropZone.style.pointerEvents = 'none'; }
+    statusEl.innerHTML = `<p class="text-muted">⏳ Yükleniyor...</p>`;
 
     const formData = new FormData();
     formData.append('file', file);
@@ -3031,30 +3142,29 @@ const App = {
     try {
       const res = await fetch('/api/admin/question-bank/upload', { method: 'POST', body: formData });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Yükleme başarısız.');
-
-      statusEl.innerHTML = `<p style="color:var(--success)">✅ ${data.questionCount} soru tespit edildi
-        (${data.pageCount} sayfa)${data.answerKeyFound ? ', cevap anahtarı da bulundu' : ''}.
-        Hepsi <b>onay bekliyor</b> durumunda havuza eklendi. Aşağıdan tıklayarak inceleyin.</p>`;
-
-      resultsEl.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:14px">
-          ${data.questions.map((q, i) => `
-            <div class="card qb-thumb" style="padding:8px;text-align:center;margin-top:0;cursor:pointer" onclick="App.openBatchReview(${data.batchId}, ${i})">
-              <div style="width:100%;height:150px;border-radius:8px;border:1px solid var(--bg-glass-border);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;overflow:hidden">
-                <img src="${q.imageUrl}" alt="Soru ${q.number}" loading="lazy" style="max-width:100%;max-height:100%;object-fit:contain">
-              </div>
-              <div style="margin-top:6px;font-weight:700;font-size:13px">Soru ${q.number}</div>
-              ${q.correctAnswer ? `<div style="font-size:11.5px;color:var(--text-muted)">Cevap: ${q.correctAnswer}</div>` : ''}
-            </div>`).join('')}
-        </div>`;
-
-      this.loadQuestionBankBatches();
+      if (!res.ok) throw new Error(data.error || 'Yükleme başlatılamadı.');
+      this._qbJustUploadedBatchId = data.batchId;
+      statusEl.innerHTML = `<p class="text-muted">⏳ İşleme alındı - ilerlemeyi aşağıdaki "Yüklenen Setler" listesinden takip edebilirsiniz.</p>`;
+      this.loadQuestionBankBatches(); // hemen listeye ekle, otomatik yenileme başlasın
     } catch (err) {
       statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
     } finally {
       this._qbUploadInProgress = false;
-      if (dropZone) { dropZone.style.opacity = ''; dropZone.style.pointerEvents = ''; }
+    }
+  },
+
+  async _qbCancelUpload(batchId) {
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}/cancel`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'İptal edilemedi.');
+      // Sunucu ANINDA durmaz - bir sonraki sayfa kontrol noktasında
+      // kendini durdurur (bkz. server.py). Liste bunu birkaç saniye
+      // içinde "✖ İptal ediliyor..." / sonra "✖ İptal edildi" olarak
+      // gösterecek, zaten otomatik yenileniyor.
+      this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast('İptal edilemedi: ' + err.message, 'danger');
     }
   },
 
@@ -3113,6 +3223,7 @@ const App = {
             <button class="btn btn-ghost btn-sm" onclick="App._qbGridSelectNone()">Seçimi Temizle</button>
             <span class="text-muted" style="font-size:12.5px">${s.selected.size} seçili</span>
             <span style="flex:1"></span>
+            <button class="btn btn-secondary btn-sm" onclick="App._qbGridShowBulkTag()">🏷️ Toplu Etiketle</button>
             <button class="btn btn-primary btn-sm" onclick="App._qbGridBulk('approved')">✅ Seçilenleri Onayla</button>
             <button class="btn btn-danger btn-sm" onclick="App._qbGridBulk('excluded')">🚫 Seçilenleri Hariç Tut</button>
           </div>
@@ -3180,6 +3291,113 @@ const App = {
       s.selected.clear();
       await this._qbShowBatchGrid(s.batchId);
       this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  // ---- Toplu Etiketleme (P0 madde 1, soru-havuzu-etiketleme-prompt.md) ----
+  // Bir batch'teki sorular cogunlukla ayni ders+sinif+genelde ayni unite -
+  // tek tek her soruda konu/sinif/zorluk secmek yerine secili sorulara TEK
+  // seferde uygulanabilir. onlyIfEmpty checkbox'i (varsayilan isaretli)
+  // zaten doldurulmus alanlarin uzerine SESSIZCE yazilmasini engeller -
+  // bkz. api_question_bank_bulk_tag'deki ayni ilke.
+  async _qbGridShowBulkTag() {
+    const s = this._qbGridState;
+    if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
+    const subjectId = s.questions[0]?.subject_id;
+    const [topicsRes, gradesRes] = await Promise.all([
+      fetch(`/api/admin/question-bank/topics?subject_id=${subjectId}`),
+      fetch('/api/admin/question-bank/grade-levels'),
+    ]);
+    const topics = (await topicsRes.json()).topics || [];
+    const gradeLevels = (await gradesRes.json()).gradeLevels || [];
+
+    const overlay = document.createElement('div');
+    overlay.id = 'qb-bulktag-overlay';
+    overlay.className = 'modal-overlay active';
+    overlay.style.zIndex = '1100';
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <h2>🏷️ Toplu Etiketle <span class="text-muted" style="font-weight:400;font-size:13px">(${s.selected.size} soru)</span></h2>
+          <button class="modal-close" onclick="document.getElementById('qb-bulktag-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Konu <span class="text-muted" style="font-weight:400">(boş bırakılırsa değiştirilmez)</span></label>
+            <select class="form-select" id="qb-bulktag-topic">
+              <option value="">— Değiştirme —</option>
+              ${topics.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Sınıf Seviyesi</label>
+            <select class="form-select" id="qb-bulktag-grade">
+              <option value="">— Değiştirme —</option>
+              ${gradeLevels.map(g => `<option value="${g.id}">${g.name}. Sınıf</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Zorluk</label>
+            <select class="form-select" id="qb-bulktag-difficulty">
+              <option value="">— Değiştirme —</option>
+              <option value="1">1 - Çok Kolay</option>
+              <option value="2">2 - Kolay</option>
+              <option value="3">3 - Orta</option>
+              <option value="4">4 - Zor</option>
+              <option value="5">5 - Çok Zor</option>
+            </select>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer">
+            <input type="checkbox" id="qb-bulktag-only-empty" checked>
+            <span style="font-size:13px">Sadece bu alanı BOŞ olan sorulara uygula (zaten girilmiş değerlerin üzerine yazma)</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="document.getElementById('qb-bulktag-overlay').remove()">İptal</button>
+          <button class="btn btn-primary" onclick="App._qbGridApplyBulkTag()">Uygula</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  },
+
+  async _qbGridApplyBulkTag() {
+    const s = this._qbGridState;
+    if (!s) return;
+    const topicId = document.getElementById('qb-bulktag-topic').value;
+    const gradeLevelId = document.getElementById('qb-bulktag-grade').value;
+    const difficultyLevel = document.getElementById('qb-bulktag-difficulty').value;
+    const onlyIfEmpty = document.getElementById('qb-bulktag-only-empty').checked;
+    if (!topicId && !gradeLevelId && !difficultyLevel) {
+      UI.toast('En az bir alan seçin.', 'warning');
+      return;
+    }
+    // "Hepsinin üzerine yaz" bilerek seçildiğinde ekstra bir onay iste -
+    // geri alınamaz bir toplu değişiklik, tek tıkla kazara tetiklenmesin.
+    if (!onlyIfEmpty) {
+      const ok = await UI.confirm(
+        `Bu, seçili ${s.selected.size} sorunun ilgili alanlarını, ZATEN GİRİLMİŞ olsalar bile üzerine yazacak. Emin misiniz?`,
+        '⚠️ Üzerine Yaz'
+      );
+      if (!ok) return;
+    }
+    const body = { questionIds: Array.from(s.selected), onlyIfEmpty };
+    if (topicId) body.topicId = parseInt(topicId);
+    if (gradeLevelId) body.gradeLevelId = parseInt(gradeLevelId);
+    if (difficultyLevel) body.difficultyLevel = parseInt(difficultyLevel);
+    try {
+      const res = await fetch('/api/admin/question-bank/questions/bulk-tag', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Uygulanamadı.');
+      const skipMsg = data.skippedFilled ? ` (${data.skippedFilled} soru hiçbir alanı uygun olmadığı için atlandı)` : '';
+      UI.toast(`${data.updated} soru güncellendi.${skipMsg}`, 'success');
+      document.getElementById('qb-bulktag-overlay')?.remove();
+      await this._qbShowBatchGrid(s.batchId);
     } catch (err) {
       UI.toast(err.message, 'danger');
     }
@@ -3343,6 +3561,7 @@ const App = {
                 <div id="qbr-skills-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
                 <div style="display:flex;gap:6px;align-items:center">
                   <span id="qbr-skills-total" class="text-muted" style="font-size:12px"></span>
+                  <button class="btn btn-ghost btn-sm" onclick="App._qbEqualDistributeSkillWeights()" title="İşaretli becerilere eşit ağırlık dağıt">⚖️ Eşit Dağıt</button>
                   <button class="btn btn-secondary btn-sm" onclick="App._qbSaveSkills()">💾 Becerileri Kaydet</button>
                 </div>
               </div>
@@ -3495,7 +3714,7 @@ const App = {
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
-    await this._qbLoadSkillsForQuestion(q.id);
+    await this._qbLoadSkillsForQuestion(q.id, q.subject_id);
     await this._qbLoadCurriculumForQuestion(q);
   },
 
@@ -3514,11 +3733,100 @@ const App = {
     if (hintEl) {
       const s = q.ai_suggested_json;
       if (!s) { hintEl.innerHTML = ''; return; }
+      // NOT: "beceri" alanı burada AI sınıflandırıcının JSON çıktısındaki
+      // tarihsel isim - gerçekte bir KAZANIM (learning_outcome) önerisidir,
+      // question_skills tablosundaki gerçek "beceri" (Problem Çözme gibi
+      // ders-kesişen yetenek) kavramıyla KARIŞTIRILMAMALI. API sözleşmesini
+      // kırmamak için JSON alan adı "beceri" olarak bırakıldı, sadece
+      // UI etiketi düzeltildi.
+      //
+      // topic_id/learning_outcome_id (q.topic_id/q.learning_outcome_id)
+      // artık kullanılmıyor - gerçek etiketleme question_curriculum_tags
+      // üzerinden çoklu/ağırlıklı (bkz. _qbLoadCurriculumForQuestion). Bu
+      // yüzden "zaten etiketlenmiş mi" kontrolü o state'e (curriculumTagsState)
+      // bakar, hep-null olan eski kolonlara değil.
+      const currentTags = (this._qbState && this._qbState.curriculumTagsState) || {};
+      const alreadyTagged = (name) => Object.values(currentTags).some(
+        t => _qbNormalizeCurriculumName(t.name) === _qbNormalizeCurriculumName(name)
+      );
+      // data-* + &quot; kaçışı (JSON.stringify DEĞİL) - onclick="..." zaten
+      // çift tırnakla sınırlı bir HTML attribute'u, JSON.stringify'ın
+      // ÜRETTİĞİ çift tırnaklar bu attribute'u erken kapatıp geri kalan
+      // metni HTML olarak sızdırıyordu (buton hiç görünmüyordu - gerçek
+      // olayla doğrulandı). Aynı desen zaten _qbRenderCurriculumKazanimList'te
+      // (data-name="...".replace(/"/g,'&quot;')) kullanılıyor, burada da
+      // aynısı uygulandı.
+      const esc = (t) => (t || '').replace(/"/g, '&quot;');
       const lines = [];
-      if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> (henüz mevcut ünite listesinde eşleşme yoksa otomatik bağlanmaz)`);
-      if (s.konu && !q.topic_id) lines.push(`Konu önerisi: <b>${s.konu}</b>`);
-      if (s.beceri && !q.learning_outcome_id) lines.push(`Beceri önerisi: <b>${s.beceri}</b>`);
+      if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="tema" data-suggestion="${esc(s.unite)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
+      if (s.konu && !alreadyTagged(s.konu)) {
+        lines.push(`Konu önerisi: <b>${s.konu}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="konu" data-suggestion="${esc(s.konu)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
+      }
+      if (s.beceri && !alreadyTagged(s.beceri)) {
+        lines.push(`Kazanım önerisi: <b>${s.beceri}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="kazanim" data-suggestion="${esc(s.beceri)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
+      }
       hintEl.innerHTML = lines.length ? lines.map(l => `<div>💡 ${l}</div>`).join('') : '';
+    }
+  },
+
+  // AI'nin önerdiği konu/kazanım METNİNİ, o soru için zaten yüklenmiş
+  // müfredat ağacında (bkz. _qbLoadCurriculumForQuestion) arayıp eşleşeni
+  // bulur - bulursa tema/konu select'lerini oraya götürür ve (kazanım
+  // için) ilgili kutucuğu işaretler. Otomatik/sessiz YAZMA yok - admin
+  // hâlâ "Kullan" butonuna tıklamalı (AI hiçbir zaman sessizce taksonomi
+  // atamaz ilkesiyle tutarlı).
+  _qbUseAiCurriculumSuggestion(level, suggestionText) {
+    const s = this._qbState;
+    if (!s) return;
+    const target = _qbNormalizeCurriculumName(suggestionText);
+    const tree = s.curriculumTree || [];
+    if (level === 'tema') {
+      const match = tree.find(tema => _qbNormalizeCurriculumName(tema.name) === target);
+      if (match) {
+        this._qbSelectCurriculumPath(match.id);
+        return;
+      }
+      UI.toast('Müfredat ağacında eşleşen bir kayıt bulunamadı - elle seçebilirsiniz.', 'warning');
+      return;
+    }
+    for (const tema of tree) {
+      for (const konu of (tema.children || [])) {
+        if (level === 'konu' && _qbNormalizeCurriculumName(konu.name) === target) {
+          this._qbSelectCurriculumPath(tema.id, konu.id);
+          return;
+        }
+        if (level === 'kazanim') {
+          const match = (konu.children || []).find(k => _qbNormalizeCurriculumName(k.name) === target);
+          if (match) {
+            this._qbSelectCurriculumPath(tema.id, konu.id);
+            // Select'ler değişince liste yeniden çizilir - kutucuğun
+            // DOM'a gelmesini bir sonraki tick'e bırakıp öyle işaretliyoruz.
+            setTimeout(() => {
+              const checkbox = document.querySelector(`#qbr-curr-kazanim-list input[data-node-id="${match.id}"]`);
+              if (checkbox && !checkbox.checked) { checkbox.checked = true; this._qbToggleCurriculumTag(checkbox); }
+            }, 0);
+            return;
+          }
+        }
+      }
+    }
+    UI.toast('Müfredat ağacında eşleşen bir kayıt bulunamadı - elle seçebilirsiniz.', 'warning');
+  },
+
+  // konuId opsiyonel - sadece unite (tema) seviyesinde bir AI onerisi
+  // "Kullan"landiginda (bkz. _qbUseAiCurriculumSuggestion, level==='tema')
+  // henuz hangi konunun dogru oldugu bilinmiyor, sadece tema secilir ve
+  // konu/kazanim listeleri normal varsayilanlariyla (ilk secenek/bos)
+  // yeniden cizilir - admin devamini kendisi secer.
+  _qbSelectCurriculumPath(temaId, konuId) {
+    const temaSelect = document.getElementById('qbr-curr-tema-select');
+    const konuSelect = document.getElementById('qbr-curr-konu-select');
+    if (!temaSelect) return;
+    temaSelect.value = String(temaId);
+    this._qbRenderCurriculumKonuSelect();
+    if (konuSelect && konuId != null) {
+      konuSelect.value = String(konuId);
+      this._qbRenderCurriculumKazanimList();
     }
   },
 
@@ -3612,14 +3920,24 @@ const App = {
   },
 
   // ---- Beceriler (bölüm 10.3) ----
-  async _qbLoadSkillsForQuestion(questionId) {
+  async _qbLoadSkillsForQuestion(questionId, subjectId) {
     const s = this._qbState;
     if (!s) return;
-    if (!s.activeSkillsCache) {
-      const res = await fetch('/api/admin/question-bank/skills?status=active');
+    // Cache subject'e göre anahtarlanır - bir batch neredeyse hep tek
+    // ders olsa da, karışık batch'lerde her ders kendi usage_count
+    // sıralamasını görsün diye (bkz. api_question_bank_list_skills'teki
+    // subject_id parametresi).
+    if (!s.activeSkillsCacheBySubject) s.activeSkillsCacheBySubject = {};
+    const cacheKey = subjectId || 'none';
+    if (!s.activeSkillsCacheBySubject[cacheKey]) {
+      const url = subjectId
+        ? `/api/admin/question-bank/skills?status=active&subject_id=${subjectId}`
+        : '/api/admin/question-bank/skills?status=active';
+      const res = await fetch(url);
       const data = await res.json();
-      s.activeSkillsCache = res.ok ? (data.skills || []) : [];
+      s.activeSkillsCacheBySubject[cacheKey] = res.ok ? (data.skills || []) : [];
     }
+    s.activeSkillsCache = s.activeSkillsCacheBySubject[cacheKey];
     const res = await fetch(`/api/admin/question-bank/questions/${questionId}/skills`);
     const data = await res.json();
     const current = {};
@@ -3631,22 +3949,68 @@ const App = {
     const wrap = document.getElementById('qbr-skills-rows');
     if (!wrap) return;
     if (!activeSkills.length) {
-      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok - "Beceriler" bölümünden önce bir beceri önerip onaylatın.</span>`;
+      wrap.innerHTML = `
+        <span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok.</span>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <input type="text" class="form-control" id="qbr-skill-inline-name" style="max-width:220px;font-size:12.5px" placeholder="Beceri adı (örn. Ortak Payda Bulma)">
+          <button class="btn btn-secondary btn-sm" onclick="App._qbProposeSkillInline()">➕ Öner</button>
+        </div>`;
       this._qbUpdateSkillsTotal();
       return;
     }
-    wrap.innerHTML = activeSkills.map(sk => {
+    const row = (sk) => {
       const checked = sk.id in currentWeights;
+      const usageLabel = sk.usage_count ? `<span class="text-muted" style="font-size:11px">(${sk.usage_count} soruda)</span>` : '';
       return `<div style="display:flex;gap:8px;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;flex:1;font-size:13px;cursor:pointer">
           <input type="checkbox" class="qbr-skill-check" data-skill-id="${sk.id}" ${checked ? 'checked' : ''} onchange="App._qbUpdateSkillsTotal()">
-          ${sk.name}
+          ${sk.name} ${usageLabel}
         </label>
-        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100"
+        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100" step="0.01"
                value="${checked ? currentWeights[sk.id] : ''}" placeholder="%" oninput="App._qbUpdateSkillsTotal()">
       </div>`;
-    }).join('');
+    };
+    // usage_count_this_subject > 0 olanlar üstte (bkz. api_question_bank_
+    // list_skills'teki ORDER BY - liste zaten bu sırayla geliyor, burada
+    // sadece aradaki ayrım başlığı ekleniyor).
+    const splitIdx = activeSkills.findIndex(sk => !(sk.usage_count_this_subject > 0));
+    const thisSubject = splitIdx === -1 ? activeSkills : activeSkills.slice(0, splitIdx);
+    const others = splitIdx === -1 ? [] : activeSkills.slice(splitIdx);
+    let html = thisSubject.map(row).join('');
+    if (others.length) {
+      html += `<div class="text-muted" style="font-size:11px;margin:6px 0 2px">— diğer derslerde kullanılan beceriler —</div>` + others.map(row).join('');
+    }
+    wrap.innerHTML = html;
     this._qbUpdateSkillsTotal();
+  },
+
+  _qbEqualDistributeSkillWeights() {
+    const checked = Array.from(document.querySelectorAll('.qbr-skill-check:checked'));
+    if (!checked.length) return;
+    const even = Math.floor((100 / checked.length) * 100) / 100;
+    const remainder = Math.round((100 - even * (checked.length - 1)) * 100) / 100;
+    checked.forEach((cb, i) => {
+      const input = document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`);
+      if (input) input.value = i === checked.length - 1 ? remainder : even;
+    });
+    this._qbUpdateSkillsTotal();
+  },
+
+  async _qbProposeSkillInline() {
+    const nameEl = document.getElementById('qbr-skill-inline-name');
+    const name = (nameEl?.value || '').trim();
+    if (!name) { UI.toast('Beceri adı gerekli.', 'warning'); return; }
+    try {
+      const res = await fetch('/api/admin/question-bank/skills', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Beceri önerilemedi.');
+      UI.toast('Beceri önerildi - onay bekliyor (dört göz ilkesi, siz onaylayamazsınız).', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   _qbUpdateSkillsTotal() {
@@ -3708,8 +4072,16 @@ const App = {
     const temaSelect = document.getElementById('qbr-curr-tema-select');
     if (!s || !temaSelect) return;
     const tree = s.curriculumTree || [];
+    // Soru grade_level'siz geldiyse (bkz. api_question_bank_curriculum'daki
+    // fallback) agac BIRDEN FAZLA sinif seviyesini birden iceriyor olabilir -
+    // ayni isimli temalar (orn. "Sayilar ve Nicelikler" her sinifta var)
+    // birbirinden ayirt edilemez hale gelmesin diye bu durumda sinif
+    // etiketini de gosteriyoruz (tek sinif varsa gereksiz kalabalik olmasin
+    // diye eklemiyoruz).
+    const grades = new Set(tree.map(t => t.grade_level).filter(Boolean));
+    const showGrade = grades.size > 1;
     temaSelect.innerHTML = tree.length
-      ? tree.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
+      ? tree.map(t => `<option value="${t.id}">${showGrade ? `${t.grade_level}. Sınıf — ` : ''}${t.name}</option>`).join('')
       : `<option value="">— Bu sınıf/ders için müfredat yok —</option>`;
     temaSelect.onchange = () => this._qbRenderCurriculumKonuSelect();
     this._qbRenderCurriculumKonuSelect();
@@ -4486,6 +4858,14 @@ const App = {
     this.navigateTo('dashboard');
   },
 };
+
+// AI önerisi metnini müfredat ağacındaki isimlerle karşılaştırmak için -
+// tam eşleşme aramıyoruz (AI'nin ifadesi MEB metniyle birebir aynı
+// olmayabilir) ama en azından büyük/küçük harf, baş/son boşluk ve İ/i
+// farklarını (Türkçe locale) göz ardı ediyoruz (bkz. App._qbUseAiCurriculumSuggestion).
+function _qbNormalizeCurriculumName(text) {
+  return (text || '').toString().trim().toLocaleLowerCase('tr');
+}
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', () => {

@@ -25,11 +25,13 @@ import sys
 import io
 import csv
 import json
+import time
 import socket
 import sqlite3
 import secrets
 import zipfile
 import difflib
+import traceback
 import threading
 import webbrowser
 from datetime import datetime, timedelta
@@ -1048,8 +1050,17 @@ def _create_question_bank_tables(conn):
             uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             source_filename TEXT NOT NULL,
             page_count INTEGER,
+            pages_processed INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'processing'
-                CHECK(status IN ('processing','ready_for_review','completed','failed')),
+                CHECK(status IN ('queued','processing','ready_for_review','completed','failed','cancelled')),
+            error_message TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            booklet_code TEXT NOT NULL DEFAULT 'A',
+            deleted_at TEXT,
+            deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            subject_id INTEGER REFERENCES subjects(id),
+            grade_level TEXT,
+            grade_level_id INTEGER REFERENCES grade_levels(id),
             created_at TEXT NOT NULL
         );
 
@@ -1171,9 +1182,20 @@ def _create_question_bank_tables(conn):
     if batch_cols and "deleted_at" not in batch_cols:
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN deleted_at TEXT")
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL")
+
+    # Performans (bkz. proje notu): question_bank/question_import_batches'te
+    # organization_id/status/batch_id/subject_id gibi SIK filtrelenen
+    # sutunlarda hic index yoktu - her sorgu tam tablo taramasi (SCAN)
+    # yapiyordu. EXPLAIN QUERY PLAN ile once/sonra dogrulandi.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_qb_org_status ON question_bank(organization_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_qb_batch ON question_bank(batch_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_qb_subject_status ON question_bank(subject_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_qib_org_status ON question_import_batches(organization_id, status)")
     conn.commit()
 
     _migrate_question_bank_lifecycle(conn)
+    _migrate_question_import_batches_progress(conn)
+    _migrate_question_import_batches_queue(conn)
 
     tc_cols = [r[1] for r in conn.execute("PRAGMA table_info(teacher_classes)").fetchall()]
     if tc_cols and "subject_id" not in tc_cols:
@@ -1326,6 +1348,128 @@ def _migrate_question_bank_lifecycle(conn):
             SELECT {", ".join(cols)} FROM question_bank;
         DROP TABLE question_bank;
         ALTER TABLE question_bank_new RENAME TO question_bank;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_question_import_batches_progress(conn):
+    """question_import_batches'e sayfa-bazlı gerçek ilerleme
+    (pages_processed) ve kalıcı/DB-tabanlı iptal bayrağı (cancel_requested)
+    ekler, status CHECK kısıtına 'cancelled' ekler (ayrı, dürüst bir durum -
+    öncesinde iptal 'failed' ile karıştırılıyordu). SQLite CHECK kısıtını
+    doğrudan ALTER edemediği için _migrate_question_bank_lifecycle ile AYNI
+    kanıtlanmış desen kullanılır: question_import_batches'i ASLA geçici bir
+    isme yeniden adlandırmıyoruz - aksi halde ona REFERENCES
+    question_import_batches(id) ile bağlı question_bank'in FK metni SQLite
+    tarafından o geçici isme güncellenir ve tablo silinince kalıcı olarak
+    kırılır (bkz. _migrate_question_bank_lifecycle'daki aynı yorum)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='question_import_batches'"
+    ).fetchone()
+    if not row or "'cancelled'" in row["sql"]:
+        return  # tablo yok (ilk kurulum, yukarıdaki CREATE zaten doğru) ya da zaten migrate edilmiş
+
+    # booklet_code bu fonksiyondan HEMEN önce (yukarıdaki ALTER bloğunda)
+    # garanti ediliyor, bu yüzden burada koşulsuz var sayılabilir.
+    # error_message ise ya YOK (prod, henüz bu satıra hiç gelmedi) ya da
+    # ÖNCEKİ bir sürümün ALTER'ıyla zaten eklenmiş (staging) - iki
+    # durumu da tek kod yoluyla doğru kopyalamak için dinamik kontrol edilir.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
+    select_cols = ["id", "organization_id", "uploaded_by", "source_filename", "page_count",
+                   "status", "booklet_code", "created_at"]
+    if "error_message" in cols:
+        select_cols.append("error_message")
+
+    # KRİTİK: SQLite, foreign_keys AÇIKKEN bir tabloyu DROP ederken, ona
+    # REFERENCES ile bağlı satırların ON DELETE aksiyonunu (burada
+    # question_bank.batch_id için SET NULL) TÜM satırlar siliniyormuş GİBİ
+    # tetikler - yani DROP TABLE question_import_batches, 72 sorunun
+    # batch_id'sini SESSİZCE NULL'a çevirebilirdi (gerçek bir DB kopyası
+    # üzerinde test edilirken yakalandı). init_db()'nin bağlantısı zaten
+    # foreign_keys=OFF ile açılıyor (bkz. init_db, get_db'nin aksine) ama
+    # buna ÖRTÜK olarak güvenmek yerine burada AÇIKÇA kapatıyoruz - bu
+    # migration'ın doğruluğu çağıranın pragma durumuna bağlı kalmasın.
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    conn.executescript(
+        f"""
+        CREATE TABLE question_import_batches_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            source_filename TEXT NOT NULL,
+            page_count INTEGER,
+            pages_processed INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'processing'
+                CHECK(status IN ('processing','ready_for_review','completed','failed','cancelled')),
+            error_message TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            booklet_code TEXT NOT NULL DEFAULT 'A',
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO question_import_batches_new ({", ".join(select_cols)})
+            SELECT {", ".join(select_cols)} FROM question_import_batches;
+        DROP TABLE question_import_batches;
+        ALTER TABLE question_import_batches_new RENAME TO question_import_batches;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_question_import_batches_queue(conn):
+    """question_import_batches.status CHECK kısıtına 'queued' ekler ve
+    kuyruğa alınmış bir işi DAHA SONRA (isteğin kendi HTTP çağrısı çoktan
+    bitmiş, hatta sunucu yeniden başlamış olabilir) yeniden başlatabilmek
+    için gereken subject_id/grade_level/grade_level_id sütunlarını ekler -
+    bunlar eskiden sadece api_question_bank_upload'ın kendi yerel
+    değişkenleriydi, hiçbir yerde saklanmıyordu.
+
+    Redis/Celery gibi ayrı bir iş kuyruğu servisi KURULMUYOR - proje zaten
+    SQLite+WAL'i (bkz. cancel_requested/pages_processed deseni) durum
+    deposu olarak kullanıyor, 'queued' de aynı deponun bir değeri; sadece
+    _try_start_next_queued_batch bunu okuyup bir sonraki işi başlatıyor.
+
+    Aynı kanıtlanmış tablo-yeniden-kurma deseni (bkz.
+    _migrate_question_import_batches_progress'teki uzun yorum - question_bank
+    tablosunun buna REFERENCES ile bağlı olması yüzden bu tabloyu ASLA geçici
+    bir isme yeniden adlandırmıyoruz)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='question_import_batches'"
+    ).fetchone()
+    if not row or "'queued'" in row["sql"]:
+        return  # tablo yok ya da zaten migrate edilmiş
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
+    select_cols = [c for c in cols if c not in ("subject_id", "grade_level", "grade_level_id")]
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        f"""
+        CREATE TABLE question_import_batches_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            source_filename TEXT NOT NULL,
+            page_count INTEGER,
+            pages_processed INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'processing'
+                CHECK(status IN ('queued','processing','ready_for_review','completed','failed','cancelled')),
+            error_message TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            booklet_code TEXT NOT NULL DEFAULT 'A',
+            deleted_at TEXT,
+            deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            subject_id INTEGER REFERENCES subjects(id),
+            grade_level TEXT,
+            grade_level_id INTEGER REFERENCES grade_levels(id),
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO question_import_batches_new ({", ".join(select_cols)})
+            SELECT {", ".join(select_cols)} FROM question_import_batches;
+        DROP TABLE question_import_batches;
+        ALTER TABLE question_import_batches_new RENAME TO question_import_batches;
+        CREATE INDEX IF NOT EXISTS idx_qib_org_status ON question_import_batches(organization_id, status);
         """
     )
     conn.commit()
@@ -1917,7 +2061,52 @@ def init_db():
     # run_v2_migration tanımı) - mevcut veriye dokunmadan ek katman kurar.
     run_v2_migration(conn)
 
+    _cleanup_stale_question_bank_uploads(conn)
+
     conn.close()
+
+    # Sunucu yeniden basladiginda kuyrukta ('queued') kalan bir is varsa
+    # otomatik baslat - aksi halde hicbir yeni yukleme/is-bitisi gelmezse
+    # sonsuza kadar kuyrukta bekler (bkz. _try_advance_question_bank_queue).
+    _try_advance_question_bank_queue()
+
+
+def _cleanup_stale_question_bank_uploads(conn):
+    """Sunucu, PDF işleme sırasında (crash/SIGKILL/deploy restart) durursa iki
+    tür iz kalabilir: 1) 'processing' durumunda SONSUZA KADAR takılı kalan
+    batch'ler (hiçbir worker artık onları işlemiyor, kullanıcı arayüzde
+    sonsuz "işleniyor" görür) ve varsa altlarında yarım kalmış question_bank
+    satırları; 2) source_pdfs/ altında hiçbir batch satırına hiç bağlanamamış
+    _pending_*.pdf geçici dosyaları (1.1 fix'indeki "hayalet set" ilkesiyle
+    aynı mantık - bkz. api_question_bank_upload). Bu fonksiyon, init_db() ile
+    AYNI dosya-kilitli tek-worker noktasında (bkz. bu dosyanın en altı) HER
+    başlangıçta çalışır, bu yüzden birden fazla gunicorn worker'ının aynı anda
+    aynı batch'i temizlemeye çalışıp yarışması söz konusu değil."""
+    stale = conn.execute(
+        "SELECT id FROM question_import_batches WHERE status='processing'"
+    ).fetchall()
+    if stale:
+        for row in stale:
+            batch_id = row[0]
+            conn.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
+            conn.execute(
+                "UPDATE question_import_batches SET status='failed', error_message=? WHERE id=?",
+                ("Sunucu yeniden başlatıldığı için işlem yarıda kaldı, lütfen tekrar yükleyin.", batch_id),
+            )
+        conn.commit()
+
+    source_dir = os.path.join(UPLOADS_DIR, "source_pdfs")
+    if os.path.isdir(source_dir):
+        cutoff = time.time() - 3600  # 1 saat
+        for name in os.listdir(source_dir):
+            if not name.startswith("_pending_"):
+                continue
+            path = os.path.join(source_dir, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                pass
 
 
 # ============================================================
@@ -6762,15 +6951,27 @@ _MAX_PDF_PAGES = 60
 # worker calistirdigi icin (bkz. deploy notlari, bellek tasarrufu) bu artik
 # PLATFORM GENELINDE tek bir OCR isi demek.
 _OCR_SEMAPHORE = threading.Semaphore(1)
-# Taranmis/OCR gerektiren gercek sinav PDF'leri 3-4 dakikaya kadar
-# surebiliyor (olculdu - bkz. pdf_question_extractor.py sure tahmini
-# sabitleri). Eskiden bu bekleme 60s'ydi - ikinci bir yukleme neredeyse HER
-# ZAMAN "baska bir PDF isleniyor" hatasi aliyordu, cunku ilk isin gercek
-# suresi zaten 60s'yi asiyordu. gunicorn --timeout (deploy notlarinda,
-# ExecStart) bu bekleme + kendi isleme suresini karsilayacak kadar UZUN
-# tutulmali - aksi halde worker, OCR bitmeden SIGKILL edilir (sessiz,
-# "hayalet" bos set birakan DAHA KOTU bir hata).
-_OCR_SEMAPHORE_WAIT_SECONDS = 240
+# ESKIDEN burada _OCR_SEMAPHORE_WAIT_SECONDS=240 ile bir istek meşgul
+# semaphore'u 240s bekleyip sonra "başka bir PDF işleniyor" hatası
+# veriyordu (taranmış gerçek sınav PDF'leri 3-4 dakika sürebiliyor, yani
+# bu bekleme neredeyse HER ZAMAN başarısız oluyordu). Artık gerçek, DB-
+# tabanlı bir kuyruk var (question_import_batches.status='queued', bkz.
+# api_question_bank_upload ve _try_advance_question_bank_queue) - hiçbir
+# istek semaphore için ASLA beklemez, ya hemen başlar ya da kuyruğa girip
+# anında döner.
+
+# Aynı organizasyonun kuyruğu tek başına doldurup diğer okulları
+# bekletmesini engelleyen hafif bir üst sınır - bir organizasyonun aynı
+# anda en fazla bu kadar batch'i 'processing'+'queued' durumunda olabilir.
+_MAX_CONCURRENT_PROCESSING_BATCHES = 2
+
+# İptal artık DB'de (question_import_batches.cancel_requested) tutulur,
+# bellekte DEĞİL - ilerleme (pages_processed) zaten her sayfada DB'ye
+# yazılıyor, aynı UPDATE'in yanında iptal bayrağını da DB'den okumak
+# bedavaya yakın. Bellek-içi bir set'in aksine bu, worker yeniden
+# başlasa bile kaybolmaz ve kullanıcı sekmeyi kapatıp saatler sonra geri
+# dönse bile (bkz. frontend'deki liste-bazlı polling) doğru durumu
+# okuyabilir.
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
@@ -6794,6 +6995,15 @@ def api_question_bank_upload():
     subject_name = subject_row["name"]
     user_id = session["user_id"]
     org_id = _current_org_id(db)
+
+    active = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE organization_id=? AND status IN ('processing','queued')",
+        (org_id,),
+    ).fetchone()["c"]
+    if active >= _MAX_CONCURRENT_PROCESSING_BATCHES:
+        return jsonify({"error": "Bu okul için aynı anda en fazla "
+                                  f"{_MAX_CONCURRENT_PROCESSING_BATCHES} PDF işlenebilir/kuyrukta bekleyebilir. "
+                                  "Lütfen biri tamamlanana kadar bekleyin."}), 429
 
     # 1.1(a): sınıf seviyesi ZORUNLU DEĞİL (mevcut PDF'ler zaten grade_level'sız
     # yüklendi, geriye dönük veri bozulmasın) - ama seçilirse tüm batch'e (bir
@@ -6824,74 +7034,311 @@ def api_question_bank_upload():
     temp_pdf_path = os.path.join(source_dir, f"_pending_{secrets.token_hex(8)}.pdf")
     file.save(temp_pdf_path)
 
-    if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SEMAPHORE_WAIT_SECONDS):
-        try:
-            os.remove(temp_pdf_path)
-        except OSError:
-            pass
-        return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç dakika sonra tekrar deneyin."}), 503
+    # ASENKRON: OCR taranmış sınav PDF'lerinde (30+ sayfa) 100 saniyeyi
+    # kolayca aşıyor - prod'da Cloudflare Tunnel'ın önündeki edge proxy
+    # sabit ~100s'de bağlantıyı kesip kendi HTML hata sayfasını
+    # dönüyordu, tarayıcı da JSON bekleyen fetch().json() çağrısında
+    # "Unexpected token '<'" ile patlıyordu (gerçek olayla doğrulandı).
+    # Çözüm: bu istek batch satırını oluşturup HEMEN döner, gerçek
+    # OCR/kırpma işi arka plan thread'inde çalışır; frontend batch'i
+    # durumu 'processing' olmaktan çıkana kadar polling ile izler.
+    #
+    # Basit DB-tabanlı kuyruk (bkz. proje notu): eskiden burada worker
+    # thread'i KOŞULSUZ başlatılıp OCR semaphore'unu 240s BEKLERDİ - başka
+    # bir PDF hâlâ işleniyorsa kullanıcı uzun bir bekleme sonunda çıplak
+    # bir hata alıyordu. Artık semaphore'u burada, BLOKLAMADAN denıyoruz:
+    # müsaitse iş hemen 'processing' başlar (eskisi gibi); değilse 240s
+    # beklemek yerine 'queued' olarak yazılıp ANINDA 202 dönülür - kuyruğa
+    # alınan işin subject_id/grade_level(_id) bilgisi DB'ye yazılır çünkü
+    # bu isteğin kendi yerel değişkenleri iş daha sonra (başka bir isteğin
+    # bitişiyle, hatta sunucu yeniden başladıktan sonra) başlatılacağı için
+    # o an artık mevcut olmayabilir (bkz. _try_advance_question_bank_queue).
+    got_semaphore = _OCR_SEMAPHORE.acquire(blocking=False)
+    initial_status = "processing" if got_semaphore else "queued"
 
     cur = db.execute(
-        "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, booklet_code, created_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (org_id, user_id, safe_name, "processing", booklet_code, now),
+        "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, booklet_code, "
+        "subject_id, grade_level, grade_level_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (org_id, user_id, safe_name, initial_status, booklet_code, subject_id, grade_level, grade_level_id, now),
     )
     batch_id = cur.lastrowid
     db.commit()
     pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
     os.rename(temp_pdf_path, pdf_path)
 
-    try:
-        result = pdf_question_extractor.extract_questions(
-            pdf_path, subject_name=subject_name, booklet_code=booklet_code,
+    if got_semaphore:
+        threading.Thread(
+            target=_process_question_bank_upload_async,
+            args=(batch_id, pdf_path, subject_id, subject_name, grade_level, grade_level_id,
+                  booklet_code, org_id, user_id, now),
+            daemon=True,
+        ).start()
+
+    return jsonify({"batchId": batch_id, "status": initial_status}), 202
+
+
+def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_name,
+                                         grade_level, grade_level_id, booklet_code,
+                                         org_id, user_id, now):
+    """api_question_bank_upload'ın arka planda çalışan kısmı - kendi sqlite
+    bağlantısını açar çünkü Flask'ın istek-bazlı g.db'si bu thread'de yok.
+    WAL zaten aktif (bkz. get_db) o yüzden ana thread'in eş zamanlı okuma/
+    yazmalarıyla çakışmaz. İptal DB'de (cancel_requested) tutulur - bkz.
+    api_question_bank_cancel_upload; bu sayede bellek-içi bir bayrağın
+    aksine worker yeniden başlasa bile kaybolmaz."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+
+    def _cancel_requested():
+        row = conn.execute(
+            "SELECT cancel_requested FROM question_import_batches WHERE id=?", (batch_id,)
+        ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def _on_page_done(done, total):
+        # Toplam sayfa sayısı (fitz.open() ile ANINDA bilinir, OCR
+        # gerekmez) ilk sayfa biter bitmez burada yazılır ki frontend
+        # "X / Y" ilerlemesini en baştan gösterebilsin - page_count'un
+        # SADECE extract_questions bitince yazıldığı eski davranışta
+        # ilerleme çubuğunun paydası işlem bitene kadar hiç görünmüyordu.
+        conn.execute(
+            "UPDATE question_import_batches SET pages_processed=?, page_count=? WHERE id=?",
+            (done, total, batch_id),
         )
-        if result["page_count"] > _MAX_PDF_PAGES:
-            raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
-    except Exception as exc:
-        _OCR_SEMAPHORE.release()
+        conn.commit()
+
+    def _fail(message):
+        # Başarısız batch'in kaynak PDF'i başka hiçbir yerde kullanılmaz
+        # (sadece başarılı batch'lerin "recrop"/export özellikleri source_pdfs'e
+        # bakar) - diskte iz bırakmamak için 1.1 fix'indeki "hayalet set"
+        # ilkesiyle tutarlı şekilde siliyoruz.
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+        conn.execute(
+            "UPDATE question_import_batches SET status='failed', error_message=? WHERE id=?",
+            (message, batch_id),
+        )
+        conn.commit()
+
+    def _cancel():
+        # 'failed' değil, ayrı ve dürüst bir durum: kullanıcı BİLEREK
+        # durdurdu, bir şey ters gitmedi.
         pdf_question_extractor.release_pdf_cache()
-        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
-        db.commit()
-        return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
-    _OCR_SEMAPHORE.release()
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+        conn.execute("UPDATE question_import_batches SET status='cancelled' WHERE id=?", (batch_id,))
+        conn.commit()
 
-    created = []
-    for q in result["questions"]:
-        image_filename = f"{batch_id}_{q['number']}.png"
-        pdf_question_extractor.render_question_crop(
-            pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename)
-        )
-        answer = result["answer_key"].get(q["number"])
-        rect = q["rect"]
-        qcur = db.execute(
-            "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, image_path, "
-            "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
-            "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (org_id, batch_id, subject_id, grade_level, grade_level_id, f"questions/{image_filename}",
-             q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
-             answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
-        )
-        created.append({
-            "id": qcur.lastrowid, "number": q["number"], "correctAnswer": answer,
-            "imageUrl": f"/api/admin/question-bank/image/{qcur.lastrowid}",
-        })
+    try:
+        # ESKIDEN burada _OCR_SEMAPHORE.acquire(timeout=240) vardi - baska
+        # bir PDF hala islenirken 240s BEKLEYIP sonra kullaniciya duz bir
+        # hata veriyordu (bkz. proje notu, DB-tabanli kuyruk). Artik semaphore
+        # BU FONKSIYON CAGRILMADAN ONCE caginan tarafca (api_question_bank_upload
+        # ya da _try_advance_question_bank_queue) zaten alinmis durumda -
+        # burada sadece kuyrukta beklerken iptal edilmis mi diye bakiyoruz.
+        if _cancel_requested():
+            _cancel()
+            return
+        try:
+            result = pdf_question_extractor.extract_questions(
+                pdf_path, subject_name=subject_name, booklet_code=booklet_code,
+                cancel_check=_cancel_requested, on_page_done=_on_page_done,
+            )
+            if result["page_count"] > _MAX_PDF_PAGES:
+                raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
+        except pdf_question_extractor.ExtractionCancelled:
+            _cancel()
+            return
+        except Exception as exc:
+            pdf_question_extractor.release_pdf_cache()
+            _fail(f"PDF işlenemedi: {exc}")
+            return
 
-    pdf_question_extractor.release_pdf_cache()
-    db.execute(
-        "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
-        (result["page_count"], batch_id),
+        if _cancel_requested():
+            _cancel()
+            return
+
+        # Performans (bkz. proje notu): render_question_crop eskiden HER soru
+        # icin kendi fitz.open(pdf_path)/close() cifti yapiyordu - 80 sorulu
+        # bir PDF'te 80 kez ac/kapat, taranmis buyuk PDF'lerde kirpma
+        # asamasini gereksiz yavaslatiyordu. Artik dosya bu donguye ozel
+        # TEK BIR fitz.Document ile aciliyor, tum sorular ayni doc uzerinden
+        # kirpiliyor, dongu bitince kapatiliyor.
+        crop_doc = pdf_question_extractor.fitz.open(pdf_path)
+        try:
+            for q in result["questions"]:
+                image_filename = f"{batch_id}_{q['number']}.png"
+                pdf_question_extractor.render_question_crop(
+                    pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename),
+                    doc=crop_doc,
+                )
+                answer = result["answer_key"].get(q["number"])
+                rect = q["rect"]
+                conn.execute(
+                    "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, image_path, "
+                    "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
+                    "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (org_id, batch_id, subject_id, grade_level, grade_level_id, f"questions/{image_filename}",
+                     q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
+                     answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
+                )
+        finally:
+            crop_doc.close()
+
+        pdf_question_extractor.release_pdf_cache()
+        # cancel_requested=0 koşulu: iptal tam bu satırlar arasındaki dar
+        # pencerede (yukarıdaki kontrolden SONRA, buradan ÖNCE) geldiyse
+        # - kırpma/insert döngüsünün kendi içinde ayrı bir kontrol noktası
+        # yok çünkü OCR içermediği için zaten hızlı - status hâlâ
+        # 'processing' olsa bile bunu 'ready_for_review' olarak
+        # tamamlanmış saymayız. 0 satır etkilenirse az önce eklenen
+        # sorular "iptal edilmiş" bir batch'in altında yetim kalmasın diye
+        # geri alınır.
+        cur = conn.execute(
+            "UPDATE question_import_batches SET status='ready_for_review', page_count=? "
+            "WHERE id=? AND status='processing' AND cancel_requested=0",
+            (result["page_count"], batch_id),
+        )
+        if cur.rowcount == 0:
+            conn.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
+            conn.commit()
+            _cancel()
+            return
+        conn.commit()
+    except Exception as exc:
+        traceback.print_exc()
+        try:
+            # Sorulari donguye ekleme sirasinda (satir ~7038) bir hata cikarsa
+            # bu conn'daki islenmemis (commit edilmemis) INSERT'ler hala
+            # bekliyor olur - _fail()'in kendi commit()'i bunlari da "failed"
+            # UPDATE'iyle BIRLIKTE kalici hale getirip yetim satirlar
+            # birakiyordu (UI 'failed' batch'i "hicbir sey yok" sayiyor).
+            # cancel_requested yarisi icin zaten var olan ayni temizlik
+            # deseniyle (satir ~7070) tutarli: _fail'den ONCE bu batch'e ait
+            # ne varsa geri al.
+            conn.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
+            _fail(f"Beklenmeyen hata: {exc}")
+        except Exception:
+            pass
+    finally:
+        conn.close()
+        # Basari/hata/iptal HANGI yoldan cikilirse cikilsin semaphore MUTLAKA
+        # burada, TEK yerden serbest birakilir - sonra kuyrukta bekleyen bir
+        # sonraki batch varsa (bkz. _try_advance_question_bank_queue) onu
+        # baslatmayi dener. Bu cagri olmazsa semaphore serbest kalir ama
+        # kuyruktaki isler ASLA otomatik baslamaz.
+        _OCR_SEMAPHORE.release()
+        _try_advance_question_bank_queue()
+
+
+def _try_advance_question_bank_queue():
+    """Basit, veritabanı-tabanlı iş kuyruğu (Redis/Celery DEĞİL - proje
+    zaten SQLite+WAL'i cancel_requested/pages_processed ile aynı şekilde
+    durum deposu olarak kullanıyor, 'queued' de bunun bir uzantısı, bkz.
+    proje notu). Bir OCR işi bittiğinde (başarı/hata/iptal fark etmez, bkz.
+    _process_question_bank_upload_async'in dış finally'si) VE yeni bir
+    yükleme semaphore'u hemen alamadığında (bkz. api_question_bank_upload)
+    çağrılır. Semaphore'u boşta bulursa DB'deki en eski 'queued' batch'i
+    alıp başlatır; kullanıcı kuyrukta beklerken iptal ettiyse (cancel_requested)
+    onu hiç başlatmadan 'cancelled' yapıp bir sonrakine bakar."""
+    if not _OCR_SEMAPHORE.acquire(blocking=False):
+        return  # hâlâ meşgul - o iş bitince kendi finally'si burayı tekrar çağıracak
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    try:
+        row = conn.execute(
+            "SELECT * FROM question_import_batches WHERE status='queued' ORDER BY id LIMIT 1"
+        ).fetchone()
+        if not row:
+            _OCR_SEMAPHORE.release()
+            return
+        if row["cancel_requested"]:
+            conn.execute("UPDATE question_import_batches SET status='cancelled' WHERE id=?", (row["id"],))
+            conn.commit()
+            _OCR_SEMAPHORE.release()
+            _try_advance_question_bank_queue()  # sırada başkası var mı diye bak
+            return
+
+        subject_row = conn.execute("SELECT name FROM subjects WHERE id=?", (row["subject_id"],)).fetchone()
+        # WHERE status='queued' guard'i: (gunicorn TEK worker ile calisiyor,
+        # bkz. _OCR_SEMAPHORE'un ustundeki proje notu, ama semaphore'un
+        # kendisi SURECe ozgu oldugundan birden fazla worker olsaydi iki
+        # surec de ayni satiri secip ikisi de baslatmaya kalkabilirdi) -
+        # ucret bedavaya yakin bir ek guvenlik, mevcut cur.rowcount==0
+        # desenleriyle tutarli.
+        cur = conn.execute(
+            "UPDATE question_import_batches SET status='processing' WHERE id=? AND status='queued'",
+            (row["id"],),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            _OCR_SEMAPHORE.release()
+            return
+    finally:
+        conn.close()
+
+    threading.Thread(
+        target=_process_question_bank_upload_async,
+        args=(row["id"], _source_pdf_path(row["id"]), row["subject_id"],
+              subject_row["name"] if subject_row else None, row["grade_level"], row["grade_level_id"],
+              row["booklet_code"], row["organization_id"], row["uploaded_by"], row["created_at"]),
+        daemon=True,
+    ).start()
+
+
+@app.route("/api/admin/question-bank/batches/<int:batch_id>/cancel", methods=["POST"])
+@login_required(role="admin", permission="questions.create")
+def api_question_bank_cancel_upload(batch_id):
+    """'queued' durumundaki bir yüklemeyi ANINDA iptal eder (henüz hiçbir
+    thread ona dokunmuyor, doğrudan 'cancelled' yapmak güvenli) - 'processing'
+    durumundaki bir yüklemeye ise sadece iptal İSTEĞİ bırakır, ANINDA durmaz
+    (bkz. pdf_question_extractor._build_page_lines_cache): arka plan
+    thread'i (_process_question_bank_upload_async) bunu bir sonraki sayfa
+    kontrol noktasında görüp kendini durdurur ve status'u asıl 'cancelled'
+    yapar. cancel_requested DB'de tutulur (bellekte DEĞİL) - worker yeniden
+    başlasa ya da kullanıcı sekmeyi kapatıp geri dönse bile kaybolmaz."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    cur = db.execute(
+        "UPDATE question_import_batches SET status='cancelled' "
+        "WHERE id=? AND organization_id=? AND status='queued'",
+        (batch_id, org_id),
     )
     db.commit()
-
-    return jsonify({
-        "batchId": batch_id,
-        "pageCount": result["page_count"],
-        "questionCount": len(created),
-        "answerKeyFound": len(result["answer_key"]) > 0,
-        "questions": created,
-        "estimatedSeconds": result.get("estimated_seconds"),
-    })
+    if cur.rowcount > 0:
+        # Henuz hicbir worker baslamadigi icin dosya temizligini de
+        # (_cancel()'in processing durumunda yaptigi gibi) burada biz
+        # yapmak zorundayiz - aksi halde "hayalet" bir kaynak PDF kalir.
+        try:
+            os.remove(_source_pdf_path(batch_id))
+        except OSError:
+            pass
+    if cur.rowcount == 0:
+        cur = db.execute(
+            "UPDATE question_import_batches SET cancel_requested=1 "
+            "WHERE id=? AND organization_id=? AND status='processing'",
+            (batch_id, org_id),
+        )
+        db.commit()
+    if cur.rowcount == 0:
+        row = db.execute(
+            "SELECT id FROM question_import_batches WHERE id=? AND organization_id=?",
+            (batch_id, org_id),
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Bulunamadı."}), 404
+        return jsonify({"error": "Bu yükleme zaten tamamlanmış ya da durdurulmuş."}), 409
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/question-bank/batches")
@@ -6900,7 +7347,8 @@ def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
     rows = db.execute(
-        "SELECT b.id, b.source_filename, b.status, b.page_count, b.booklet_code, b.created_at, "
+        "SELECT b.id, b.source_filename, b.status, b.error_message, b.page_count, b.pages_processed, "
+        "b.cancel_requested, b.booklet_code, b.created_at, "
         "COUNT(q.id) AS question_count, "
         "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
         "SUM(CASE WHEN q.status IN ('approved','published') THEN 1 ELSE 0 END) AS approved_count "
@@ -6908,7 +7356,22 @@ def api_question_bank_batches():
         "WHERE b.organization_id=? AND b.deleted_at IS NULL GROUP BY b.id ORDER BY b.id DESC",
         (org_id,),
     ).fetchall()
-    return jsonify({"batches": [dict(r) for r in rows]})
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d["status"] == "queued":
+            # Kuyruk PLATFORM GENELINDE (bkz. _OCR_SEMAPHORE), sadece bu okula
+            # ozgu degil - "onunuzde N is var" sayisi butun organizasyonlar
+            # arasinda, bu batch'ten daha kucuk id'li ('processing' olan tek
+            # is dahil, o her zaman en kucuk id'ye sahiptir) queued/processing
+            # satir sayisidir.
+            d["queue_position"] = db.execute(
+                "SELECT COUNT(*) c FROM question_import_batches "
+                "WHERE status IN ('processing','queued') AND id < ?",
+                (d["id"],),
+            ).fetchone()["c"]
+        result.append(d)
+    return jsonify({"batches": result})
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>")
@@ -6962,6 +7425,18 @@ def _source_pdf_path(batch_id):
     return os.path.join(UPLOADS_DIR, "source_pdfs", f"batch_{batch_id}.pdf")
 
 
+def _context_image_cache_paths(batch_id, page_number):
+    """Inceleme ekraninin 'sonraki soru' tiklamasinda ayni sayfayi tekrar
+    tekrar fitz.open() ile render etmemek icin (bkz. proje notu - bu uc
+    onceden her tiklamada dosyayi yeniden aciyordu) sayfa PNG'sini ve
+    puan cinsinden genislik/yuksekligini diske cache'ler. Bir sayfanin
+    icerigi kaynak PDF degismedigi surece asla degismez (recrop tek bir
+    sorunun kirpma dikdortgenini degistirir, TAM SAYFA goruntusunu degil)
+    - o yuzden invalidation gerekmiyor."""
+    base = os.path.join(QUESTION_IMAGES_DIR, f"_ctx_{batch_id}_{page_number}")
+    return base + ".png", base + ".dims"
+
+
 # ============================================================
 # AI destekli soru sınıflandırma (admin-panel-soru-havuzu-1.md bölüm 3.3)
 # ============================================================
@@ -6976,6 +7451,12 @@ QUESTION_DIFFICULTIES = ("kolay", "orta", "zor")
 QUESTION_PATTERNS = ("islem_sorusu", "problem_sorusu", "yorum_sorusu", "yeni_nesil_soru")
 QUESTION_TYPES = ("coktan_secmeli", "acik_uclu", "dogru_yanlis", "eslestirme")
 
+# NOT: aşağıdaki prompt'taki "beceri" alanı bir KAZANIM (learning_outcome)
+# önerisidir - question_skills tablosundaki gerçek "beceri" (ders-kesişen
+# ölçülebilir yetenek, örn. "Ortak Payda Bulma") kavramıyla KARIŞTIRILMAMALI,
+# sadece tarihsel isimlendirme, iki ayrı taksonomi. Frontend'de bu alan
+# "Kazanım önerisi" olarak gösterilir (bkz. _qbRenderAiHints). JSON alan
+# adı API sözleşmesini kırmamak için "beceri" olarak KALIYOR.
 _AI_CLASSIFIER_SYSTEM_PROMPT = """Sen bir soru sınıflandırma asistanısın. Sana bir soru görseli verilecek.
 Görseldeki soruyu analiz edip SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir açıklama ekleme:
 
@@ -7145,6 +7626,19 @@ def api_question_bank_context_image(question_id):
     row = _get_owned_question(db, question_id, _current_org_id(db))
     if not row:
         return jsonify({"error": "Bulunamadı."}), 404
+    cache_png, cache_dims = _context_image_cache_paths(row["batch_id"], row["source_page_number"])
+    if os.path.isfile(cache_png) and os.path.isfile(cache_dims):
+        with open(cache_png, "rb") as f:
+            png_bytes = f.read()
+        with open(cache_dims, "r", encoding="utf-8") as f:
+            page_w, page_h = (float(v) for v in f.read().split(","))
+        resp = Response(png_bytes, mimetype="image/png")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Page-Width-Pt"] = str(page_w)
+        resp.headers["X-Page-Height-Pt"] = str(page_h)
+        resp.headers["X-Dpi"] = str(pdf_question_extractor.CONTEXT_DPI)
+        return resp
+
     pdf_path = _source_pdf_path(row["batch_id"])
     if not os.path.isfile(pdf_path):
         return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
@@ -7152,6 +7646,10 @@ def api_question_bank_context_image(question_id):
         png_bytes, page_w, page_h = pdf_question_extractor.render_page_image_bytes(
             pdf_path, row["source_page_number"] - 1
         )
+        with open(cache_png, "wb") as f:
+            f.write(png_bytes)
+        with open(cache_dims, "w", encoding="utf-8") as f:
+            f.write(f"{page_w},{page_h}")
     except Exception as exc:
         return jsonify({"error": f"Sayfa görüntüsü oluşturulamadı: {exc}"}), 400
     resp = Response(png_bytes, mimetype="image/png")
@@ -7444,6 +7942,20 @@ def api_question_bank_update(question_id):
             missing.append("zorluk")
         if not effective_grade_level:
             missing.append("sınıf seviyesi")
+        # 2.1: eski topic_id/difficulty/grade_level kontrolu, sorunun GERCEK
+        # MEB kazanim etiketi (question_curriculum_tags - musteredat agaci
+        # uzerinden, bkz. api_question_bank_question_curriculum_tags) olup
+        # olmadigini hic sormuyordu - bu ucun HICBIR kazanima baglanmamis bir
+        # soru bile ogrenciye "published" olarak gorunmesine izin veriyordu.
+        # topic_id kontrolu KALDIRILMADI (ogrenci analizi/geriye donuk
+        # uyumluluk hala ona bagli, bkz. P2 - kademeli gecis) - sadece artik
+        # TEK BASINA yeterli degil.
+        has_primary_tag = db.execute(
+            "SELECT 1 FROM question_curriculum_tags WHERE question_id=? AND is_primary=1",
+            (question_id,),
+        ).fetchone()
+        if not has_primary_tag:
+            missing.append("MEB kazanımı")
         if missing:
             return jsonify({"error": f"Yayınlanmadan önce eksik alanlar tamamlanmalı: {', '.join(missing)}."}), 400
 
@@ -7501,6 +8013,74 @@ def api_question_bank_bulk_update():
         updated += 1
     db.commit()
     return jsonify({"updated": updated, "skippedOwn": skipped_own})
+
+
+@app.route("/api/admin/question-bank/questions/bulk-tag", methods=["PATCH"])
+@login_required(role="admin", permission="questions.update")
+def api_question_bank_bulk_tag():
+    """Bir batch'teki sorular cogunlukla ayni ders+sinif+genelde ayni unite
+    oldugu icin (bkz. proje notu) toplu METADATA atama - status/onay/red
+    DEGIL (o ayri bulk-update ucunda, dort-goz kisitina tabi, bkz. yukarisi).
+    onlyIfEmpty=true (varsayilan) iken bir soru icin bir alan zaten doluysa
+    SESSIZCE ATLANIR - AI classify'nin 'sadece bos alani doldur' desenindeki
+    gibi (bkz. api_question_bank_ai_classify), zaten girilmis bir admin
+    degerinin uzerine toplu islemle yanlislikla yazilmasin. onlyIfEmpty=false
+    ile bilerek hepsinin uzerine yazilabilir (frontend'de ayri, acik bir
+    onay adimi olmali)."""
+    data = request.get_json(silent=True) or {}
+    question_ids = data.get("questionIds") or []
+    if not isinstance(question_ids, list) or not question_ids:
+        return jsonify({"error": "questionIds gerekli."}), 400
+    only_if_empty = data.get("onlyIfEmpty", True) is not False
+
+    simple_fields = {"subjectId": "subject_id", "topicId": "topic_id", "difficultyLevel": "difficulty_level"}
+    updates = {column: (data[key] or None) for key, column in simple_fields.items() if key in data}
+
+    set_grade = "gradeLevelId" in data
+    grade_level_id, grade_level_name = None, None
+    db = get_db()
+    if set_grade:
+        grade_level_id = data.get("gradeLevelId")
+        if grade_level_id:
+            gl_row = db.execute("SELECT name FROM grade_levels WHERE id=?", (grade_level_id,)).fetchone()
+            grade_level_name = gl_row["name"] if gl_row else None
+            if not gl_row:
+                grade_level_id = None
+
+    if not updates and not set_grade:
+        return jsonify({"error": "Uygulanacak en az bir alan (subjectId/topicId/difficultyLevel/gradeLevelId) gerekli."}), 400
+
+    org_id = _current_org_id(db)
+    now = datetime.now().isoformat()
+    updated = 0
+    skipped_filled = 0
+    for qid in question_ids:
+        row = _get_owned_question(db, qid, org_id)
+        if not row:
+            continue
+        fields, params = [], []
+        for column, value in updates.items():
+            if only_if_empty and row[column]:
+                continue
+            fields.append(f"{column}=?")
+            params.append(value)
+        if set_grade and not (only_if_empty and row["grade_level_id"]):
+            fields.append("grade_level_id=?")
+            params.append(grade_level_id)
+            fields.append("grade_level=?")
+            params.append(grade_level_name)
+        if not fields:
+            skipped_filled += 1
+            continue
+        fields.append("updated_at=?")
+        params.append(now)
+        params.append(qid)
+        db.execute(f"UPDATE question_bank SET {', '.join(fields)} WHERE id=?", params)
+        updated += 1
+    db.commit()
+    if updated:
+        log_audit(db, "QUESTIONS_BULK_TAGGED", resource_type="question_bank")
+    return jsonify({"updated": updated, "skippedFilled": skipped_filled})
 
 
 @app.route("/api/admin/question-bank/grade-levels")
@@ -7669,13 +8249,29 @@ def api_question_bank_curriculum():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
     grade_level = request.args.get("grade_level")
-    if not subject_id or not grade_level:
-        return jsonify({"error": "subject_id ve grade_level gerekli."}), 400
-    rows = db.execute(
-        "SELECT id, code, parent_id, level, name, sort_order FROM curriculum_nodes "
-        "WHERE subject_id=? AND grade_level=? ORDER BY sort_order",
-        (subject_id, str(grade_level)),
-    ).fetchall()
+    if not subject_id:
+        return jsonify({"error": "subject_id gerekli."}), 400
+    if grade_level:
+        rows = db.execute(
+            "SELECT id, code, parent_id, level, name, sort_order, grade_level FROM curriculum_nodes "
+            "WHERE subject_id=? AND grade_level=? ORDER BY sort_order",
+            (subject_id, str(grade_level)),
+        ).fetchall()
+    else:
+        # PDF importundan gelen sorularda sinif seviyesi ZORUNLU DEGIL (bkz.
+        # api_question_bank_upload) - grade_level'i olmayan bir soru icin
+        # burada 400 donup muftedat/AI-kazanim eslestirme ozelligini o soru
+        # icin TAMAMEN kullanilmaz kilmak yerine (gercek olayla dogrulandi -
+        # "Kullan" butonu HER ZAMAN "eslesme yok" diyordu, cunku agac hic
+        # yuklenemiyordu), o dersin TUM sinif seviyelerindeki dugumlerini
+        # gosteriyoruz; admin dogru sinifi kendisi secebilir. grade_level
+        # SELECT'e dahil edilir ki frontend (bkz. _qbRenderCurriculumTemaSelect)
+        # ayni isimli birden fazla sinifin temasini birbirinden ayirt edebilsin.
+        rows = db.execute(
+            "SELECT id, code, parent_id, level, name, sort_order, grade_level FROM curriculum_nodes "
+            "WHERE subject_id=? ORDER BY grade_level, sort_order",
+            (subject_id,),
+        ).fetchall()
     nodes = {r["id"]: dict(r) | {"children": []} for r in rows}
     tree = []
     for r in rows:
@@ -7718,16 +8314,28 @@ def _propose_skill(db, name, description, user_id):
 def api_question_bank_list_skills():
     db = get_db()
     status = request.args.get("status")
+    # subject_id VERİLİRSE beceriler FİLTRELENMEZ (beceriler kasıtlı olarak
+    # ders-kesişen/cross-cutting - "Problem Çözme" hem matematikte hem fende
+    # geçerli olabilir, bkz. skills tablosunda subject_id sütunu YOK) -
+    # sadece bu dersten en az bir kullanımı olanlar üste SIRALANIR.
+    # usage_count_this_subject frontend'de "bu ders" / "diğer dersler"
+    # ayrımı için, usage_count genel popülerlik ikinci sıralama anahtarı.
+    subject_id = request.args.get("subject_id", type=int)
     query = (
         "SELECT sk.id, sk.name, sk.description, sk.status, sk.rejection_reason, sk.created_at, "
-        "u.display_name AS created_by_name, sk.created_by = ? AS is_own "
-        "FROM skills sk LEFT JOIN users u ON u.id = sk.created_by"
+        "u.display_name AS created_by_name, sk.created_by = ? AS is_own, "
+        "COUNT(DISTINCT qs.question_id) AS usage_count, "
+        "COUNT(DISTINCT CASE WHEN qb.subject_id=? THEN qs.question_id END) AS usage_count_this_subject "
+        "FROM skills sk "
+        "LEFT JOIN users u ON u.id = sk.created_by "
+        "LEFT JOIN question_skills qs ON qs.skill_id = sk.id "
+        "LEFT JOIN question_bank qb ON qb.id = qs.question_id"
     )
-    params = [session["user_id"]]
+    params = [session["user_id"], subject_id]
     if status:
         query += " WHERE sk.status = ?"
         params.append(status)
-    query += " ORDER BY sk.created_at DESC"
+    query += " GROUP BY sk.id ORDER BY usage_count_this_subject DESC, usage_count DESC, sk.created_at DESC"
     rows = db.execute(query, params).fetchall()
     return jsonify({"skills": [dict(r) | {"is_own": bool(r["is_own"])} for r in rows]})
 

@@ -367,14 +367,35 @@ def _get_page_lines(page):
     return _ocr_page_lines(page), True
 
 
-def _build_page_lines_cache(doc):
+class ExtractionCancelled(Exception):
+    """Kullanıcı yüklemeyi iptal ettiğinde _build_page_lines_cache'in
+    sayfalar arasında fırlattığı sinyal - bkz. server.py'deki
+    api_question_bank_cancel_upload. OCR (Tesseract) tek bir sayfayı
+    işlerken kesilemez, ama sayfalar ARASINDA kontrol edilerek uzun bir
+    PDF'in ortasında durdurulabilir - taranmış PDF'lerde asıl süreyi
+    tüketen adım burası olduğu için pratikte iptal çoğunlukla saniyeler
+    içinde etkili olur."""
+
+
+def _build_page_lines_cache(doc, cancel_check=None, on_page_done=None):
     """Her sayfanın (lines, is_ocr) sonucunu BİR KEZ hesaplayıp önbelleğe
     alır. _detect_boilerplate_lines/_detect_answer_key_pages/
     _detect_questions üçü de sayfa satırlarına ihtiyaç duyar - önbellek
     olmasaydı taranmış (OCR'lı) bir PDF'te her sayfa için Tesseract İKİ-ÜÇ
     KEZ çalışırdı (işlem süresini gereksiz yere katlar - OCR zaten bu
-    hattın en pahalı adımı)."""
-    return [_get_page_lines(doc[pno]) for pno in range(doc.page_count)]
+    hattın en pahalı adımı). Taranmış PDF'lerde asıl süreyi bu döngü
+    tükettiği için on_page_done/cancel_check kancaları burada, sayfalar
+    ARASINDA çağrılır - tek bir sayfanın OCR'ı yarıda kesilemez ama bir
+    sonraki sayfaya geçmeden önce durdurulabilir/raporlanabilir."""
+    results = []
+    total = doc.page_count
+    for pno in range(total):
+        if cancel_check is not None and cancel_check():
+            raise ExtractionCancelled(f"Sayfa {pno + 1}/{total}'de iptal edildi")
+        results.append(_get_page_lines(doc[pno]))
+        if on_page_done is not None:
+            on_page_done(pno + 1, total)
+    return results
 
 
 # Sayfa başlığı/altbilgisi gibi TÜM dokümanda BİREBİR tekrarlayan satırlar
@@ -674,7 +695,7 @@ def _detect_questions(doc, skip_pages, page_lines_cache, boilerplate=frozenset()
     return questions
 
 
-def extract_questions(pdf_path, subject_name=None, booklet_code=None):
+def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_check=None, on_page_done=None):
     """PDF'i açar, cevap anahtarını ve soruları tespit eder.
 
     subject_name/booklet_code OPSİYONELDİR (varsayılan None - eski çağrılar
@@ -684,6 +705,12 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
     Yayınları formatı: tek sayfada birden fazla ders + kitapçık) denenir.
     server.py bu bilgiyi upload formundaki subject_code/booklet_code'dan
     geçirir.
+
+    cancel_check OPSİYONELDİR - verilirse sayfalar arası her adımda
+    çağrılır, True dönerse ExtractionCancelled fırlatılır (bkz. server.py
+    api_question_bank_cancel_upload). on_page_done OPSİYONELDİR - verilirse
+    her sayfa bitince (sayfa_no_1_indeksli, toplam_sayfa) ile çağrılır
+    (gerçek ilerleme raporlamak için, bkz. server.py'deki pages_processed).
 
     Döner: {
       "page_count": int,
@@ -726,7 +753,7 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
         )
         estimated_seconds = round(doc.page_count * sec_per_page, 1)
 
-        page_lines_cache = _build_page_lines_cache(doc)
+        page_lines_cache = _build_page_lines_cache(doc, cancel_check=cancel_check, on_page_done=on_page_done)
         boilerplate = _detect_boilerplate_lines(doc, page_lines_cache)
         answer_key_pages, answer_key = _detect_answer_key_pages(doc, page_lines_cache, boilerplate)
         if not answer_key:
@@ -765,15 +792,23 @@ def release_pdf_cache():
     fitz.TOOLS.store_shrink(100)
 
 
-def render_question_crop(pdf_path, page_index, rect, out_path):
-    """Tek bir sorunun kırpılmış görüntüsünü PNG olarak diske kaydeder."""
-    doc = fitz.open(pdf_path)
+def render_question_crop(pdf_path, page_index, rect, out_path, doc=None):
+    """Tek bir sorunun kırpılmış görüntüsünü PNG olarak diske kaydeder.
+
+    `doc` verilirse (bir batch'in TÜM sorularını aynı açık fitz.Document
+    üzerinden kırpan çağıran taraf - bkz. server.py'deki kırpma döngüsü)
+    dosyayı burada AÇMAZ/KAPATMAZ - 80 sorulu bir PDF'te 80 kez fitz.open()
+    yerine batch başına 1 kez açılmasını sağlamak bunun tek amacı. `doc`
+    verilmezse eskisi gibi kendi başına açıp kapatır (geriye dönük uyumlu -
+    tek soru için çağıran yerler, örn. recrop, hâlâ böyle kullanır)."""
+    _doc = doc if doc is not None else fitz.open(pdf_path)
     try:
-        page = doc[page_index]
+        page = _doc[page_index]
         pix = page.get_pixmap(clip=rect, dpi=_CROP_DPI)
         pix.save(out_path)
     finally:
-        doc.close()
+        if doc is None:
+            _doc.close()
 
 
 # Elle kırpma düzeltme ekranının arka plan görüntüsü için çözünürlük.
@@ -782,17 +817,21 @@ def render_question_crop(pdf_path, page_index, rect, out_path):
 CONTEXT_DPI = _CROP_DPI
 
 
-def render_page_image_bytes(pdf_path, page_index, dpi=CONTEXT_DPI):
+def render_page_image_bytes(pdf_path, page_index, dpi=CONTEXT_DPI, doc=None):
     """Tüm sayfayı PNG bayt dizisi olarak döndürür (elle kırpma düzeltme
     ekranının arka plan referans görüntüsü) - sayfanın puan cinsinden
-    genişlik/yüksekliğiyle birlikte, çağıran taraf ölçek hesabı yapabilsin."""
-    doc = fitz.open(pdf_path)
+    genişlik/yüksekliğiyle birlikte, çağıran taraf ölçek hesabı yapabilsin.
+
+    `doc` verilirse (bkz. render_question_crop'taki aynı amaç) dosyayı
+    burada açıp kapatmaz."""
+    _doc = doc if doc is not None else fitz.open(pdf_path)
     try:
-        page = doc[page_index]
+        page = _doc[page_index]
         pix = page.get_pixmap(dpi=dpi)
         return pix.tobytes("png"), page.rect.width, page.rect.height
     finally:
-        doc.close()
+        if doc is None:
+            _doc.close()
 
 
 def render_question_crop_from_bounds(pdf_path, page_index, x0, y0, x1, y1, out_path, dpi=_CROP_DPI):
