@@ -2962,9 +2962,13 @@ const App = {
       }
 
       // Az önce BU sekmeden yüklenen batch bitti mi? (toast + otomatik inceleme)
+      // 'queued' de HENÜZ BİTMEMİŞ sayılır (bkz. proje notu - basit DB
+      // kuyruğu) - aksi halde kuyrukta bekleyen bir iş "bitti" sanılıp
+      // _qbJustUploadedBatchId erkenden sıfırlanır, iş gerçekten bitince
+      // toast/otomatik inceleme açma hiç tetiklenmez.
       if (this._qbJustUploadedBatchId) {
         const mine = batches.find(b => b.id === this._qbJustUploadedBatchId);
-        if (mine && mine.status !== 'processing') {
+        if (mine && mine.status !== 'processing' && mine.status !== 'queued') {
           if (mine.status === 'ready_for_review') {
             UI.toast(`✅ ${mine.source_filename}: ${mine.question_count} soru tespit edildi.`, 'success');
             this._qbShowBatchGrid(mine.id);
@@ -2977,7 +2981,7 @@ const App = {
         }
       }
 
-      const anyProcessing = batches.some(b => b.status === 'processing');
+      const anyProcessing = batches.some(b => b.status === 'processing' || b.status === 'queued');
       if (anyProcessing) {
         this._qbListPollCount++;
         // ~30dk üst sınır (3s * 600) - sunucu tarafında worker çökse bile
@@ -2997,6 +3001,20 @@ const App = {
 
   _qbRenderBatchRow(b) {
     const bookletLabel = `<span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span>`;
+    if (b.status === 'queued') {
+      // Basit DB-tabanli kuyruk (bkz. proje notu): eskiden bu durum hic
+      // yoktu, ikinci bir yukleme 240s sonra duz bir hataya dusuyordu.
+      const ahead = b.queue_position || 0;
+      const aheadText = ahead > 0 ? `önünüzde ${ahead} iş var` : 'sırada, az sonra başlayacak';
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} ${bookletLabel}</div>
+            <div class="text-muted" style="font-size:12.5px">🕒 Kuyrukta — ${aheadText} • ${UI.formatDate(b.created_at)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="App._qbCancelUpload(${b.id})">✖ İptal Et</button>
+        </div>`;
+    }
     if (b.status === 'processing') {
       const total = b.page_count;
       const done = b.pages_processed || 0;
@@ -3096,11 +3114,12 @@ const App = {
     const statusEl = document.getElementById('qb-status');
     const resultsEl = document.getElementById('qb-results');
 
-    // İstek artık HEMEN döner (batch 'processing' durumunda oluşturulup
-    // gerçek OCR arka planda başlar) - bu kısa süreli kilit sadece aynı
-    // dosyanın çift tıklama/çift drop ile iki kez POST edilmesini önler,
-    // eşzamanlılık sınırını (aynı anda en fazla 2 "processing" batch)
-    // zaten sunucu (429) uyguluyor.
+    // İstek artık HEMEN döner (batch 'processing' ya da meşgulse 'queued'
+    // durumunda oluşturulup gerçek OCR - hemen ya da sırası gelince - arka
+    // planda başlar) - bu kısa süreli kilit sadece aynı dosyanın çift
+    // tıklama/çift drop ile iki kez POST edilmesini önler, eşzamanlılık
+    // sınırını (aynı anda en fazla 2 "processing"+"queued" batch) zaten
+    // sunucu (429) uyguluyor.
     if (this._qbUploadInProgress) return;
     resultsEl.innerHTML = '';
 
