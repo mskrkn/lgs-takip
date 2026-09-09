@@ -1164,6 +1164,17 @@ def _create_question_bank_tables(conn):
     batch_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
     if batch_cols and "booklet_code" not in batch_cols:
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN booklet_code TEXT NOT NULL DEFAULT 'A'")
+    # "Set silme" eskiden question_bank + question_import_batches satirlarini
+    # (onaylanmis/yayinlanmis sorular dahil) KALICI olarak DELETE ediyordu -
+    # bir olayda hangi setin ne zaman silindigini gormenin imkansiz oldugu
+    # ortaya cikti (bkz. api_question_bank_delete_batch yorumu). Artik sadece
+    # bu sutun ile isaretleniyor (question_bank.status='archived' zaten var
+    # olan tekil soru arsivleme mekanizmasiyla ayni sekilde) - fiziksel satir
+    # hicbir zaman silinmiyor, /batches listesi sadece deleted_at IS NULL
+    # olanlari gosteriyor.
+    if batch_cols and "deleted_at" not in batch_cols:
+        conn.execute("ALTER TABLE question_import_batches ADD COLUMN deleted_at TEXT")
+        conn.execute("ALTER TABLE question_import_batches ADD COLUMN deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL")
     conn.commit()
 
     _migrate_question_bank_lifecycle(conn)
@@ -7112,7 +7123,7 @@ def api_question_bank_batches():
         "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
         "SUM(CASE WHEN q.status IN ('approved','published') THEN 1 ELSE 0 END) AS approved_count "
         "FROM question_import_batches b LEFT JOIN question_bank q ON q.batch_id = b.id "
-        "WHERE b.organization_id=? GROUP BY b.id ORDER BY b.id DESC",
+        "WHERE b.organization_id=? AND b.deleted_at IS NULL GROUP BY b.id ORDER BY b.id DESC",
         (org_id,),
     ).fetchall()
     return jsonify({"batches": [dict(r) for r in rows]})
@@ -7124,7 +7135,7 @@ def api_question_bank_batch(batch_id):
     db = get_db()
     org_id = _current_org_id(db)
     batch = db.execute(
-        "SELECT * FROM question_import_batches WHERE id=? AND organization_id=?",
+        "SELECT * FROM question_import_batches WHERE id=? AND organization_id=? AND deleted_at IS NULL",
         (batch_id, org_id),
     ).fetchone()
     if not batch:
@@ -7303,45 +7314,35 @@ def _classify_question_with_ai(db, question_row):
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
 @login_required(role="admin", permission="questions.delete")
 def api_question_bank_delete_batch(batch_id):
-    """Bir yükleme setini ve içindeki TÜM soruları (onaylanmış olsa da)
-    kalıcı olarak siler - kırpma görselleri ve kaynak PDF'i diskten de
-    kaldırır. question_booklet_numbers, question_bank silinince FK CASCADE
-    ile otomatik temizlenir (bkz. get_db()'deki PRAGMA foreign_keys=ON)."""
+    """Bir yukleme setini ve icindeki sorulari SOFT-DELETE yapar (bkz.
+    question_import_batches.deleted_at migrasyonu). Eskiden bu uc
+    question_bank/question_import_batches satirlarini (onaylanmis/
+    yayinlanmis sorular dahil) KALICI olarak siliyordu; bir olayda hangi
+    setin ne zaman/kim tarafindan silindigini gostermenin imkansiz oldugu
+    ortaya cikti. Artik hicbir satir/dosya fiziksel olarak silinmiyor -
+    sorular question_bank.status='archived' (tekil soru arsivlemeyle ayni
+    mekanizma) yapilip batch deleted_at ile isaretleniyor, /batches listesi
+    bunlari gostermiyor ama veri geri alinabilir kaliyor."""
     db = get_db()
     org_id = _current_org_id(db)
     batch = db.execute(
-        "SELECT id FROM question_import_batches WHERE id=? AND organization_id=?",
+        "SELECT id FROM question_import_batches WHERE id=? AND organization_id=? AND deleted_at IS NULL",
         (batch_id, org_id),
     ).fetchone()
     if not batch:
         return jsonify({"error": "Bulunamadı."}), 404
 
-    image_rows = db.execute(
-        "SELECT image_path FROM question_bank WHERE batch_id=?", (batch_id,)
-    ).fetchall()
-
-    db.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
-    db.execute("DELETE FROM question_import_batches WHERE id=?", (batch_id,))
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE question_bank SET status='archived', archived_at=? WHERE batch_id=? AND status != 'archived'",
+        (now, batch_id),
+    )
+    db.execute(
+        "UPDATE question_import_batches SET deleted_at=?, deleted_by=? WHERE id=?",
+        (now, session["user_id"], batch_id),
+    )
     db.commit()
-    # Bu islem KALICI ve GERI ALINAMAZ (onaylanmis/yayinlanmis sorular dahil
-    # her seyi siler) - daha once hicbir izi yoktu, gercek bir olayda
-    # (bkz. proje notu) hangi setlerin ne zaman/kim tarafindan silindigini
-    # gostermenin imkansiz oldugu ortaya cikti.
     log_audit(db, "QUESTION_BATCH_DELETED", resource_type="question_import_batch", resource_id=batch_id)
-
-    for r in image_rows:
-        path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(r["image_path"]))
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-    pdf_path = _source_pdf_path(batch_id)
-    if os.path.isfile(pdf_path):
-        try:
-            os.remove(pdf_path)
-        except OSError:
-            pass
 
     return jsonify({"ok": True})
 
