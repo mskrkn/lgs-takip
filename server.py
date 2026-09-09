@@ -1023,9 +1023,11 @@ def _create_question_bank_tables(conn):
             uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             source_filename TEXT NOT NULL,
             page_count INTEGER,
+            pages_processed INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'processing'
-                CHECK(status IN ('processing','ready_for_review','completed','failed')),
+                CHECK(status IN ('processing','ready_for_review','completed','failed','cancelled')),
             error_message TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         );
 
@@ -1136,15 +1138,10 @@ def _create_question_bank_tables(conn):
     batch_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
     if batch_cols and "booklet_code" not in batch_cols:
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN booklet_code TEXT NOT NULL DEFAULT 'A'")
-    # Asenkron yükleme (bkz. api_question_bank_upload): OCR arka planda
-    # çalışırken oluşan hata artık HTTP response'ta değil bu kolonda taşınır
-    # (istek zaten uzun sürmeden dönmüş oluyor, hatayı sonradan polling ile
-    # okuyan frontend'e iletmenin tek yolu bu).
-    if batch_cols and "error_message" not in batch_cols:
-        conn.execute("ALTER TABLE question_import_batches ADD COLUMN error_message TEXT")
     conn.commit()
 
     _migrate_question_bank_lifecycle(conn)
+    _migrate_question_import_batches_progress(conn)
 
     tc_cols = [r[1] for r in conn.execute("PRAGMA table_info(teacher_classes)").fetchall()]
     if tc_cols and "subject_id" not in tc_cols:
@@ -1297,6 +1294,70 @@ def _migrate_question_bank_lifecycle(conn):
             SELECT {", ".join(cols)} FROM question_bank;
         DROP TABLE question_bank;
         ALTER TABLE question_bank_new RENAME TO question_bank;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_question_import_batches_progress(conn):
+    """question_import_batches'e sayfa-bazlı gerçek ilerleme
+    (pages_processed) ve kalıcı/DB-tabanlı iptal bayrağı (cancel_requested)
+    ekler, status CHECK kısıtına 'cancelled' ekler (ayrı, dürüst bir durum -
+    öncesinde iptal 'failed' ile karıştırılıyordu). SQLite CHECK kısıtını
+    doğrudan ALTER edemediği için _migrate_question_bank_lifecycle ile AYNI
+    kanıtlanmış desen kullanılır: question_import_batches'i ASLA geçici bir
+    isme yeniden adlandırmıyoruz - aksi halde ona REFERENCES
+    question_import_batches(id) ile bağlı question_bank'in FK metni SQLite
+    tarafından o geçici isme güncellenir ve tablo silinince kalıcı olarak
+    kırılır (bkz. _migrate_question_bank_lifecycle'daki aynı yorum)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='question_import_batches'"
+    ).fetchone()
+    if not row or "'cancelled'" in row["sql"]:
+        return  # tablo yok (ilk kurulum, yukarıdaki CREATE zaten doğru) ya da zaten migrate edilmiş
+
+    # booklet_code bu fonksiyondan HEMEN önce (yukarıdaki ALTER bloğunda)
+    # garanti ediliyor, bu yüzden burada koşulsuz var sayılabilir.
+    # error_message ise ya YOK (prod, henüz bu satıra hiç gelmedi) ya da
+    # ÖNCEKİ bir sürümün ALTER'ıyla zaten eklenmiş (staging) - iki
+    # durumu da tek kod yoluyla doğru kopyalamak için dinamik kontrol edilir.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
+    select_cols = ["id", "organization_id", "uploaded_by", "source_filename", "page_count",
+                   "status", "booklet_code", "created_at"]
+    if "error_message" in cols:
+        select_cols.append("error_message")
+
+    # KRİTİK: SQLite, foreign_keys AÇIKKEN bir tabloyu DROP ederken, ona
+    # REFERENCES ile bağlı satırların ON DELETE aksiyonunu (burada
+    # question_bank.batch_id için SET NULL) TÜM satırlar siliniyormuş GİBİ
+    # tetikler - yani DROP TABLE question_import_batches, 72 sorunun
+    # batch_id'sini SESSİZCE NULL'a çevirebilirdi (gerçek bir DB kopyası
+    # üzerinde test edilirken yakalandı). init_db()'nin bağlantısı zaten
+    # foreign_keys=OFF ile açılıyor (bkz. init_db, get_db'nin aksine) ama
+    # buna ÖRTÜK olarak güvenmek yerine burada AÇIKÇA kapatıyoruz - bu
+    # migration'ın doğruluğu çağıranın pragma durumuna bağlı kalmasın.
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    conn.executescript(
+        f"""
+        CREATE TABLE question_import_batches_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            source_filename TEXT NOT NULL,
+            page_count INTEGER,
+            pages_processed INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'processing'
+                CHECK(status IN ('processing','ready_for_review','completed','failed','cancelled')),
+            error_message TEXT,
+            cancel_requested INTEGER NOT NULL DEFAULT 0,
+            booklet_code TEXT NOT NULL DEFAULT 'A',
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO question_import_batches_new ({", ".join(select_cols)})
+            SELECT {", ".join(select_cols)} FROM question_import_batches;
+        DROP TABLE question_import_batches;
+        ALTER TABLE question_import_batches_new RENAME TO question_import_batches;
         """
     )
     conn.commit()
@@ -6700,18 +6761,21 @@ _OCR_SEMAPHORE = threading.Semaphore(1)
 # "hayalet" bos set birakan DAHA KOTU bir hata).
 _OCR_SEMAPHORE_WAIT_SECONDS = 240
 
-# Kullanıcı "İptal Et"e bastığında (bkz. api_question_bank_cancel_upload)
-# buraya batch_id eklenir - _process_question_bank_upload_async sayfalar
-# arasında bunu kontrol edip erken çıkar (bkz. pdf_question_extractor.
-# ExtractionCancelled). Semaphore ile aynı süreç-özgü kapsamda; tek worker
-# olduğu için bu yeterli.
-_CANCELLED_BATCHES_LOCK = threading.Lock()
-_CANCELLED_BATCHES = set()
+# Aynı organizasyonda aynı anda çok fazla OCR işi sunucuyu kilitlemesin diye
+# hafif bir üst sınır (gerçek bir kuyruk/sıralama DEĞİL - sadece basit bir
+# kapı). _OCR_SEMAPHORE zaten tüm platformda tek seferde 1 iş çalışmasını
+# garantiliyor; bu sadece "processing" durumundaki batch SAYISINI sınırlar
+# ki 2. istek 240s'lik semaphore beklemesine bile girmeden hızlı ve net bir
+# hata alsın.
+_MAX_CONCURRENT_PROCESSING_BATCHES = 2
 
-
-def _is_batch_cancelled(batch_id):
-    with _CANCELLED_BATCHES_LOCK:
-        return batch_id in _CANCELLED_BATCHES
+# İptal artık DB'de (question_import_batches.cancel_requested) tutulur,
+# bellekte DEĞİL - ilerleme (pages_processed) zaten her sayfada DB'ye
+# yazılıyor, aynı UPDATE'in yanında iptal bayrağını da DB'den okumak
+# bedavaya yakın. Bellek-içi bir set'in aksine bu, worker yeniden
+# başlasa bile kaybolmaz ve kullanıcı sekmeyi kapatıp saatler sonra geri
+# dönse bile (bkz. frontend'deki liste-bazlı polling) doğru durumu
+# okuyabilir.
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
@@ -6735,6 +6799,13 @@ def api_question_bank_upload():
     subject_name = subject_row["name"]
     user_id = session["user_id"]
     org_id = _current_org_id(db)
+
+    active = db.execute(
+        "SELECT COUNT(*) c FROM question_import_batches WHERE organization_id=? AND status='processing'",
+        (org_id,),
+    ).fetchone()["c"]
+    if active >= _MAX_CONCURRENT_PROCESSING_BATCHES:
+        return jsonify({"error": "Şu anda başka bir PDF işleniyor. Lütfen o tamamlanana kadar bekleyin."}), 429
 
     # 1.1(a): sınıf seviyesi ZORUNLU DEĞİL (mevcut PDF'ler zaten grade_level'sız
     # yüklendi, geriye dönük veri bozulmasın) - ama seçilirse tüm batch'e (bir
@@ -6799,7 +6870,32 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
     """api_question_bank_upload'ın arka planda çalışan kısmı - kendi sqlite
     bağlantısını açar çünkü Flask'ın istek-bazlı g.db'si bu thread'de yok.
     WAL zaten aktif (bkz. get_db) o yüzden ana thread'in eş zamanlı okuma/
-    yazmalarıyla çakışmaz."""
+    yazmalarıyla çakışmaz. İptal DB'de (cancel_requested) tutulur - bkz.
+    api_question_bank_cancel_upload; bu sayede bellek-içi bir bayrağın
+    aksine worker yeniden başlasa bile kaybolmaz."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+
+    def _cancel_requested():
+        row = conn.execute(
+            "SELECT cancel_requested FROM question_import_batches WHERE id=?", (batch_id,)
+        ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def _on_page_done(done, total):
+        # Toplam sayfa sayısı (fitz.open() ile ANINDA bilinir, OCR
+        # gerekmez) ilk sayfa biter bitmez burada yazılır ki frontend
+        # "X / Y" ilerlemesini en baştan gösterebilsin - page_count'un
+        # SADECE extract_questions bitince yazıldığı eski davranışta
+        # ilerleme çubuğunun paydası işlem bitene kadar hiç görünmüyordu.
+        conn.execute(
+            "UPDATE question_import_batches SET pages_processed=?, page_count=? WHERE id=?",
+            (done, total, batch_id),
+        )
+        conn.commit()
+
     def _fail(message):
         # Başarısız batch'in kaynak PDF'i başka hiçbir yerde kullanılmaz
         # (sadece başarılı batch'lerin "recrop"/export özellikleri source_pdfs'e
@@ -6815,41 +6911,38 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
         )
         conn.commit()
 
-    def _cancelled_cleanup():
-        # api_question_bank_cancel_upload DB satırını zaten 'failed' +
-        # iptal mesajıyla güncelledi - burada sadece kaynağı temizliyoruz,
-        # status/error_message'ın üzerine yazmıyoruz.
+    def _cancel():
+        # 'failed' değil, ayrı ve dürüst bir durum: kullanıcı BİLEREK
+        # durdurdu, bir şey ters gitmedi.
         pdf_question_extractor.release_pdf_cache()
         try:
             os.remove(pdf_path)
         except OSError:
             pass
+        conn.execute("UPDATE question_import_batches SET status='cancelled' WHERE id=?", (batch_id,))
+        conn.commit()
 
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout=5000")
     try:
         if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SEMAPHORE_WAIT_SECONDS):
-            if _is_batch_cancelled(batch_id):
-                _cancelled_cleanup()
+            if _cancel_requested():
+                _cancel()
             else:
                 _fail("Sistem şu anda başka bir PDF işliyor. Lütfen birkaç dakika sonra tekrar deneyin.")
             return
-        if _is_batch_cancelled(batch_id):
+        if _cancel_requested():
             _OCR_SEMAPHORE.release()
-            _cancelled_cleanup()
+            _cancel()
             return
         try:
             try:
                 result = pdf_question_extractor.extract_questions(
                     pdf_path, subject_name=subject_name, booklet_code=booklet_code,
-                    cancel_check=lambda: _is_batch_cancelled(batch_id),
+                    cancel_check=_cancel_requested, on_page_done=_on_page_done,
                 )
                 if result["page_count"] > _MAX_PDF_PAGES:
                     raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
             except pdf_question_extractor.ExtractionCancelled:
-                _cancelled_cleanup()
+                _cancel()
                 return
             except Exception as exc:
                 pdf_question_extractor.release_pdf_cache()
@@ -6858,8 +6951,8 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
         finally:
             _OCR_SEMAPHORE.release()
 
-        if _is_batch_cancelled(batch_id):
-            _cancelled_cleanup()
+        if _cancel_requested():
+            _cancel()
             return
 
         for q in result["questions"]:
@@ -6880,23 +6973,23 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
             )
 
         pdf_question_extractor.release_pdf_cache()
-        # 'processing' koşulu: iptal, tam bu satırlar arasındaki dar
-        # pencerede geldiyse (yukarıdaki kontrolden SONRA, buradan ÖNCE)
-        # zaten 'failed' yazılmış durumu ezmesin - 0 satır etkilenirse az
-        # önce eklenen sorular "iptal edilmiş" bir batch'in altında yetim
-        # kalmasın diye geri alınır.
+        # cancel_requested=0 koşulu: iptal tam bu satırlar arasındaki dar
+        # pencerede (yukarıdaki kontrolden SONRA, buradan ÖNCE) geldiyse
+        # - kırpma/insert döngüsünün kendi içinde ayrı bir kontrol noktası
+        # yok çünkü OCR içermediği için zaten hızlı - status hâlâ
+        # 'processing' olsa bile bunu 'ready_for_review' olarak
+        # tamamlanmış saymayız. 0 satır etkilenirse az önce eklenen
+        # sorular "iptal edilmiş" bir batch'in altında yetim kalmasın diye
+        # geri alınır.
         cur = conn.execute(
             "UPDATE question_import_batches SET status='ready_for_review', page_count=? "
-            "WHERE id=? AND status='processing'",
+            "WHERE id=? AND status='processing' AND cancel_requested=0",
             (result["page_count"], batch_id),
         )
         if cur.rowcount == 0:
             conn.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
             conn.commit()
-            try:
-                os.remove(pdf_path)
-            except OSError:
-                pass
+            _cancel()
             return
         conn.commit()
     except Exception as exc:
@@ -6906,38 +6999,35 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
         except Exception:
             pass
     finally:
-        with _CANCELLED_BATCHES_LOCK:
-            _CANCELLED_BATCHES.discard(batch_id)
         conn.close()
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>/cancel", methods=["POST"])
 @login_required(role="admin", permission="questions.create")
 def api_question_bank_cancel_upload(batch_id):
-    """Hâlâ 'processing' durumundaki bir yüklemeyi iptal eder - DB satırı
-    hemen 'failed' olarak işaretlenir, arka plan thread'i ise sayfalar
-    arası kontrol noktalarında bunu görüp kendini durdurur (bkz.
-    _process_question_bank_upload_async, pdf_question_extractor.
-    ExtractionCancelled). Tek worker olduğu için _CANCELLED_BATCHES
-    süreç-içi paylaşılan durum yeterli."""
+    """Hâlâ 'processing' durumundaki bir yüklemeye iptal İSTEĞİ bırakır -
+    ANINDA durmaz (bkz. pdf_question_extractor._build_page_lines_cache):
+    arka plan thread'i (_process_question_bank_upload_async) bunu bir
+    sonraki sayfa kontrol noktasında görüp kendini durdurur ve status'u
+    asıl 'cancelled' yapar. cancel_requested DB'de tutulur (bellekte
+    DEĞİL) - worker yeniden başlasa ya da kullanıcı sekmeyi kapatıp geri
+    dönse bile kaybolmaz."""
     db = get_db()
     org_id = _current_org_id(db)
-    batch = db.execute(
-        "SELECT status FROM question_import_batches WHERE id=? AND organization_id=?",
+    cur = db.execute(
+        "UPDATE question_import_batches SET cancel_requested=1 "
+        "WHERE id=? AND organization_id=? AND status='processing'",
         (batch_id, org_id),
-    ).fetchone()
-    if not batch:
-        return jsonify({"error": "Bulunamadı."}), 404
-    if batch["status"] != "processing":
-        return jsonify({"error": "Bu yükleme zaten tamamlanmış ya da iptal edilmiş."}), 409
-
-    with _CANCELLED_BATCHES_LOCK:
-        _CANCELLED_BATCHES.add(batch_id)
-    db.execute(
-        "UPDATE question_import_batches SET status='failed', error_message=? WHERE id=? AND status='processing'",
-        ("Kullanıcı tarafından iptal edildi.", batch_id),
     )
     db.commit()
+    if cur.rowcount == 0:
+        row = db.execute(
+            "SELECT id FROM question_import_batches WHERE id=? AND organization_id=?",
+            (batch_id, org_id),
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Bulunamadı."}), 404
+        return jsonify({"error": "Bu yükleme zaten tamamlanmış ya da durdurulmuş."}), 409
     return jsonify({"ok": True})
 
 
@@ -6947,7 +7037,8 @@ def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
     rows = db.execute(
-        "SELECT b.id, b.source_filename, b.status, b.error_message, b.page_count, b.booklet_code, b.created_at, "
+        "SELECT b.id, b.source_filename, b.status, b.error_message, b.page_count, b.pages_processed, "
+        "b.cancel_requested, b.booklet_code, b.created_at, "
         "COUNT(q.id) AS question_count, "
         "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
         "SUM(CASE WHEN q.status IN ('approved','published') THEN 1 ELSE 0 END) AS approved_count "
