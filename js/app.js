@@ -3425,6 +3425,7 @@ const App = {
                 <div id="qbr-skills-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
                 <div style="display:flex;gap:6px;align-items:center">
                   <span id="qbr-skills-total" class="text-muted" style="font-size:12px"></span>
+                  <button class="btn btn-ghost btn-sm" onclick="App._qbEqualDistributeSkillWeights()" title="İşaretli becerilere eşit ağırlık dağıt">⚖️ Eşit Dağıt</button>
                   <button class="btn btn-secondary btn-sm" onclick="App._qbSaveSkills()">💾 Becerileri Kaydet</button>
                 </div>
               </div>
@@ -3577,7 +3578,7 @@ const App = {
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
-    await this._qbLoadSkillsForQuestion(q.id);
+    await this._qbLoadSkillsForQuestion(q.id, q.subject_id);
     await this._qbLoadCurriculumForQuestion(q);
   },
 
@@ -3596,11 +3597,78 @@ const App = {
     if (hintEl) {
       const s = q.ai_suggested_json;
       if (!s) { hintEl.innerHTML = ''; return; }
+      // NOT: "beceri" alanı burada AI sınıflandırıcının JSON çıktısındaki
+      // tarihsel isim - gerçekte bir KAZANIM (learning_outcome) önerisidir,
+      // question_skills tablosundaki gerçek "beceri" (Problem Çözme gibi
+      // ders-kesişen yetenek) kavramıyla KARIŞTIRILMAMALI. API sözleşmesini
+      // kırmamak için JSON alan adı "beceri" olarak bırakıldı, sadece
+      // UI etiketi düzeltildi.
+      //
+      // topic_id/learning_outcome_id (q.topic_id/q.learning_outcome_id)
+      // artık kullanılmıyor - gerçek etiketleme question_curriculum_tags
+      // üzerinden çoklu/ağırlıklı (bkz. _qbLoadCurriculumForQuestion). Bu
+      // yüzden "zaten etiketlenmiş mi" kontrolü o state'e (curriculumTagsState)
+      // bakar, hep-null olan eski kolonlara değil.
+      const currentTags = (this._qbState && this._qbState.curriculumTagsState) || {};
+      const alreadyTagged = (name) => Object.values(currentTags).some(
+        t => _qbNormalizeCurriculumName(t.name) === _qbNormalizeCurriculumName(name)
+      );
       const lines = [];
       if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> (henüz mevcut ünite listesinde eşleşme yoksa otomatik bağlanmaz)`);
-      if (s.konu && !q.topic_id) lines.push(`Konu önerisi: <b>${s.konu}</b>`);
-      if (s.beceri && !q.learning_outcome_id) lines.push(`Beceri önerisi: <b>${s.beceri}</b>`);
+      if (s.konu && !alreadyTagged(s.konu)) {
+        lines.push(`Konu önerisi: <b>${s.konu}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" onclick="App._qbUseAiCurriculumSuggestion('konu', ${JSON.stringify(s.konu)})">Kullan</button>`);
+      }
+      if (s.beceri && !alreadyTagged(s.beceri)) {
+        lines.push(`Kazanım önerisi: <b>${s.beceri}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" onclick="App._qbUseAiCurriculumSuggestion('kazanim', ${JSON.stringify(s.beceri)})">Kullan</button>`);
+      }
       hintEl.innerHTML = lines.length ? lines.map(l => `<div>💡 ${l}</div>`).join('') : '';
+    }
+  },
+
+  // AI'nin önerdiği konu/kazanım METNİNİ, o soru için zaten yüklenmiş
+  // müfredat ağacında (bkz. _qbLoadCurriculumForQuestion) arayıp eşleşeni
+  // bulur - bulursa tema/konu select'lerini oraya götürür ve (kazanım
+  // için) ilgili kutucuğu işaretler. Otomatik/sessiz YAZMA yok - admin
+  // hâlâ "Kullan" butonuna tıklamalı (AI hiçbir zaman sessizce taksonomi
+  // atamaz ilkesiyle tutarlı).
+  _qbUseAiCurriculumSuggestion(level, suggestionText) {
+    const s = this._qbState;
+    if (!s) return;
+    const target = _qbNormalizeCurriculumName(suggestionText);
+    const tree = s.curriculumTree || [];
+    for (const tema of tree) {
+      for (const konu of (tema.children || [])) {
+        if (level === 'konu' && _qbNormalizeCurriculumName(konu.name) === target) {
+          this._qbSelectCurriculumPath(tema.id, konu.id);
+          return;
+        }
+        if (level === 'kazanim') {
+          const match = (konu.children || []).find(k => _qbNormalizeCurriculumName(k.name) === target);
+          if (match) {
+            this._qbSelectCurriculumPath(tema.id, konu.id);
+            // Select'ler değişince liste yeniden çizilir - kutucuğun
+            // DOM'a gelmesini bir sonraki tick'e bırakıp öyle işaretliyoruz.
+            setTimeout(() => {
+              const checkbox = document.querySelector(`#qbr-curr-kazanim-list input[data-node-id="${match.id}"]`);
+              if (checkbox && !checkbox.checked) { checkbox.checked = true; this._qbToggleCurriculumTag(checkbox); }
+            }, 0);
+            return;
+          }
+        }
+      }
+    }
+    UI.toast('Müfredat ağacında eşleşen bir kayıt bulunamadı - elle seçebilirsiniz.', 'warning');
+  },
+
+  _qbSelectCurriculumPath(temaId, konuId) {
+    const temaSelect = document.getElementById('qbr-curr-tema-select');
+    const konuSelect = document.getElementById('qbr-curr-konu-select');
+    if (!temaSelect) return;
+    temaSelect.value = String(temaId);
+    this._qbRenderCurriculumKonuSelect();
+    if (konuSelect) {
+      konuSelect.value = String(konuId);
+      this._qbRenderCurriculumKazanimList();
     }
   },
 
@@ -3694,14 +3762,24 @@ const App = {
   },
 
   // ---- Beceriler (bölüm 10.3) ----
-  async _qbLoadSkillsForQuestion(questionId) {
+  async _qbLoadSkillsForQuestion(questionId, subjectId) {
     const s = this._qbState;
     if (!s) return;
-    if (!s.activeSkillsCache) {
-      const res = await fetch('/api/admin/question-bank/skills?status=active');
+    // Cache subject'e göre anahtarlanır - bir batch neredeyse hep tek
+    // ders olsa da, karışık batch'lerde her ders kendi usage_count
+    // sıralamasını görsün diye (bkz. api_question_bank_list_skills'teki
+    // subject_id parametresi).
+    if (!s.activeSkillsCacheBySubject) s.activeSkillsCacheBySubject = {};
+    const cacheKey = subjectId || 'none';
+    if (!s.activeSkillsCacheBySubject[cacheKey]) {
+      const url = subjectId
+        ? `/api/admin/question-bank/skills?status=active&subject_id=${subjectId}`
+        : '/api/admin/question-bank/skills?status=active';
+      const res = await fetch(url);
       const data = await res.json();
-      s.activeSkillsCache = res.ok ? (data.skills || []) : [];
+      s.activeSkillsCacheBySubject[cacheKey] = res.ok ? (data.skills || []) : [];
     }
+    s.activeSkillsCache = s.activeSkillsCacheBySubject[cacheKey];
     const res = await fetch(`/api/admin/question-bank/questions/${questionId}/skills`);
     const data = await res.json();
     const current = {};
@@ -3713,22 +3791,68 @@ const App = {
     const wrap = document.getElementById('qbr-skills-rows');
     if (!wrap) return;
     if (!activeSkills.length) {
-      wrap.innerHTML = `<span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok - "Beceriler" bölümünden önce bir beceri önerip onaylatın.</span>`;
+      wrap.innerHTML = `
+        <span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok.</span>
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <input type="text" class="form-control" id="qbr-skill-inline-name" style="max-width:220px;font-size:12.5px" placeholder="Beceri adı (örn. Ortak Payda Bulma)">
+          <button class="btn btn-secondary btn-sm" onclick="App._qbProposeSkillInline()">➕ Öner</button>
+        </div>`;
       this._qbUpdateSkillsTotal();
       return;
     }
-    wrap.innerHTML = activeSkills.map(sk => {
+    const row = (sk) => {
       const checked = sk.id in currentWeights;
+      const usageLabel = sk.usage_count ? `<span class="text-muted" style="font-size:11px">(${sk.usage_count} soruda)</span>` : '';
       return `<div style="display:flex;gap:8px;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;flex:1;font-size:13px;cursor:pointer">
           <input type="checkbox" class="qbr-skill-check" data-skill-id="${sk.id}" ${checked ? 'checked' : ''} onchange="App._qbUpdateSkillsTotal()">
-          ${sk.name}
+          ${sk.name} ${usageLabel}
         </label>
-        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100"
+        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100" step="0.01"
                value="${checked ? currentWeights[sk.id] : ''}" placeholder="%" oninput="App._qbUpdateSkillsTotal()">
       </div>`;
-    }).join('');
+    };
+    // usage_count_this_subject > 0 olanlar üstte (bkz. api_question_bank_
+    // list_skills'teki ORDER BY - liste zaten bu sırayla geliyor, burada
+    // sadece aradaki ayrım başlığı ekleniyor).
+    const splitIdx = activeSkills.findIndex(sk => !(sk.usage_count_this_subject > 0));
+    const thisSubject = splitIdx === -1 ? activeSkills : activeSkills.slice(0, splitIdx);
+    const others = splitIdx === -1 ? [] : activeSkills.slice(splitIdx);
+    let html = thisSubject.map(row).join('');
+    if (others.length) {
+      html += `<div class="text-muted" style="font-size:11px;margin:6px 0 2px">— diğer derslerde kullanılan beceriler —</div>` + others.map(row).join('');
+    }
+    wrap.innerHTML = html;
     this._qbUpdateSkillsTotal();
+  },
+
+  _qbEqualDistributeSkillWeights() {
+    const checked = Array.from(document.querySelectorAll('.qbr-skill-check:checked'));
+    if (!checked.length) return;
+    const even = Math.floor((100 / checked.length) * 100) / 100;
+    const remainder = Math.round((100 - even * (checked.length - 1)) * 100) / 100;
+    checked.forEach((cb, i) => {
+      const input = document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`);
+      if (input) input.value = i === checked.length - 1 ? remainder : even;
+    });
+    this._qbUpdateSkillsTotal();
+  },
+
+  async _qbProposeSkillInline() {
+    const nameEl = document.getElementById('qbr-skill-inline-name');
+    const name = (nameEl?.value || '').trim();
+    if (!name) { UI.toast('Beceri adı gerekli.', 'warning'); return; }
+    try {
+      const res = await fetch('/api/admin/question-bank/skills', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Beceri önerilemedi.');
+      UI.toast('Beceri önerildi - onay bekliyor (dört göz ilkesi, siz onaylayamazsınız).', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
   },
 
   _qbUpdateSkillsTotal() {
@@ -4559,6 +4683,14 @@ const App = {
     this.navigateTo('dashboard');
   },
 };
+
+// AI önerisi metnini müfredat ağacındaki isimlerle karşılaştırmak için -
+// tam eşleşme aramıyoruz (AI'nin ifadesi MEB metniyle birebir aynı
+// olmayabilir) ama en azından büyük/küçük harf, baş/son boşluk ve İ/i
+// farklarını (Türkçe locale) göz ardı ediyoruz (bkz. App._qbUseAiCurriculumSuggestion).
+function _qbNormalizeCurriculumName(text) {
+  return (text || '').toString().trim().toLocaleLowerCase('tr');
+}
 
 // ---- Boot ----
 document.addEventListener('DOMContentLoaded', () => {

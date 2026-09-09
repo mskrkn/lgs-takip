@@ -7114,6 +7114,12 @@ QUESTION_DIFFICULTIES = ("kolay", "orta", "zor")
 QUESTION_PATTERNS = ("islem_sorusu", "problem_sorusu", "yorum_sorusu", "yeni_nesil_soru")
 QUESTION_TYPES = ("coktan_secmeli", "acik_uclu", "dogru_yanlis", "eslestirme")
 
+# NOT: aşağıdaki prompt'taki "beceri" alanı bir KAZANIM (learning_outcome)
+# önerisidir - question_skills tablosundaki gerçek "beceri" (ders-kesişen
+# ölçülebilir yetenek, örn. "Ortak Payda Bulma") kavramıyla KARIŞTIRILMAMALI,
+# sadece tarihsel isimlendirme, iki ayrı taksonomi. Frontend'de bu alan
+# "Kazanım önerisi" olarak gösterilir (bkz. _qbRenderAiHints). JSON alan
+# adı API sözleşmesini kırmamak için "beceri" olarak KALIYOR.
 _AI_CLASSIFIER_SYSTEM_PROMPT = """Sen bir soru sınıflandırma asistanısın. Sana bir soru görseli verilecek.
 Görseldeki soruyu analiz edip SADECE aşağıdaki JSON formatında yanıt ver, başka hiçbir açıklama ekleme:
 
@@ -7866,16 +7872,28 @@ def _propose_skill(db, name, description, user_id):
 def api_question_bank_list_skills():
     db = get_db()
     status = request.args.get("status")
+    # subject_id VERİLİRSE beceriler FİLTRELENMEZ (beceriler kasıtlı olarak
+    # ders-kesişen/cross-cutting - "Problem Çözme" hem matematikte hem fende
+    # geçerli olabilir, bkz. skills tablosunda subject_id sütunu YOK) -
+    # sadece bu dersten en az bir kullanımı olanlar üste SIRALANIR.
+    # usage_count_this_subject frontend'de "bu ders" / "diğer dersler"
+    # ayrımı için, usage_count genel popülerlik ikinci sıralama anahtarı.
+    subject_id = request.args.get("subject_id", type=int)
     query = (
         "SELECT sk.id, sk.name, sk.description, sk.status, sk.rejection_reason, sk.created_at, "
-        "u.display_name AS created_by_name, sk.created_by = ? AS is_own "
-        "FROM skills sk LEFT JOIN users u ON u.id = sk.created_by"
+        "u.display_name AS created_by_name, sk.created_by = ? AS is_own, "
+        "COUNT(DISTINCT qs.question_id) AS usage_count, "
+        "COUNT(DISTINCT CASE WHEN qb.subject_id=? THEN qs.question_id END) AS usage_count_this_subject "
+        "FROM skills sk "
+        "LEFT JOIN users u ON u.id = sk.created_by "
+        "LEFT JOIN question_skills qs ON qs.skill_id = sk.id "
+        "LEFT JOIN question_bank qb ON qb.id = qs.question_id"
     )
-    params = [session["user_id"]]
+    params = [session["user_id"], subject_id]
     if status:
         query += " WHERE sk.status = ?"
         params.append(status)
-    query += " ORDER BY sk.created_at DESC"
+    query += " GROUP BY sk.id ORDER BY usage_count_this_subject DESC, usage_count DESC, sk.created_at DESC"
     rows = db.execute(query, params).fetchall()
     return jsonify({"skills": [dict(r) | {"is_own": bool(r["is_own"])} for r in rows]})
 
