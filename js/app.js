@@ -4657,9 +4657,18 @@ const App = {
     try {
       return JSON.parse(raw);
     } catch (_) {
+      // new Function()/eval() ile ayristirmak, admin'in kendi oturumunda
+      // (cerezleriyle) keyfi JS calistirilmasina acik bir kapiydi - "buraya
+      // optimize edilmis config'i yapistir" tarzi bir sosyal muhendislikle
+      // istismar edilebilirdi (bkz. audit). Bunun yerine JS nesne
+      // literalini (tirnaksiz anahtarlar, tek tirnakli degerler, sondaki
+      // virgul) KOD CALISTIRMADAN gecerli JSON'a cevirip JSON.parse ediyoruz.
       const objectLiteral = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      // eslint-disable-next-line no-new-func
-      return new Function('"use strict"; return (' + objectLiteral + ');')();
+      const jsonish = objectLiteral
+        .replace(/([{,]\s*)([A-Za-z_$][A-Za-z0-9_$]*)\s*:/g, '$1"$2":')
+        .replace(/'((?:[^'\\]|\\.)*)'/g, (_m, s) => JSON.stringify(s.replace(/\\'/g, "'")))
+        .replace(/,(\s*[}\]])/g, '$1');
+      return JSON.parse(jsonish);
     }
   },
 
