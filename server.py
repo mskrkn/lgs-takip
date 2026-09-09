@@ -7075,6 +7075,15 @@ def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_
     except Exception as exc:
         traceback.print_exc()
         try:
+            # Sorulari donguye ekleme sirasinda (satir ~7038) bir hata cikarsa
+            # bu conn'daki islenmemis (commit edilmemis) INSERT'ler hala
+            # bekliyor olur - _fail()'in kendi commit()'i bunlari da "failed"
+            # UPDATE'iyle BIRLIKTE kalici hale getirip yetim satirlar
+            # birakiyordu (UI 'failed' batch'i "hicbir sey yok" sayiyor).
+            # cancel_requested yarisi icin zaten var olan ayni temizlik
+            # deseniyle (satir ~7070) tutarli: _fail'den ONCE bu batch'e ait
+            # ne varsa geri al.
+            conn.execute("DELETE FROM question_bank WHERE batch_id=?", (batch_id,))
             _fail(f"Beklenmeyen hata: {exc}")
         except Exception:
             pass
