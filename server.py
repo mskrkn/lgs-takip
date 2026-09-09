@@ -3723,6 +3723,25 @@ def api_register_teacher():
     if db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
         return jsonify({"error": "Bu kullanıcı adı zaten kullanılıyor."}), 400
 
+    # Guvenlik: className frontend'deki acilir listeden geldigi VARSAYILIYORDU,
+    # ama bu uc dogrudan cagrilirsa (davet kodu tek basina yeterli, admin
+    # onayi yok) hicbir dogrulama yoktu - "*" (teacher_class_list() bunu TUM
+    # siniflara sinirsiz erisim olarak yorumluyor) veya virgullu coklu sinif
+    # listesi gonderilerek bir okulun butun ogrenci/sinav/sonuc verisine
+    # okul-ici yetki yukseltmesi yapilabiliyordu (bkz. audit). Self-kayit
+    # SADECE o okulda GERCEKTEN var olan TEK bir sinifa izin vermeli; coklu
+    # sinif/"*" erisimi yalnizca admin'in bilerek verdigi bir yetki devri
+    # olabilir (bkz. /api/admin/users/<id>/delegate), self-servis degil.
+    if "*" in class_name or "," in class_name:
+        return jsonify({"error": "Geçersiz sınıf adı."}), 400
+    valid_classes = {r["class_name"] for r in db.execute(
+        "SELECT DISTINCT class_name FROM students WHERE organization_id = ? "
+        "AND class_name IS NOT NULL AND class_name != ''",
+        (org["id"],),
+    ).fetchall()}
+    if class_name not in valid_classes:
+        return jsonify({"error": "Geçersiz sınıf. Lütfen listeden bir sınıf seçin."}), 400
+
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
         "organization_id, created_at) VALUES (?,?,?,?,?,?,?)",
