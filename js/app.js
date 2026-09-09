@@ -3613,13 +3613,21 @@ const App = {
       const alreadyTagged = (name) => Object.values(currentTags).some(
         t => _qbNormalizeCurriculumName(t.name) === _qbNormalizeCurriculumName(name)
       );
+      // data-* + &quot; kaçışı (JSON.stringify DEĞİL) - onclick="..." zaten
+      // çift tırnakla sınırlı bir HTML attribute'u, JSON.stringify'ın
+      // ÜRETTİĞİ çift tırnaklar bu attribute'u erken kapatıp geri kalan
+      // metni HTML olarak sızdırıyordu (buton hiç görünmüyordu - gerçek
+      // olayla doğrulandı). Aynı desen zaten _qbRenderCurriculumKazanimList'te
+      // (data-name="...".replace(/"/g,'&quot;')) kullanılıyor, burada da
+      // aynısı uygulandı.
+      const esc = (t) => (t || '').replace(/"/g, '&quot;');
       const lines = [];
       if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> (henüz mevcut ünite listesinde eşleşme yoksa otomatik bağlanmaz)`);
       if (s.konu && !alreadyTagged(s.konu)) {
-        lines.push(`Konu önerisi: <b>${s.konu}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" onclick="App._qbUseAiCurriculumSuggestion('konu', ${JSON.stringify(s.konu)})">Kullan</button>`);
+        lines.push(`Konu önerisi: <b>${s.konu}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="konu" data-suggestion="${esc(s.konu)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
       }
       if (s.beceri && !alreadyTagged(s.beceri)) {
-        lines.push(`Kazanım önerisi: <b>${s.beceri}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" onclick="App._qbUseAiCurriculumSuggestion('kazanim', ${JSON.stringify(s.beceri)})">Kullan</button>`);
+        lines.push(`Kazanım önerisi: <b>${s.beceri}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="kazanim" data-suggestion="${esc(s.beceri)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
       }
       hintEl.innerHTML = lines.length ? lines.map(l => `<div>💡 ${l}</div>`).join('') : '';
     }
