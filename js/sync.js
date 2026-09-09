@@ -76,7 +76,17 @@ const SyncModule = {
       }
 
       this.firestoreDb = firebase.firestore();
-      
+
+      // Firestore kurallari artik auth.token.org_id'yi oda adiyla (bkz.
+      // asagida) karsilastiriyor - kimlik dogrulanmadan HICBIR okuma/yazma
+      // izni yok (2026-09 acik erisim olayindan sonra eklendi). Bu adim
+      // SADECE bizim paylasilan varsayilan Firebase projemiz icin gecerli;
+      // bir okul kendi Firebase projesini elle girmisse (Ayarlar sayfasi),
+      // o proje icin kimlik dogrulama/kural sorumlulugu kendilerinde.
+      if (config.projectId === DEFAULT_FIREBASE_CONFIG.projectId) {
+        await this._authenticateWithServer();
+      }
+
       // Save config
       localStorage.setItem('lgs_firebase_config', JSON.stringify(config));
       if (!this.syncKey) {
@@ -108,9 +118,26 @@ const SyncModule = {
     }
   },
 
+  // Sunucudan (Flask oturumuna gore) organization_id icine gomulu bir
+  // Firebase custom token alip Firebase Auth ile giris yapar. Basarisiz
+  // olursa (orn. sunucuda servis hesabi tanimli degil) hata yukariya
+  // firlatilir - connectFirebase bunu yakalayip baglantiyi 'error' yapar,
+  // boylece sessizce kimliksiz/izinsiz bir baglanti kurulmus gibi gorunmez.
+  async _authenticateWithServer() {
+    const res = await fetch('/api/firebase-token');
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.token) {
+      throw new Error(body.error || 'Bulut kimlik doğrulama tokeni alınamadı');
+    }
+    await firebase.auth().signInWithCustomToken(body.token);
+  },
+
   // Disconnect from Firebase
   disconnect() {
     this.stopRealtimeListener();
+    if (window.firebase && firebase.auth && firebase.auth().currentUser) {
+      firebase.auth().signOut().catch(() => {});
+    }
     this.firestoreDb = null;
     this.status = 'disconnected';
     localStorage.removeItem('lgs_firebase_config');
