@@ -3950,8 +3950,16 @@ const App = {
     const temaSelect = document.getElementById('qbr-curr-tema-select');
     if (!s || !temaSelect) return;
     const tree = s.curriculumTree || [];
+    // Soru grade_level'siz geldiyse (bkz. api_question_bank_curriculum'daki
+    // fallback) agac BIRDEN FAZLA sinif seviyesini birden iceriyor olabilir -
+    // ayni isimli temalar (orn. "Sayilar ve Nicelikler" her sinifta var)
+    // birbirinden ayirt edilemez hale gelmesin diye bu durumda sinif
+    // etiketini de gosteriyoruz (tek sinif varsa gereksiz kalabalik olmasin
+    // diye eklemiyoruz).
+    const grades = new Set(tree.map(t => t.grade_level).filter(Boolean));
+    const showGrade = grades.size > 1;
     temaSelect.innerHTML = tree.length
-      ? tree.map(t => `<option value="${t.id}">${t.name}</option>`).join('')
+      ? tree.map(t => `<option value="${t.id}">${showGrade ? `${t.grade_level}. Sınıf — ` : ''}${t.name}</option>`).join('')
       : `<option value="">— Bu sınıf/ders için müfredat yok —</option>`;
     temaSelect.onchange = () => this._qbRenderCurriculumKonuSelect();
     this._qbRenderCurriculumKonuSelect();
