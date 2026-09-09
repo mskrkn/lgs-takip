@@ -3223,6 +3223,7 @@ const App = {
             <button class="btn btn-ghost btn-sm" onclick="App._qbGridSelectNone()">Seçimi Temizle</button>
             <span class="text-muted" style="font-size:12.5px">${s.selected.size} seçili</span>
             <span style="flex:1"></span>
+            <button class="btn btn-secondary btn-sm" onclick="App._qbGridShowBulkTag()">🏷️ Toplu Etiketle</button>
             <button class="btn btn-primary btn-sm" onclick="App._qbGridBulk('approved')">✅ Seçilenleri Onayla</button>
             <button class="btn btn-danger btn-sm" onclick="App._qbGridBulk('excluded')">🚫 Seçilenleri Hariç Tut</button>
           </div>
@@ -3290,6 +3291,113 @@ const App = {
       s.selected.clear();
       await this._qbShowBatchGrid(s.batchId);
       this.loadQuestionBankBatches();
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  // ---- Toplu Etiketleme (P0 madde 1, soru-havuzu-etiketleme-prompt.md) ----
+  // Bir batch'teki sorular cogunlukla ayni ders+sinif+genelde ayni unite -
+  // tek tek her soruda konu/sinif/zorluk secmek yerine secili sorulara TEK
+  // seferde uygulanabilir. onlyIfEmpty checkbox'i (varsayilan isaretli)
+  // zaten doldurulmus alanlarin uzerine SESSIZCE yazilmasini engeller -
+  // bkz. api_question_bank_bulk_tag'deki ayni ilke.
+  async _qbGridShowBulkTag() {
+    const s = this._qbGridState;
+    if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
+    const subjectId = s.questions[0]?.subject_id;
+    const [topicsRes, gradesRes] = await Promise.all([
+      fetch(`/api/admin/question-bank/topics?subject_id=${subjectId}`),
+      fetch('/api/admin/question-bank/grade-levels'),
+    ]);
+    const topics = (await topicsRes.json()).topics || [];
+    const gradeLevels = (await gradesRes.json()).gradeLevels || [];
+
+    const overlay = document.createElement('div');
+    overlay.id = 'qb-bulktag-overlay';
+    overlay.className = 'modal-overlay active';
+    overlay.style.zIndex = '1100';
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <h2>🏷️ Toplu Etiketle <span class="text-muted" style="font-weight:400;font-size:13px">(${s.selected.size} soru)</span></h2>
+          <button class="modal-close" onclick="document.getElementById('qb-bulktag-overlay').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Konu <span class="text-muted" style="font-weight:400">(boş bırakılırsa değiştirilmez)</span></label>
+            <select class="form-select" id="qb-bulktag-topic">
+              <option value="">— Değiştirme —</option>
+              ${topics.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Sınıf Seviyesi</label>
+            <select class="form-select" id="qb-bulktag-grade">
+              <option value="">— Değiştirme —</option>
+              ${gradeLevels.map(g => `<option value="${g.id}">${g.name}. Sınıf</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Zorluk</label>
+            <select class="form-select" id="qb-bulktag-difficulty">
+              <option value="">— Değiştirme —</option>
+              <option value="1">1 - Çok Kolay</option>
+              <option value="2">2 - Kolay</option>
+              <option value="3">3 - Orta</option>
+              <option value="4">4 - Zor</option>
+              <option value="5">5 - Çok Zor</option>
+            </select>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer">
+            <input type="checkbox" id="qb-bulktag-only-empty" checked>
+            <span style="font-size:13px">Sadece bu alanı BOŞ olan sorulara uygula (zaten girilmiş değerlerin üzerine yazma)</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="document.getElementById('qb-bulktag-overlay').remove()">İptal</button>
+          <button class="btn btn-primary" onclick="App._qbGridApplyBulkTag()">Uygula</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  },
+
+  async _qbGridApplyBulkTag() {
+    const s = this._qbGridState;
+    if (!s) return;
+    const topicId = document.getElementById('qb-bulktag-topic').value;
+    const gradeLevelId = document.getElementById('qb-bulktag-grade').value;
+    const difficultyLevel = document.getElementById('qb-bulktag-difficulty').value;
+    const onlyIfEmpty = document.getElementById('qb-bulktag-only-empty').checked;
+    if (!topicId && !gradeLevelId && !difficultyLevel) {
+      UI.toast('En az bir alan seçin.', 'warning');
+      return;
+    }
+    // "Hepsinin üzerine yaz" bilerek seçildiğinde ekstra bir onay iste -
+    // geri alınamaz bir toplu değişiklik, tek tıkla kazara tetiklenmesin.
+    if (!onlyIfEmpty) {
+      const ok = await UI.confirm(
+        `Bu, seçili ${s.selected.size} sorunun ilgili alanlarını, ZATEN GİRİLMİŞ olsalar bile üzerine yazacak. Emin misiniz?`,
+        '⚠️ Üzerine Yaz'
+      );
+      if (!ok) return;
+    }
+    const body = { questionIds: Array.from(s.selected), onlyIfEmpty };
+    if (topicId) body.topicId = parseInt(topicId);
+    if (gradeLevelId) body.gradeLevelId = parseInt(gradeLevelId);
+    if (difficultyLevel) body.difficultyLevel = parseInt(difficultyLevel);
+    try {
+      const res = await fetch('/api/admin/question-bank/questions/bulk-tag', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Uygulanamadı.');
+      const skipMsg = data.skippedFilled ? ` (${data.skippedFilled} soru hiçbir alanı uygun olmadığı için atlandı)` : '';
+      UI.toast(`${data.updated} soru güncellendi.${skipMsg}`, 'success');
+      document.getElementById('qb-bulktag-overlay')?.remove();
+      await this._qbShowBatchGrid(s.batchId);
     } catch (err) {
       UI.toast(err.message, 'danger');
     }
@@ -3650,7 +3758,7 @@ const App = {
       // aynısı uygulandı.
       const esc = (t) => (t || '').replace(/"/g, '&quot;');
       const lines = [];
-      if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> (henüz mevcut ünite listesinde eşleşme yoksa otomatik bağlanmaz)`);
+      if (s.unite) lines.push(`Ünite önerisi: <b>${s.unite}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="tema" data-suggestion="${esc(s.unite)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
       if (s.konu && !alreadyTagged(s.konu)) {
         lines.push(`Konu önerisi: <b>${s.konu}</b> <button class="btn btn-ghost btn-sm" style="padding:1px 8px" data-level="konu" data-suggestion="${esc(s.konu)}" onclick="App._qbUseAiCurriculumSuggestion(this.dataset.level, this.dataset.suggestion)">Kullan</button>`);
       }
@@ -3672,6 +3780,15 @@ const App = {
     if (!s) return;
     const target = _qbNormalizeCurriculumName(suggestionText);
     const tree = s.curriculumTree || [];
+    if (level === 'tema') {
+      const match = tree.find(tema => _qbNormalizeCurriculumName(tema.name) === target);
+      if (match) {
+        this._qbSelectCurriculumPath(match.id);
+        return;
+      }
+      UI.toast('Müfredat ağacında eşleşen bir kayıt bulunamadı - elle seçebilirsiniz.', 'warning');
+      return;
+    }
     for (const tema of tree) {
       for (const konu of (tema.children || [])) {
         if (level === 'konu' && _qbNormalizeCurriculumName(konu.name) === target) {
@@ -3696,13 +3813,18 @@ const App = {
     UI.toast('Müfredat ağacında eşleşen bir kayıt bulunamadı - elle seçebilirsiniz.', 'warning');
   },
 
+  // konuId opsiyonel - sadece unite (tema) seviyesinde bir AI onerisi
+  // "Kullan"landiginda (bkz. _qbUseAiCurriculumSuggestion, level==='tema')
+  // henuz hangi konunun dogru oldugu bilinmiyor, sadece tema secilir ve
+  // konu/kazanim listeleri normal varsayilanlariyla (ilk secenek/bos)
+  // yeniden cizilir - admin devamini kendisi secer.
   _qbSelectCurriculumPath(temaId, konuId) {
     const temaSelect = document.getElementById('qbr-curr-tema-select');
     const konuSelect = document.getElementById('qbr-curr-konu-select');
     if (!temaSelect) return;
     temaSelect.value = String(temaId);
     this._qbRenderCurriculumKonuSelect();
-    if (konuSelect) {
+    if (konuSelect && konuId != null) {
       konuSelect.value = String(konuId);
       this._qbRenderCurriculumKazanimList();
     }

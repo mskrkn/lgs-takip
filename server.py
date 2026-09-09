@@ -7942,6 +7942,20 @@ def api_question_bank_update(question_id):
             missing.append("zorluk")
         if not effective_grade_level:
             missing.append("sınıf seviyesi")
+        # 2.1: eski topic_id/difficulty/grade_level kontrolu, sorunun GERCEK
+        # MEB kazanim etiketi (question_curriculum_tags - musteredat agaci
+        # uzerinden, bkz. api_question_bank_question_curriculum_tags) olup
+        # olmadigini hic sormuyordu - bu ucun HICBIR kazanima baglanmamis bir
+        # soru bile ogrenciye "published" olarak gorunmesine izin veriyordu.
+        # topic_id kontrolu KALDIRILMADI (ogrenci analizi/geriye donuk
+        # uyumluluk hala ona bagli, bkz. P2 - kademeli gecis) - sadece artik
+        # TEK BASINA yeterli degil.
+        has_primary_tag = db.execute(
+            "SELECT 1 FROM question_curriculum_tags WHERE question_id=? AND is_primary=1",
+            (question_id,),
+        ).fetchone()
+        if not has_primary_tag:
+            missing.append("MEB kazanımı")
         if missing:
             return jsonify({"error": f"Yayınlanmadan önce eksik alanlar tamamlanmalı: {', '.join(missing)}."}), 400
 
@@ -7999,6 +8013,74 @@ def api_question_bank_bulk_update():
         updated += 1
     db.commit()
     return jsonify({"updated": updated, "skippedOwn": skipped_own})
+
+
+@app.route("/api/admin/question-bank/questions/bulk-tag", methods=["PATCH"])
+@login_required(role="admin", permission="questions.update")
+def api_question_bank_bulk_tag():
+    """Bir batch'teki sorular cogunlukla ayni ders+sinif+genelde ayni unite
+    oldugu icin (bkz. proje notu) toplu METADATA atama - status/onay/red
+    DEGIL (o ayri bulk-update ucunda, dort-goz kisitina tabi, bkz. yukarisi).
+    onlyIfEmpty=true (varsayilan) iken bir soru icin bir alan zaten doluysa
+    SESSIZCE ATLANIR - AI classify'nin 'sadece bos alani doldur' desenindeki
+    gibi (bkz. api_question_bank_ai_classify), zaten girilmis bir admin
+    degerinin uzerine toplu islemle yanlislikla yazilmasin. onlyIfEmpty=false
+    ile bilerek hepsinin uzerine yazilabilir (frontend'de ayri, acik bir
+    onay adimi olmali)."""
+    data = request.get_json(silent=True) or {}
+    question_ids = data.get("questionIds") or []
+    if not isinstance(question_ids, list) or not question_ids:
+        return jsonify({"error": "questionIds gerekli."}), 400
+    only_if_empty = data.get("onlyIfEmpty", True) is not False
+
+    simple_fields = {"subjectId": "subject_id", "topicId": "topic_id", "difficultyLevel": "difficulty_level"}
+    updates = {column: (data[key] or None) for key, column in simple_fields.items() if key in data}
+
+    set_grade = "gradeLevelId" in data
+    grade_level_id, grade_level_name = None, None
+    db = get_db()
+    if set_grade:
+        grade_level_id = data.get("gradeLevelId")
+        if grade_level_id:
+            gl_row = db.execute("SELECT name FROM grade_levels WHERE id=?", (grade_level_id,)).fetchone()
+            grade_level_name = gl_row["name"] if gl_row else None
+            if not gl_row:
+                grade_level_id = None
+
+    if not updates and not set_grade:
+        return jsonify({"error": "Uygulanacak en az bir alan (subjectId/topicId/difficultyLevel/gradeLevelId) gerekli."}), 400
+
+    org_id = _current_org_id(db)
+    now = datetime.now().isoformat()
+    updated = 0
+    skipped_filled = 0
+    for qid in question_ids:
+        row = _get_owned_question(db, qid, org_id)
+        if not row:
+            continue
+        fields, params = [], []
+        for column, value in updates.items():
+            if only_if_empty and row[column]:
+                continue
+            fields.append(f"{column}=?")
+            params.append(value)
+        if set_grade and not (only_if_empty and row["grade_level_id"]):
+            fields.append("grade_level_id=?")
+            params.append(grade_level_id)
+            fields.append("grade_level=?")
+            params.append(grade_level_name)
+        if not fields:
+            skipped_filled += 1
+            continue
+        fields.append("updated_at=?")
+        params.append(now)
+        params.append(qid)
+        db.execute(f"UPDATE question_bank SET {', '.join(fields)} WHERE id=?", params)
+        updated += 1
+    db.commit()
+    if updated:
+        log_audit(db, "QUESTIONS_BULK_TAGGED", resource_type="question_bank")
+    return jsonify({"updated": updated, "skippedFilled": skipped_filled})
 
 
 @app.route("/api/admin/question-bank/grade-levels")
