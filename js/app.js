@@ -2723,6 +2723,10 @@ const App = {
   // tıklayınca _qbOpenReview açılır: tam boyut önizleme + elle kırpma
   // düzeltme + konu/kazanım/zorluk girme + onayla/hariç tut.
   async renderQuestionBank() {
+    // Sayfadan ayrılıp geri dönüldüğünde eski poll döngüsü hâlâ
+    // çalışıyorsa (bkz. _qbPollBatch) yeni DOM'daki #qb-status'a yazmaya
+    // devam edip kafa karıştırmasın diye durdur.
+    if (this._qbPollTimer) { clearTimeout(this._qbPollTimer); this._qbPollTimer = null; }
     const container = document.getElementById('page-question-bank');
     const subjectOptionsHtml = Object.keys(SUBJECT_SETS).map(examType => {
       const opts = SUBJECT_SETS[examType]
@@ -2931,7 +2935,31 @@ const App = {
         listEl.innerHTML = `<p class="text-muted">Henüz PDF yüklenmemiş.</p>`;
         return;
       }
-      listEl.innerHTML = data.batches.map(b => `
+      listEl.innerHTML = data.batches.map(b => {
+        // Yükleme artık asenkron (bkz. uploadQuestionBankPdf/_qbPollBatch) -
+        // bir batch bu listede hâlâ 'processing' durumundayken görünebilir
+        // (örn. sayfa yüklemenin ortasında yenilendi). Henüz sorusu
+        // olmadığı için "tümü incelendi" yazmak yanıltıcı olur.
+        if (b.status === 'processing') {
+          return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
+            <div class="text-muted" style="font-size:12.5px">⏳ İşleniyor... • ${UI.formatDate(b.created_at)}</div>
+          </div>
+        </div>`;
+        }
+        if (b.status === 'failed') {
+          return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
+          <div>
+            <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
+            <div style="font-size:12.5px;color:var(--danger)">❌ ${b.error_message || 'Yükleme başarısız'} • ${UI.formatDate(b.created_at)}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, 0, 0)" title="Bu seti sil">🗑️</button>
+        </div>`;
+        }
+        return `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bg-glass-border)">
           <div>
             <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
@@ -2948,7 +2976,8 @@ const App = {
             <button class="btn btn-secondary btn-sm" onclick="App._qbShowBatchGrid(${b.id})">🔍 İncele</button>
             <button class="btn btn-danger btn-sm" onclick="App.deleteQuestionBankBatch(${b.id}, ${b.question_count}, ${b.approved_count || 0})" title="Bu seti sil">🗑️</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     } catch (err) {
       listEl.innerHTML = `<p style="color:var(--danger)">Set listesi yüklenemedi: ${err.message}</p>`;
     }
@@ -3022,30 +3051,67 @@ const App = {
     try {
       const res = await fetch('/api/admin/question-bank/upload', { method: 'POST', body: formData });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Yükleme başarısız.');
-
-      statusEl.innerHTML = `<p style="color:var(--success)">✅ ${data.questionCount} soru tespit edildi
-        (${data.pageCount} sayfa)${data.answerKeyFound ? ', cevap anahtarı da bulundu' : ''}.
-        Hepsi <b>onay bekliyor</b> durumunda havuza eklendi. Aşağıdan tıklayarak inceleyin.</p>`;
-
-      resultsEl.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:14px">
-          ${data.questions.map((q, i) => `
-            <div class="card qb-thumb" style="padding:8px;text-align:center;margin-top:0;cursor:pointer" onclick="App.openBatchReview(${data.batchId}, ${i})">
-              <div style="width:100%;height:150px;border-radius:8px;border:1px solid var(--bg-glass-border);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;overflow:hidden">
-                <img src="${q.imageUrl}" alt="Soru ${q.number}" loading="lazy" style="max-width:100%;max-height:100%;object-fit:contain">
-              </div>
-              <div style="margin-top:6px;font-weight:700;font-size:13px">Soru ${q.number}</div>
-              ${q.correctAnswer ? `<div style="font-size:11.5px;color:var(--text-muted)">Cevap: ${q.correctAnswer}</div>` : ''}
-            </div>`).join('')}
-        </div>`;
-
-      this.loadQuestionBankBatches();
+      if (!res.ok) throw new Error(data.error || 'Yükleme başlatılamadı.');
+      // Yükleme isteği artık HEMEN döner (batch 'processing' durumunda) -
+      // gerçek OCR arka planda çalışır. Eskiden bu istek OCR bitene kadar
+      // (taranmış PDF'lerde 3-4+ dakika) açık kalıyordu; Cloudflare
+      // Tunnel'ın önündeki edge proxy ~100s'de bağlantıyı kesip HTML hata
+      // sayfası döndürüyordu, tarayıcı da bunu JSON sanıp "Unexpected
+      // token '<'" ile patlıyordu (gerçek olayla doğrulandı). Artık
+      // durum, bitene kadar polling ile izleniyor.
+      this._qbPollBatch(data.batchId);
     } catch (err) {
       statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
-    } finally {
       this._qbUploadInProgress = false;
       if (dropZone) { dropZone.style.opacity = ''; dropZone.style.pointerEvents = ''; }
+    }
+  },
+
+  _qbPollIntervalMs: 4000,
+  _qbPollMaxMs: 20 * 60 * 1000, // 20 dk - bu sınırı aşarsa poll'u durdur, "Yüklenen Setler"den takip etsin
+  _qbPollTimer: null,
+
+  async _qbPollBatch(batchId, elapsedMs = 0) {
+    const statusEl = document.getElementById('qb-status');
+    const dropZone = document.getElementById('qb-drop-zone');
+    // Kullanıcı başka bir sayfaya geçtiyse (bu DOM elemanları artık yok)
+    // sessizce dur - hem gereksiz istek atmayalım hem null'a yazmayalım.
+    if (!statusEl) { this._qbUploadInProgress = false; return; }
+    const finish = () => {
+      this._qbUploadInProgress = false;
+      if (dropZone) { dropZone.style.opacity = ''; dropZone.style.pointerEvents = ''; }
+    };
+    if (elapsedMs >= this._qbPollMaxMs) {
+      statusEl.innerHTML = `<p style="color:var(--warning)">⏳ İşlem beklenenden uzun sürüyor. Aşağıdaki "Yüklenen Setler" listesinden durumu takip edebilirsiniz, sayfayı kapatabilirsiniz.</p>`;
+      finish();
+      this.loadQuestionBankBatches();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Durum sorgulanamadı.');
+      const status = data.batch.status;
+      if (status === 'processing') {
+        const secs = Math.round(elapsedMs / 1000);
+        statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (${secs}sn) Taranmış sayfalarda bu <b>birkaç dakika</b> sürebilir, sayfayı yenilemeden bekleyin.</p>`;
+        this._qbPollTimer = setTimeout(() => this._qbPollBatch(batchId, elapsedMs + this._qbPollIntervalMs), this._qbPollIntervalMs);
+        return;
+      }
+      if (status === 'failed') {
+        statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${data.batch.error_message || 'Yükleme başarısız.'}</p>`;
+        finish();
+        this.loadQuestionBankBatches();
+        return;
+      }
+      statusEl.innerHTML = `<p style="color:var(--success)">✅ ${data.questions.length} soru tespit edildi
+        (${data.batch.page_count || '?'} sayfa). Hepsi <b>onay bekliyor</b> durumunda havuza eklendi.</p>`;
+      finish();
+      this.loadQuestionBankBatches();
+      this._qbShowBatchGrid(batchId);
+    } catch (err) {
+      statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
+      finish();
     }
   },
 
