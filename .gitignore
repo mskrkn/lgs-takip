@@ -30,6 +30,7 @@ tunnel_hata.txt
 # içerir, asla paylaşılmamalı/yayınlanmamalı
 yetki_veritabani.db
 .flask_secret_key
+firebase-adminsdk-key.json
 
 # Üçüncü taraf optik okuyucu tarayıcı yazılımı ayar dosyaları (referans
 # amaçlı tutuluyor, uygulamanın çalışması için gerekli değil, dağıtılmaması

@@ -178,6 +178,32 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # Soru Havuzu PDF yükleme 
 
 
 # ============================================================
+# Firebase Admin SDK - bulut senkronizasyonu (js/sync.js) icin kimlik
+# dogrulamali ozel token uretir (bkz. /api/firebase-token). Eskiden bu
+# senkron Firestore'a HICBIR kimlik dogrulama olmadan, sadece tahmin
+# edilebilir bir oda adiyla (organization_id) baglaniyordu - internetteki
+# herkes baska bir okulun ogrenci verisini okuyup UZERINE YAZABILIYORDU.
+# Servis hesabi anahtari repo'ya COMMIT EDILMEZ (bkz. .gitignore); sadece
+# sunucuda proje kokunde firebase-adminsdk-key.json olarak beklenir. Yoksa
+# (orn. yerel gelistirme) bulut senkronizasyonu sessizce devre disi kalir,
+# uygulamanin geri kalani etkilenmez.
+FIREBASE_ADMIN_KEY_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "firebase-adminsdk-key.json"
+)
+firebase_auth = None
+if os.path.exists(FIREBASE_ADMIN_KEY_PATH):
+    try:
+        import firebase_admin
+        from firebase_admin import credentials as _fb_credentials, auth as firebase_auth
+        firebase_admin.initialize_app(_fb_credentials.Certificate(FIREBASE_ADMIN_KEY_PATH))
+    except Exception as _fb_exc:
+        print(f"[firebase-admin] baslatilamadi, bulut senkronizasyonu devre disi: {_fb_exc}")
+        firebase_auth = None
+else:
+    print("[firebase-admin] firebase-adminsdk-key.json bulunamadi, bulut senkronizasyonu devre disi.")
+
+
+# ============================================================
 # Veritabanı
 # ============================================================
 
@@ -1796,6 +1822,30 @@ def api_me():
         "canManageSchools": can_manage_schools,
         "organizationId": own_org_row["organization_id"] if own_org_row else None,
     })
+
+
+@app.route("/api/firebase-token")
+@login_required(role=("admin", "super_admin"))
+def api_firebase_token():
+    """Bulut senkronizasyonu (js/sync.js) icin Firebase custom token uretir.
+    Token'a organization_id claim'i gomulur; Firestore kurallari bu claim'i
+    oda adiyla (edupusula-org-<id>) karsilastirip baska bir okulun senkron
+    odasina erisimi engeller (bkz. FIREBASE_ADMIN_KEY_PATH yorumu)."""
+    if firebase_auth is None:
+        return jsonify({"error": "Bulut senkronizasyonu sunucuda yapılandırılmamış."}), 503
+    db = get_db()
+    own_org_row = db.execute(
+        "SELECT organization_id FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+    org_id = own_org_row["organization_id"] if own_org_row else None
+    if not org_id:
+        return jsonify({"error": "Bu hesabın senkronize edeceği bir okulu yok."}), 400
+    try:
+        token = firebase_auth.create_custom_token(f"user-{session['user_id']}", {"org_id": org_id})
+    except Exception as exc:
+        print(f"[firebase-token] özel token üretilemedi: {exc}")
+        return jsonify({"error": "Bulut kimlik doğrulama tokeni üretilemedi."}), 500
+    return jsonify({"token": token.decode("utf-8") if isinstance(token, bytes) else token})
 
 
 # ============================================================
