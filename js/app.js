@@ -2947,6 +2947,7 @@ const App = {
             <div style="font-weight:700">${b.source_filename} <span class="text-muted" style="font-weight:400;font-size:12px">— Kitapçık ${b.booklet_code || 'A'}</span></div>
             <div class="text-muted" style="font-size:12.5px">⏳ İşleniyor... • ${UI.formatDate(b.created_at)}</div>
           </div>
+          <button class="btn btn-danger btn-sm" onclick="App._qbCancelUpload(${b.id})">✖ İptal Et</button>
         </div>`;
         }
         if (b.status === 'failed') {
@@ -3094,7 +3095,8 @@ const App = {
       const status = data.batch.status;
       if (status === 'processing') {
         const secs = Math.round(elapsedMs / 1000);
-        statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (${secs}sn) Taranmış sayfalarda bu <b>birkaç dakika</b> sürebilir, sayfayı yenilemeden bekleyin.</p>`;
+        statusEl.innerHTML = `<p class="text-muted">⏳ PDF işleniyor, soru sınırları tespit ediliyor... (${secs}sn) Taranmış sayfalarda bu <b>birkaç dakika</b> sürebilir, sayfayı yenilemeden bekleyin.
+          <button class="btn btn-danger btn-sm" style="margin-left:8px" onclick="App._qbCancelUpload(${batchId})">✖ İptal Et</button></p>`;
         this._qbPollTimer = setTimeout(() => this._qbPollBatch(batchId, elapsedMs + this._qbPollIntervalMs), this._qbPollIntervalMs);
         return;
       }
@@ -3112,6 +3114,24 @@ const App = {
     } catch (err) {
       statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
       finish();
+    }
+  },
+
+  async _qbCancelUpload(batchId) {
+    if (this._qbPollTimer) { clearTimeout(this._qbPollTimer); this._qbPollTimer = null; }
+    const statusEl = document.getElementById('qb-status');
+    const dropZone = document.getElementById('qb-drop-zone');
+    try {
+      const res = await fetch(`/api/admin/question-bank/batches/${batchId}/cancel`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'İptal edilemedi.');
+      if (statusEl) statusEl.innerHTML = `<p class="text-muted">✖ Yükleme iptal edildi.</p>`;
+    } catch (err) {
+      UI.toast('İptal edilemedi: ' + err.message, 'danger');
+    } finally {
+      this._qbUploadInProgress = false;
+      if (dropZone) { dropZone.style.opacity = ''; dropZone.style.pointerEvents = ''; }
+      this.loadQuestionBankBatches();
     }
   },
 

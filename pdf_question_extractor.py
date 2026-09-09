@@ -367,14 +367,29 @@ def _get_page_lines(page):
     return _ocr_page_lines(page), True
 
 
-def _build_page_lines_cache(doc):
+class ExtractionCancelled(Exception):
+    """Kullanıcı yüklemeyi iptal ettiğinde _build_page_lines_cache'in
+    sayfalar arasında fırlattığı sinyal - bkz. server.py'deki
+    api_question_bank_cancel_upload. OCR (Tesseract) tek bir sayfayı
+    işlerken kesilemez, ama sayfalar ARASINDA kontrol edilerek uzun bir
+    PDF'in ortasında durdurulabilir - taranmış PDF'lerde asıl süreyi
+    tüketen adım burası olduğu için pratikte iptal çoğunlukla saniyeler
+    içinde etkili olur."""
+
+
+def _build_page_lines_cache(doc, cancel_check=None):
     """Her sayfanın (lines, is_ocr) sonucunu BİR KEZ hesaplayıp önbelleğe
     alır. _detect_boilerplate_lines/_detect_answer_key_pages/
     _detect_questions üçü de sayfa satırlarına ihtiyaç duyar - önbellek
     olmasaydı taranmış (OCR'lı) bir PDF'te her sayfa için Tesseract İKİ-ÜÇ
     KEZ çalışırdı (işlem süresini gereksiz yere katlar - OCR zaten bu
     hattın en pahalı adımı)."""
-    return [_get_page_lines(doc[pno]) for pno in range(doc.page_count)]
+    results = []
+    for pno in range(doc.page_count):
+        if cancel_check is not None and cancel_check():
+            raise ExtractionCancelled()
+        results.append(_get_page_lines(doc[pno]))
+    return results
 
 
 # Sayfa başlığı/altbilgisi gibi TÜM dokümanda BİREBİR tekrarlayan satırlar
@@ -674,7 +689,7 @@ def _detect_questions(doc, skip_pages, page_lines_cache, boilerplate=frozenset()
     return questions
 
 
-def extract_questions(pdf_path, subject_name=None, booklet_code=None):
+def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_check=None):
     """PDF'i açar, cevap anahtarını ve soruları tespit eder.
 
     subject_name/booklet_code OPSİYONELDİR (varsayılan None - eski çağrılar
@@ -684,6 +699,10 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
     Yayınları formatı: tek sayfada birden fazla ders + kitapçık) denenir.
     server.py bu bilgiyi upload formundaki subject_code/booklet_code'dan
     geçirir.
+
+    cancel_check OPSİYONELDİR - verilirse sayfalar arası her adımda
+    çağrılır, True dönerse ExtractionCancelled fırlatılır (bkz. server.py
+    api_question_bank_cancel_upload).
 
     Döner: {
       "page_count": int,
@@ -726,7 +745,7 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None):
         )
         estimated_seconds = round(doc.page_count * sec_per_page, 1)
 
-        page_lines_cache = _build_page_lines_cache(doc)
+        page_lines_cache = _build_page_lines_cache(doc, cancel_check=cancel_check)
         boilerplate = _detect_boilerplate_lines(doc, page_lines_cache)
         answer_key_pages, answer_key = _detect_answer_key_pages(doc, page_lines_cache, boilerplate)
         if not answer_key:
