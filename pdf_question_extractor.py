@@ -377,18 +377,24 @@ class ExtractionCancelled(Exception):
     içinde etkili olur."""
 
 
-def _build_page_lines_cache(doc, cancel_check=None):
+def _build_page_lines_cache(doc, cancel_check=None, on_page_done=None):
     """Her sayfanın (lines, is_ocr) sonucunu BİR KEZ hesaplayıp önbelleğe
     alır. _detect_boilerplate_lines/_detect_answer_key_pages/
     _detect_questions üçü de sayfa satırlarına ihtiyaç duyar - önbellek
     olmasaydı taranmış (OCR'lı) bir PDF'te her sayfa için Tesseract İKİ-ÜÇ
     KEZ çalışırdı (işlem süresini gereksiz yere katlar - OCR zaten bu
-    hattın en pahalı adımı)."""
+    hattın en pahalı adımı). Taranmış PDF'lerde asıl süreyi bu döngü
+    tükettiği için on_page_done/cancel_check kancaları burada, sayfalar
+    ARASINDA çağrılır - tek bir sayfanın OCR'ı yarıda kesilemez ama bir
+    sonraki sayfaya geçmeden önce durdurulabilir/raporlanabilir."""
     results = []
-    for pno in range(doc.page_count):
+    total = doc.page_count
+    for pno in range(total):
         if cancel_check is not None and cancel_check():
-            raise ExtractionCancelled()
+            raise ExtractionCancelled(f"Sayfa {pno + 1}/{total}'de iptal edildi")
         results.append(_get_page_lines(doc[pno]))
+        if on_page_done is not None:
+            on_page_done(pno + 1, total)
     return results
 
 
@@ -689,7 +695,7 @@ def _detect_questions(doc, skip_pages, page_lines_cache, boilerplate=frozenset()
     return questions
 
 
-def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_check=None):
+def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_check=None, on_page_done=None):
     """PDF'i açar, cevap anahtarını ve soruları tespit eder.
 
     subject_name/booklet_code OPSİYONELDİR (varsayılan None - eski çağrılar
@@ -702,7 +708,9 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_che
 
     cancel_check OPSİYONELDİR - verilirse sayfalar arası her adımda
     çağrılır, True dönerse ExtractionCancelled fırlatılır (bkz. server.py
-    api_question_bank_cancel_upload).
+    api_question_bank_cancel_upload). on_page_done OPSİYONELDİR - verilirse
+    her sayfa bitince (sayfa_no_1_indeksli, toplam_sayfa) ile çağrılır
+    (gerçek ilerleme raporlamak için, bkz. server.py'deki pages_processed).
 
     Döner: {
       "page_count": int,
@@ -745,7 +753,7 @@ def extract_questions(pdf_path, subject_name=None, booklet_code=None, cancel_che
         )
         estimated_seconds = round(doc.page_count * sec_per_page, 1)
 
-        page_lines_cache = _build_page_lines_cache(doc, cancel_check=cancel_check)
+        page_lines_cache = _build_page_lines_cache(doc, cancel_check=cancel_check, on_page_done=on_page_done)
         boilerplate = _detect_boilerplate_lines(doc, page_lines_cache)
         answer_key_pages, answer_key = _detect_answer_key_pages(doc, page_lines_cache, boilerplate)
         if not answer_key:
