@@ -8167,13 +8167,29 @@ def api_question_bank_curriculum():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
     grade_level = request.args.get("grade_level")
-    if not subject_id or not grade_level:
-        return jsonify({"error": "subject_id ve grade_level gerekli."}), 400
-    rows = db.execute(
-        "SELECT id, code, parent_id, level, name, sort_order FROM curriculum_nodes "
-        "WHERE subject_id=? AND grade_level=? ORDER BY sort_order",
-        (subject_id, str(grade_level)),
-    ).fetchall()
+    if not subject_id:
+        return jsonify({"error": "subject_id gerekli."}), 400
+    if grade_level:
+        rows = db.execute(
+            "SELECT id, code, parent_id, level, name, sort_order, grade_level FROM curriculum_nodes "
+            "WHERE subject_id=? AND grade_level=? ORDER BY sort_order",
+            (subject_id, str(grade_level)),
+        ).fetchall()
+    else:
+        # PDF importundan gelen sorularda sinif seviyesi ZORUNLU DEGIL (bkz.
+        # api_question_bank_upload) - grade_level'i olmayan bir soru icin
+        # burada 400 donup muftedat/AI-kazanim eslestirme ozelligini o soru
+        # icin TAMAMEN kullanilmaz kilmak yerine (gercek olayla dogrulandi -
+        # "Kullan" butonu HER ZAMAN "eslesme yok" diyordu, cunku agac hic
+        # yuklenemiyordu), o dersin TUM sinif seviyelerindeki dugumlerini
+        # gosteriyoruz; admin dogru sinifi kendisi secebilir. grade_level
+        # SELECT'e dahil edilir ki frontend (bkz. _qbRenderCurriculumTemaSelect)
+        # ayni isimli birden fazla sinifin temasini birbirinden ayirt edebilsin.
+        rows = db.execute(
+            "SELECT id, code, parent_id, level, name, sort_order, grade_level FROM curriculum_nodes "
+            "WHERE subject_id=? ORDER BY grade_level, sort_order",
+            (subject_id,),
+        ).fetchall()
     nodes = {r["id"]: dict(r) | {"children": []} for r in rows}
     tree = []
     for r in rows:
