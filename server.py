@@ -30,6 +30,7 @@ import sqlite3
 import secrets
 import zipfile
 import difflib
+import traceback
 import threading
 import webbrowser
 from datetime import datetime, timedelta
@@ -1024,6 +1025,7 @@ def _create_question_bank_tables(conn):
             page_count INTEGER,
             status TEXT NOT NULL DEFAULT 'processing'
                 CHECK(status IN ('processing','ready_for_review','completed','failed')),
+            error_message TEXT,
             created_at TEXT NOT NULL
         );
 
@@ -1134,6 +1136,12 @@ def _create_question_bank_tables(conn):
     batch_cols = [r[1] for r in conn.execute("PRAGMA table_info(question_import_batches)").fetchall()]
     if batch_cols and "booklet_code" not in batch_cols:
         conn.execute("ALTER TABLE question_import_batches ADD COLUMN booklet_code TEXT NOT NULL DEFAULT 'A'")
+    # Asenkron yükleme (bkz. api_question_bank_upload): OCR arka planda
+    # çalışırken oluşan hata artık HTTP response'ta değil bu kolonda taşınır
+    # (istek zaten uzun sürmeden dönmüş oluyor, hatayı sonradan polling ile
+    # okuyan frontend'e iletmenin tek yolu bu).
+    if batch_cols and "error_message" not in batch_cols:
+        conn.execute("ALTER TABLE question_import_batches ADD COLUMN error_message TEXT")
     conn.commit()
 
     _migrate_question_bank_lifecycle(conn)
@@ -6744,13 +6752,14 @@ def api_question_bank_upload():
     temp_pdf_path = os.path.join(source_dir, f"_pending_{secrets.token_hex(8)}.pdf")
     file.save(temp_pdf_path)
 
-    if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SEMAPHORE_WAIT_SECONDS):
-        try:
-            os.remove(temp_pdf_path)
-        except OSError:
-            pass
-        return jsonify({"error": "Sistem şu anda başka bir PDF işliyor. Lütfen birkaç dakika sonra tekrar deneyin."}), 503
-
+    # ASENKRON: OCR taranmış sınav PDF'lerinde (30+ sayfa) 100 saniyeyi
+    # kolayca aşıyor - prod'da Cloudflare Tunnel'ın önündeki edge proxy
+    # sabit ~100s'de bağlantıyı kesip kendi HTML hata sayfasını
+    # dönüyordu, tarayıcı da JSON bekleyen fetch().json() çağrısında
+    # "Unexpected token '<'" ile patlıyordu (gerçek olayla doğrulandı).
+    # Çözüm: bu istek batch satırını oluşturup HEMEN döner, gerçek
+    # OCR/kırpma işi arka plan thread'inde çalışır; frontend batch'i
+    # durumu 'processing' olmaktan çıkana kadar polling ile izler.
     cur = db.execute(
         "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, status, booklet_code, created_at) "
         "VALUES (?,?,?,?,?,?)",
@@ -6761,57 +6770,91 @@ def api_question_bank_upload():
     pdf_path = os.path.join(source_dir, f"batch_{batch_id}.pdf")
     os.rename(temp_pdf_path, pdf_path)
 
+    threading.Thread(
+        target=_process_question_bank_upload_async,
+        args=(batch_id, pdf_path, subject_id, subject_name, grade_level, grade_level_id,
+              booklet_code, org_id, user_id, now),
+        daemon=True,
+    ).start()
+
+    return jsonify({"batchId": batch_id, "status": "processing"}), 202
+
+
+def _process_question_bank_upload_async(batch_id, pdf_path, subject_id, subject_name,
+                                         grade_level, grade_level_id, booklet_code,
+                                         org_id, user_id, now):
+    """api_question_bank_upload'ın arka planda çalışan kısmı - kendi sqlite
+    bağlantısını açar çünkü Flask'ın istek-bazlı g.db'si bu thread'de yok.
+    WAL zaten aktif (bkz. get_db) o yüzden ana thread'in eş zamanlı okuma/
+    yazmalarıyla çakışmaz."""
+    def _fail(message):
+        # Başarısız batch'in kaynak PDF'i başka hiçbir yerde kullanılmaz
+        # (sadece başarılı batch'lerin "recrop"/export özellikleri source_pdfs'e
+        # bakar) - diskte iz bırakmamak için 1.1 fix'indeki "hayalet set"
+        # ilkesiyle tutarlı şekilde siliyoruz.
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+        conn.execute(
+            "UPDATE question_import_batches SET status='failed', error_message=? WHERE id=?",
+            (message, batch_id),
+        )
+        conn.commit()
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
-        result = pdf_question_extractor.extract_questions(
-            pdf_path, subject_name=subject_name, booklet_code=booklet_code,
-        )
-        if result["page_count"] > _MAX_PDF_PAGES:
-            raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
-    except Exception as exc:
-        _OCR_SEMAPHORE.release()
+        if not _OCR_SEMAPHORE.acquire(timeout=_OCR_SEMAPHORE_WAIT_SECONDS):
+            _fail("Sistem şu anda başka bir PDF işliyor. Lütfen birkaç dakika sonra tekrar deneyin.")
+            return
+        try:
+            try:
+                result = pdf_question_extractor.extract_questions(
+                    pdf_path, subject_name=subject_name, booklet_code=booklet_code,
+                )
+                if result["page_count"] > _MAX_PDF_PAGES:
+                    raise ValueError(f"PDF çok uzun ({result['page_count']} sayfa, sınır {_MAX_PDF_PAGES}).")
+            except Exception as exc:
+                pdf_question_extractor.release_pdf_cache()
+                _fail(f"PDF işlenemedi: {exc}")
+                return
+        finally:
+            _OCR_SEMAPHORE.release()
+
+        for q in result["questions"]:
+            image_filename = f"{batch_id}_{q['number']}.png"
+            pdf_question_extractor.render_question_crop(
+                pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename)
+            )
+            answer = result["answer_key"].get(q["number"])
+            rect = q["rect"]
+            conn.execute(
+                "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, image_path, "
+                "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
+                "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (org_id, batch_id, subject_id, grade_level, grade_level_id, f"questions/{image_filename}",
+                 q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
+                 answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
+            )
+
         pdf_question_extractor.release_pdf_cache()
-        db.execute("UPDATE question_import_batches SET status='failed' WHERE id=?", (batch_id,))
-        db.commit()
-        return jsonify({"error": f"PDF işlenemedi: {exc}"}), 400
-    _OCR_SEMAPHORE.release()
-
-    created = []
-    for q in result["questions"]:
-        image_filename = f"{batch_id}_{q['number']}.png"
-        pdf_question_extractor.render_question_crop(
-            pdf_path, q["page"], q["rect"], os.path.join(QUESTION_IMAGES_DIR, image_filename)
+        conn.execute(
+            "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
+            (result["page_count"], batch_id),
         )
-        answer = result["answer_key"].get(q["number"])
-        rect = q["rect"]
-        qcur = db.execute(
-            "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, image_path, "
-            "question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
-            "correct_answer, correct_answer_source, status, source, created_by, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (org_id, batch_id, subject_id, grade_level, grade_level_id, f"questions/{image_filename}",
-             q["number"], q["page"] + 1, rect.x0, rect.y0, rect.width, rect.height,
-             answer, "answer_key" if answer else None, "pending_review", "pdf_import", user_id, now, now),
-        )
-        created.append({
-            "id": qcur.lastrowid, "number": q["number"], "correctAnswer": answer,
-            "imageUrl": f"/api/admin/question-bank/image/{qcur.lastrowid}",
-        })
-
-    pdf_question_extractor.release_pdf_cache()
-    db.execute(
-        "UPDATE question_import_batches SET status='ready_for_review', page_count=? WHERE id=?",
-        (result["page_count"], batch_id),
-    )
-    db.commit()
-
-    return jsonify({
-        "batchId": batch_id,
-        "pageCount": result["page_count"],
-        "questionCount": len(created),
-        "answerKeyFound": len(result["answer_key"]) > 0,
-        "questions": created,
-        "estimatedSeconds": result.get("estimated_seconds"),
-    })
+        conn.commit()
+    except Exception as exc:
+        traceback.print_exc()
+        try:
+            _fail(f"Beklenmeyen hata: {exc}")
+        except Exception:
+            pass
+    finally:
+        conn.close()
 
 
 @app.route("/api/admin/question-bank/batches")
@@ -6820,7 +6863,7 @@ def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
     rows = db.execute(
-        "SELECT b.id, b.source_filename, b.status, b.page_count, b.booklet_code, b.created_at, "
+        "SELECT b.id, b.source_filename, b.status, b.error_message, b.page_count, b.booklet_code, b.created_at, "
         "COUNT(q.id) AS question_count, "
         "SUM(CASE WHEN q.status='pending_review' THEN 1 ELSE 0 END) AS pending_count, "
         "SUM(CASE WHEN q.status IN ('approved','published') THEN 1 ELSE 0 END) AS approved_count "
