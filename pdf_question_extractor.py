@@ -792,15 +792,23 @@ def release_pdf_cache():
     fitz.TOOLS.store_shrink(100)
 
 
-def render_question_crop(pdf_path, page_index, rect, out_path):
-    """Tek bir sorunun kırpılmış görüntüsünü PNG olarak diske kaydeder."""
-    doc = fitz.open(pdf_path)
+def render_question_crop(pdf_path, page_index, rect, out_path, doc=None):
+    """Tek bir sorunun kırpılmış görüntüsünü PNG olarak diske kaydeder.
+
+    `doc` verilirse (bir batch'in TÜM sorularını aynı açık fitz.Document
+    üzerinden kırpan çağıran taraf - bkz. server.py'deki kırpma döngüsü)
+    dosyayı burada AÇMAZ/KAPATMAZ - 80 sorulu bir PDF'te 80 kez fitz.open()
+    yerine batch başına 1 kez açılmasını sağlamak bunun tek amacı. `doc`
+    verilmezse eskisi gibi kendi başına açıp kapatır (geriye dönük uyumlu -
+    tek soru için çağıran yerler, örn. recrop, hâlâ böyle kullanır)."""
+    _doc = doc if doc is not None else fitz.open(pdf_path)
     try:
-        page = doc[page_index]
+        page = _doc[page_index]
         pix = page.get_pixmap(clip=rect, dpi=_CROP_DPI)
         pix.save(out_path)
     finally:
-        doc.close()
+        if doc is None:
+            _doc.close()
 
 
 # Elle kırpma düzeltme ekranının arka plan görüntüsü için çözünürlük.
@@ -809,17 +817,21 @@ def render_question_crop(pdf_path, page_index, rect, out_path):
 CONTEXT_DPI = _CROP_DPI
 
 
-def render_page_image_bytes(pdf_path, page_index, dpi=CONTEXT_DPI):
+def render_page_image_bytes(pdf_path, page_index, dpi=CONTEXT_DPI, doc=None):
     """Tüm sayfayı PNG bayt dizisi olarak döndürür (elle kırpma düzeltme
     ekranının arka plan referans görüntüsü) - sayfanın puan cinsinden
-    genişlik/yüksekliğiyle birlikte, çağıran taraf ölçek hesabı yapabilsin."""
-    doc = fitz.open(pdf_path)
+    genişlik/yüksekliğiyle birlikte, çağıran taraf ölçek hesabı yapabilsin.
+
+    `doc` verilirse (bkz. render_question_crop'taki aynı amaç) dosyayı
+    burada açıp kapatmaz."""
+    _doc = doc if doc is not None else fitz.open(pdf_path)
     try:
-        page = doc[page_index]
+        page = _doc[page_index]
         pix = page.get_pixmap(dpi=dpi)
         return pix.tobytes("png"), page.rect.width, page.rect.height
     finally:
-        doc.close()
+        if doc is None:
+            _doc.close()
 
 
 def render_question_crop_from_bounds(pdf_path, page_index, x0, y0, x1, y1, out_path, dpi=_CROP_DPI):
