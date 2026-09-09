@@ -340,11 +340,26 @@ class Database {
 
   // ---- Exams ----
   async addExam(exam) {
+    const name = String(exam.name || '').trim();
+    const date = exam.date || new Date().toISOString().split('T')[0];
+    const examType = exam.examType && SUBJECT_SETS[exam.examType] ? exam.examType : 'LGS';
+
+    // Ayni isim+tarih+turde bir sinav zaten varsa onu kullan - "Yeni Sinav"
+    // butonuna cift tiklama veya optik/PDF import akisinda "yeni sinav
+    // olustur" secilip import iki kez tetiklenmesi duplike sinav kaydi
+    // olusturmasin, sonuclar iki ayri sinava bolunmesin (bkz. audit).
+    const nameLower = name.toLowerCase();
+    const existing = await this.db.exams
+      .where('date').equals(date)
+      .filter((e) => e.examType === examType && String(e.name || '').trim().toLowerCase() === nameLower)
+      .first();
+    if (existing) return existing.id;
+
     const id = await this.db.exams.add({
-      name: String(exam.name || '').trim(),
-      date: exam.date || new Date().toISOString().split('T')[0],
+      name,
+      date,
       description: String(exam.description || '').trim(),
-      examType: exam.examType && SUBJECT_SETS[exam.examType] ? exam.examType : 'LGS',
+      examType,
     });
     this._notifyChange();
     return id;
