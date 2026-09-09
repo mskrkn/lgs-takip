@@ -8400,59 +8400,6 @@ def api_question_bank_review_skill(skill_id):
     return jsonify({"ok": True, "status": status})
 
 
-@app.route("/api/admin/question-bank/questions/<int:question_id>/skills", methods=["GET", "PUT"])
-@login_required(role="admin", permission="questions.update")
-def api_question_bank_question_skills(question_id):
-    """Bir soruya bağlı becerileri (ve ağırlıklarını) okur/günceller. Sadece
-    status='active' beceriler bağlanabilir - henüz onaylanmamış/reddedilmiş
-    bir beceriyle soru etiketlemek, mastery hesaplamasına asla ACTIVE
-    olmayacak bir beceri sızdırırdı."""
-    db = get_db()
-    row = _get_owned_question(db, question_id, _current_org_id(db))
-    if not row:
-        return jsonify({"error": "Bulunamadı."}), 404
-
-    if request.method == "GET":
-        rows = db.execute(
-            "SELECT qs.skill_id, qs.weight, sk.name FROM question_skills qs "
-            "JOIN skills sk ON sk.id = qs.skill_id WHERE qs.question_id=?",
-            (question_id,),
-        ).fetchall()
-        return jsonify({"skills": [dict(r) for r in rows]})
-
-    data = request.get_json(silent=True) or {}
-    items = data.get("skills")
-    if not isinstance(items, list):
-        return jsonify({"error": "skills (liste) gerekli."}), 400
-    total_weight = 0.0
-    clean_items = []
-    for item in items:
-        skill_id = item.get("skillId")
-        weight = item.get("weight")
-        try:
-            weight = float(weight)
-        except (TypeError, ValueError):
-            return jsonify({"error": "Geçersiz ağırlık değeri."}), 400
-        if not skill_id or weight <= 0:
-            return jsonify({"error": "Her beceri için geçerli bir id ve pozitif ağırlık gerekli."}), 400
-        skill_row = db.execute("SELECT status FROM skills WHERE id=?", (skill_id,)).fetchone()
-        if not skill_row or skill_row["status"] != "active":
-            return jsonify({"error": "Sadece onaylı (aktif) beceriler bir soruya bağlanabilir."}), 400
-        clean_items.append((skill_id, weight))
-        total_weight += weight
-    if clean_items and abs(total_weight - 100.0) > 0.01:
-        return jsonify({"error": f"Ağırlıkların toplamı %100 olmalı (şu an: %{total_weight:.1f})."}), 400
-
-    db.execute("DELETE FROM question_skills WHERE question_id=?", (question_id,))
-    for skill_id, weight in clean_items:
-        db.execute(
-            "INSERT INTO question_skills (question_id, skill_id, weight) VALUES (?,?,?)",
-            (question_id, skill_id, weight),
-        )
-    db.commit()
-    return jsonify({"ok": True, "count": len(clean_items)})
-
-
 @app.route("/api/admin/question-bank/questions/<int:question_id>/curriculum-tags", methods=["GET", "PUT"])
 @login_required(role="admin", permission="questions.update")
 def api_question_bank_question_curriculum_tags(question_id):

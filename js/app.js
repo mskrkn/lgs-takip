@@ -3557,15 +3557,6 @@ const App = {
                 <div id="qbr-ai-taxonomy-hint" class="text-muted mt-1" style="font-size:12px"></div>
               </div>
               <div class="form-group" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
-                <label class="form-label">🧠 Beceriler <span class="text-muted" style="font-weight:400">(ağırlıklar toplamı %100 olmalı)</span></label>
-                <div id="qbr-skills-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
-                <div style="display:flex;gap:6px;align-items:center">
-                  <span id="qbr-skills-total" class="text-muted" style="font-size:12px"></span>
-                  <button class="btn btn-ghost btn-sm" onclick="App._qbEqualDistributeSkillWeights()" title="İşaretli becerilere eşit ağırlık dağıt">⚖️ Eşit Dağıt</button>
-                  <button class="btn btn-secondary btn-sm" onclick="App._qbSaveSkills()">💾 Becerileri Kaydet</button>
-                </div>
-              </div>
-              <div class="form-group" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
                 <label class="form-label">🧭 MEB Kazanımları <span class="text-muted" style="font-weight:400">(ağırlıklar toplamı 1.00 olmalı, bir tanesi birincil)</span></label>
                 <div style="display:flex;gap:6px;margin-bottom:6px">
                   <select class="form-select" id="qbr-curr-tema-select" style="flex:1"></select>
@@ -3714,7 +3705,6 @@ const App = {
     s.cropRect = { x: q.crop_x, y: q.crop_y, width: q.crop_width, height: q.crop_height };
     await this._qbLoadContextImage(q.id);
     await this._qbLoadBookletNumbers(q.id);
-    await this._qbLoadSkillsForQuestion(q.id, q.subject_id);
     await this._qbLoadCurriculumForQuestion(q);
   },
 
@@ -3917,130 +3907,6 @@ const App = {
     if (!s) return;
     s.bookletRows.splice(index, 1);
     this._qbRenderBookletRows();
-  },
-
-  // ---- Beceriler (bölüm 10.3) ----
-  async _qbLoadSkillsForQuestion(questionId, subjectId) {
-    const s = this._qbState;
-    if (!s) return;
-    // Cache subject'e göre anahtarlanır - bir batch neredeyse hep tek
-    // ders olsa da, karışık batch'lerde her ders kendi usage_count
-    // sıralamasını görsün diye (bkz. api_question_bank_list_skills'teki
-    // subject_id parametresi).
-    if (!s.activeSkillsCacheBySubject) s.activeSkillsCacheBySubject = {};
-    const cacheKey = subjectId || 'none';
-    if (!s.activeSkillsCacheBySubject[cacheKey]) {
-      const url = subjectId
-        ? `/api/admin/question-bank/skills?status=active&subject_id=${subjectId}`
-        : '/api/admin/question-bank/skills?status=active';
-      const res = await fetch(url);
-      const data = await res.json();
-      s.activeSkillsCacheBySubject[cacheKey] = res.ok ? (data.skills || []) : [];
-    }
-    s.activeSkillsCache = s.activeSkillsCacheBySubject[cacheKey];
-    const res = await fetch(`/api/admin/question-bank/questions/${questionId}/skills`);
-    const data = await res.json();
-    const current = {};
-    (res.ok ? data.skills || [] : []).forEach(row => { current[row.skill_id] = row.weight; });
-    this._qbRenderSkillsRows(s.activeSkillsCache, current);
-  },
-
-  _qbRenderSkillsRows(activeSkills, currentWeights) {
-    const wrap = document.getElementById('qbr-skills-rows');
-    if (!wrap) return;
-    if (!activeSkills.length) {
-      wrap.innerHTML = `
-        <span class="text-muted" style="font-size:12px">Henüz onaylı (aktif) beceri yok.</span>
-        <div style="display:flex;gap:6px;margin-top:6px">
-          <input type="text" class="form-control" id="qbr-skill-inline-name" style="max-width:220px;font-size:12.5px" placeholder="Beceri adı (örn. Ortak Payda Bulma)">
-          <button class="btn btn-secondary btn-sm" onclick="App._qbProposeSkillInline()">➕ Öner</button>
-        </div>`;
-      this._qbUpdateSkillsTotal();
-      return;
-    }
-    const row = (sk) => {
-      const checked = sk.id in currentWeights;
-      const usageLabel = sk.usage_count ? `<span class="text-muted" style="font-size:11px">(${sk.usage_count} soruda)</span>` : '';
-      return `<div style="display:flex;gap:8px;align-items:center">
-        <label style="display:flex;align-items:center;gap:6px;flex:1;font-size:13px;cursor:pointer">
-          <input type="checkbox" class="qbr-skill-check" data-skill-id="${sk.id}" ${checked ? 'checked' : ''} onchange="App._qbUpdateSkillsTotal()">
-          ${sk.name} ${usageLabel}
-        </label>
-        <input type="number" class="form-control qbr-skill-weight" data-skill-id="${sk.id}" style="width:80px" min="1" max="100" step="0.01"
-               value="${checked ? currentWeights[sk.id] : ''}" placeholder="%" oninput="App._qbUpdateSkillsTotal()">
-      </div>`;
-    };
-    // usage_count_this_subject > 0 olanlar üstte (bkz. api_question_bank_
-    // list_skills'teki ORDER BY - liste zaten bu sırayla geliyor, burada
-    // sadece aradaki ayrım başlığı ekleniyor).
-    const splitIdx = activeSkills.findIndex(sk => !(sk.usage_count_this_subject > 0));
-    const thisSubject = splitIdx === -1 ? activeSkills : activeSkills.slice(0, splitIdx);
-    const others = splitIdx === -1 ? [] : activeSkills.slice(splitIdx);
-    let html = thisSubject.map(row).join('');
-    if (others.length) {
-      html += `<div class="text-muted" style="font-size:11px;margin:6px 0 2px">— diğer derslerde kullanılan beceriler —</div>` + others.map(row).join('');
-    }
-    wrap.innerHTML = html;
-    this._qbUpdateSkillsTotal();
-  },
-
-  _qbEqualDistributeSkillWeights() {
-    const checked = Array.from(document.querySelectorAll('.qbr-skill-check:checked'));
-    if (!checked.length) return;
-    const even = Math.floor((100 / checked.length) * 100) / 100;
-    const remainder = Math.round((100 - even * (checked.length - 1)) * 100) / 100;
-    checked.forEach((cb, i) => {
-      const input = document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`);
-      if (input) input.value = i === checked.length - 1 ? remainder : even;
-    });
-    this._qbUpdateSkillsTotal();
-  },
-
-  async _qbProposeSkillInline() {
-    const nameEl = document.getElementById('qbr-skill-inline-name');
-    const name = (nameEl?.value || '').trim();
-    if (!name) { UI.toast('Beceri adı gerekli.', 'warning'); return; }
-    try {
-      const res = await fetch('/api/admin/question-bank/skills', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: null }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Beceri önerilemedi.');
-      UI.toast('Beceri önerildi - onay bekliyor (dört göz ilkesi, siz onaylayamazsınız).', 'success');
-    } catch (err) {
-      UI.toast(err.message, 'danger');
-    }
-  },
-
-  _qbUpdateSkillsTotal() {
-    const total = Array.from(document.querySelectorAll('.qbr-skill-check:checked'))
-      .reduce((sum, cb) => sum + (parseFloat(document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`)?.value) || 0), 0);
-    const el = document.getElementById('qbr-skills-total');
-    if (el) {
-      el.textContent = `Toplam: %${total.toFixed(1)}`;
-      el.style.color = Math.abs(total - 100) < 0.01 ? 'var(--success)' : (total === 0 ? '' : 'var(--danger)');
-    }
-  },
-
-  async _qbSaveSkills() {
-    const q = this._qbCurrentQuestion;
-    if (!q) return;
-    const skills = Array.from(document.querySelectorAll('.qbr-skill-check:checked')).map(cb => ({
-      skillId: parseInt(cb.dataset.skillId),
-      weight: parseFloat(document.querySelector(`.qbr-skill-weight[data-skill-id="${cb.dataset.skillId}"]`)?.value) || 0,
-    }));
-    try {
-      const res = await fetch(`/api/admin/question-bank/questions/${q.id}/skills`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skills }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
-      UI.toast('Beceriler kaydedildi 💾', 'success');
-    } catch (err) {
-      UI.toast(err.message, 'danger');
-    }
   },
 
   // ---- MEB Kazanımları (curriculum_nodes / question_curriculum_tags) ----
