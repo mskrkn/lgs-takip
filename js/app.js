@@ -2420,10 +2420,19 @@ const App = {
       return;
     }
 
-    await db.addExam({ name, date: date || new Date().toISOString().split('T')[0], description, examType });
-    UI.toast('Deneme oluşturuldu!', 'success');
-    document.getElementById('add-exam-modal')?.remove();
-    this.renderExams();
+    // Cift tiklama/dokunma ile ayni sinavin iki kez olusturulmasini engelle
+    // (db.addExam zaten ayni isim+tarih+turu tespit ediyor, bu sadece butona
+    // hizli art arda basildiginda ikinci istegin gitmesini onler - bkz. audit).
+    const btn = document.querySelector('#add-exam-modal .btn-primary');
+    if (btn) btn.disabled = true;
+    try {
+      await db.addExam({ name, date: date || new Date().toISOString().split('T')[0], description, examType });
+      UI.toast('Deneme oluşturuldu!', 'success');
+      document.getElementById('add-exam-modal')?.remove();
+      this.renderExams();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   },
 
   // ---- Exam Detail ----
