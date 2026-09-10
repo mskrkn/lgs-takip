@@ -454,11 +454,15 @@ def _load_curriculum_seed(conn):
 
     now = datetime.now().isoformat()
     code_to_id = {}
+    seen_codes = set()
+    touched_subject_ids = set()
     for entry in entries:
         subject_code = CURRICULUM_SEED_SUBJECT_MAP.get(entry["subject"], entry["subject"])
         subject_id = subject_ids.get(subject_code)
         if not subject_id:
             continue
+        touched_subject_ids.add(subject_id)
+        seen_codes.add(entry["code"])
         parent_id = code_to_id.get(entry["parent_code"]) if entry["parent_code"] else None
         conn.execute(
             "INSERT INTO curriculum_nodes (code, parent_id, level, subject_id, grade_level, name, sort_order, created_at) "
@@ -471,6 +475,31 @@ def _load_curriculum_seed(conn):
         )
         row = conn.execute("SELECT id FROM curriculum_nodes WHERE code=?", (entry["code"],)).fetchone()
         code_to_id[entry["code"]] = row["id"]
+
+    # Mufredat guncellemesinde (2026-09-10: MAT 5-8 mufredati tamamen
+    # degistirildi) seed dosyasindan ARTIK cikarilmis eski kodlar - bunlari
+    # silmezsek her guncellemede eski/yanlis kazanimlar sonsuza kadar
+    # birikir, "gecerli mufredat" listesi kirlenir. curriculum_nodes'a
+    # question_curriculum_tags REFERENCES ON DELETE RESTRICT ile bagli, AMA
+    # bu fonksiyon init_db()'nin foreign_keys=OFF actigi baglantida calisiyor
+    # (bkz. bu tablonun ustundeki yorum) - yani RESTRICT burada TETIKLENMEZ,
+    # FK'ye guvenmek sessizce sarkan bir referans (dangling FK) birakirdi.
+    # Bunun yerine ACIKCA kontrol ediyoruz: gercekten bir soruya etiketlenmis
+    # (question_curriculum_tags'te kaydi olan) bir kod ASLA silinmez, sadece
+    # artik seed'de olmayan ve HICBIR soruya bagli olmayan kodlar temizlenir.
+    for subject_id in touched_subject_ids:
+        existing = conn.execute(
+            "SELECT id, code FROM curriculum_nodes WHERE subject_id=?", (subject_id,)
+        ).fetchall()
+        for row in existing:
+            if row["code"] in seen_codes:
+                continue
+            in_use = conn.execute(
+                "SELECT 1 FROM question_curriculum_tags WHERE curriculum_node_id=? LIMIT 1", (row["id"],)
+            ).fetchone()
+            if in_use:
+                continue
+            conn.execute("DELETE FROM curriculum_nodes WHERE id=?", (row["id"],))
 
 
 ROLE_SEED = ["SUPER_ADMIN", "PLATFORM_ADMIN", "ASSISTANT_ADMIN", "INSTITUTION_ADMIN",
