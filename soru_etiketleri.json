@@ -1,0 +1,940 @@
+{
+  "5": {
+    "sinif": 5,
+    "konular": [
+      {
+        "konu_id": "5.K01",
+        "konu_adi": "Temel Geometrik Çizimler ve İnşalar",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.3.1",
+            "kazanim_adi": "Temel geometrik çizimler için matematiksel araç ve teknolojiden yararlanabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.3.2",
+            "kazanim_adi": "Temel geometrik çizimlere dayalı deneyimlerini yansıtabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K02",
+        "konu_adi": "Açı Ölçme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.3.3",
+            "kazanim_adi": "Açıları ölçmek için matematiksel araç ve teknolojiden yararlanabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.3.4",
+            "kazanim_adi": "Düzlemde iki veya üç doğrunun birbirine göre durumuna bağlı olarak oluşabilecek açılara dair çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K03",
+        "konu_adi": "Çokgenler ve Çember",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.3.5",
+            "kazanim_adi": "Çokgenleri düzlemde ardışık olarak kesişen doğruların oluşturduğu kapalı şekiller olarak yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.3.6",
+            "kazanim_adi": "Çokgenlerin özellikleri ile ilgili edindiği deneyimleri yansıtabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.3.7",
+            "kazanim_adi": "Matematiksel araç ve teknoloji yardımıyla düzlemde iki noktada kesişen çember çiftinin merkezleri ve kesişim noktalarından biri ile inşa edilen üçgenlerin kenar özelliklerine yönelik çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K04",
+        "konu_adi": "Basamak Değerlerini Çözümleme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.1.1",
+            "kazanim_adi": "Altı basamaklı sayıları okuma ve yazmayı çok basamaklı sayılara genelleyebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K05",
+        "konu_adi": "Doğal Sayılarla Dört İşlem İçeren Problem Çözme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.1.2",
+            "kazanim_adi": "Doğal sayılar ve işlemler içeren gerçek yaşam problemlerini çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K06",
+        "konu_adi": "Dikdörtgenin Çevre Uzunluğu ve Alanı",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.4.1",
+            "kazanim_adi": "Kenar uzunlukları doğal sayı olan bir dikdörtgenin çevre uzunluğu verildiğinde kenar uzunluklarını yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.4.2",
+            "kazanim_adi": "Birim karelerden yola çıkarak dikdörtgenin alanını değerlendirebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.4.3",
+            "kazanim_adi": "Kenar uzunlukları doğal sayı olan bir dikdörtgenin alanının ölçüsü verildiğinde çevre uzunluğunu, çevre uzunluğu verildiğinde alanını yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.4.4",
+            "kazanim_adi": "Dikdörtgenin çevre uzunluğu ve alanı ile ilgili problemleri çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K07",
+        "konu_adi": "Kesirlerin Farklı Gösterimleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.1.3",
+            "kazanim_adi": "Gerçek yaşam durumlarına karşılık gelen kesirleri farklı biçimlerde temsil edebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K08",
+        "konu_adi": "Kesirlerin Karşılaştırılması",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.1.4",
+            "kazanim_adi": "Farklı gösterimlerle ifade edilen kesirlerin karşılaştırılmasına yönelik çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K09",
+        "konu_adi": "Kategorik Veri Dağılımları",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.5.1",
+            "kazanim_adi": "Kategorik veri ile çalışabilme ve veriye dayalı karar verebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.5.2",
+            "kazanim_adi": "Başkaları tarafından oluşturulan kategorik veriye dayalı istatistiksel sonuç veya yorumları tartışabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K10",
+        "konu_adi": "Değişme-Birleşme ve Dağılma Özellikleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.2.1",
+            "kazanim_adi": "Eşitliğin korunumuna ve işlem özelliklerine yönelik çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K11",
+        "konu_adi": "İşlem Önceliği Örüntüler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.2.2",
+            "kazanim_adi": "Karşılaştığı günlük hayat ya da matematiksel durumlarda işlem önceliğini yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K12",
+        "konu_adi": "Örüntüler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.2.3",
+            "kazanim_adi": "Sayı ve şekil örüntülerinin kuralına ilişkin muhakeme yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K13",
+        "konu_adi": "Temel Aritmetik İşlemler ve Algoritma",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.2.4",
+            "kazanim_adi": "Temel aritmetik işlem içeren durumlardaki algoritmaları yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "5.K14",
+        "konu_adi": "Öznel Olasılık",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.5.6.1",
+            "kazanim_adi": "Herhangi bir olayın olasılığının 0 (imkânsız) ile 1 (kesin) arasında (0 ve 1 dâhil) olduğunu (olasılık spektrumu) yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.5.6.2",
+            "kazanim_adi": "Olayları az ya da çok olasılıklı şeklinde yapılandırabilme"
+          }
+        ]
+      }
+    ]
+  },
+  "6": {
+    "sinif": 6,
+    "konular": [
+      {
+        "konu_id": "6.K01",
+        "konu_adi": "Bir Doğal Sayının Çarpanları ve Katları",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.1",
+            "kazanim_adi": "Karşılaştığı problem durumlarında bir doğal sayının çarpan ve katlarına yönelik muhakeme yapabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.6.1.4",
+            "kazanim_adi": "Günlük hayat problemleri ya da matematiksel durumlar üzerinden ortak kat ve ortak böleni yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K02",
+        "konu_adi": "Bölünebilme Kriterleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.2",
+            "kazanim_adi": "Bir doğal sayının 2, 3, 4, 5, 6, 9 ve 10 ile tam bölünebilme kriterlerine ilişkin çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K03",
+        "konu_adi": "Asal Sayılar ve Asal Çarpanlar",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.3",
+            "kazanim_adi": "Bir doğal sayının asal olma durumunu ve asal çarpanlarını çözümleyebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K04",
+        "konu_adi": "Deneysel Olasılık",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.6.1",
+            "kazanim_adi": "Bir olayın olasılığını gözleme dayalı tahmin edebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K05",
+        "konu_adi": "Ondalık Gösterimleri Çözümleme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.5",
+            "kazanim_adi": "Gerçek yaşam durumlarında ondalık gösterimlerin basamak değerlerini kesirlerden yararlanarak yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K06",
+        "konu_adi": "Kesir-Bölme İlişkisi",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.6",
+            "kazanim_adi": "Kesir ve bölme işlemi arasındaki ilişkiye yönelik tümevarımsal akıl yürütebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K07",
+        "konu_adi": "Kesirlerle Dört İşlem İçeren Problem Çözme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.7",
+            "kazanim_adi": "Gerçek yaşam durumlarında karşılaşılan kesir, ondalık ve yüzde gösterimleri ile ilgili dört işlem gerektiren problemleri çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K08",
+        "konu_adi": "Uzunluk Ölçme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.1.8",
+            "kazanim_adi": "Karşılaştığı günlük hayat ya da matematiksel durumlarda standart uzunluk ölçme birimlerini değerlendirebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K09",
+        "konu_adi": "Kategorik ve Nicel (Sürekli) Veri Dağılımları",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.5.1",
+            "kazanim_adi": "Kategorik veya nicel (kesikli) veri ile çalışabilme ve veriye dayalı karar verebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.6.5.2",
+            "kazanim_adi": "Başkaları tarafından oluşturulan kategorik veya nicel (kesikli) veriye dayalı istatistiksel sonuç veya yorumları tartışabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K10",
+        "konu_adi": "İki Paralel Doğrunun Bir Kesenile Oluşturduğu Açılar",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.3.1",
+            "kazanim_adi": "Düzlemde iki paralel doğru ve bir kesen ile oluşan açıları sınıflandırabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K11",
+        "konu_adi": "Üçgenin Açıları Yamuk, Paralelkenar, Eşkenar Dörtgen, Dikdörtgen ve Karenin Kenar, Açı ve Köşegen Özellikleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.3.2",
+            "kazanim_adi": "Matematiksel araç ve teknolojiden yararlanarak iki paralel doğrunun iki kesenle oluşturduğu şekillerin özelliklerine dair çıkarım yapabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.6.3.4",
+            "kazanim_adi": "Üçgen, yamuk, paralelkenar, eşkenar dörtgen, dikdörtgen ve karenin açıları ile ilgili problemleri çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K12",
+        "konu_adi": "Yamuk, Paralelkenar, Eşkenar Dörtgen, Dikdörtgen ve Karenin Kenar, Açı ve Köşegen Özellikleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.3.3",
+            "kazanim_adi": "Matematiksel araç ve teknolojiden yararlanarak birbirlerini ortalayan doğru parçalarını köşegen kabul eden dörtgenlere yönelik çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K13",
+        "konu_adi": "Bilinmeyen Nicelikler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.2.1",
+            "kazanim_adi": "Gerçek yaşam durumlarında bilinen niceliklerden bilinmeyen niceliklere ilişkin muhakeme yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K14",
+        "konu_adi": "Örüntü",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.2.2",
+            "kazanim_adi": "Sayı ve şekil örüntülerini yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K15",
+        "konu_adi": "Cebirsel İfadeler ve Algoritma",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.2.3",
+            "kazanim_adi": "Cebirsel ifadeler içeren durumlardaki algoritmaları yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K16",
+        "konu_adi": "Uzunluk ve Alan Ölçme Birimleri Arasındaki İlişki",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.4.1",
+            "kazanim_adi": "Uzunluk ve alan ölçme birimleri arasındaki ilişkilerle ilgili analojik akıl yürütebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K17",
+        "konu_adi": "Paralelkenar ve Üçgenin Alanı",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.4.2",
+            "kazanim_adi": "Dikdörtgenin alan bağıntısına yönelik deneyimlerini paralelkenar ve üçgenin alan bağıntılarına yansıtabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.6.4.3",
+            "kazanim_adi": "Geometrik şekillerin alanları ile modellenen gerçek yaşam durumlarına yönelik problem çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K18",
+        "konu_adi": "Çemberin ve Çapın Uzunlukları Arasındaki İlişki",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.4.4",
+            "kazanim_adi": "Çemberin uzunluğu ile çap uzunluğu arasındaki ilişkiye yönelik çıkarım yapabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.6.4.5",
+            "kazanim_adi": "Çap veya yarıçap uzunluğu verilen bir çemberin uzunluğu ile ilgili problemleri çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "6.K19",
+        "konu_adi": "Çemberde Merkez Açı ve Gördüğü Yay Uzunluğu",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.6.4.6",
+            "kazanim_adi": "Çemberde merkez açının ölçüsü ile gördüğü yayın uzunluğu arasındaki ilişkiye dair tümevarımsal akıl yürütebilme"
+          }
+        ]
+      }
+    ]
+  },
+  "7": {
+    "sinif": 7,
+    "konular": [
+      {
+        "konu_id": "7.K01",
+        "konu_adi": "Tam Sayılar Rasyonel Sayılar ve Farklı Temsilleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.1",
+            "kazanim_adi": "Gerçek yaşam ya da matematiksel durumlarda doğal sayı, tam sayı ve rasyonel sayıları yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K02",
+        "konu_adi": "Rasyonel Sayılar ve Farklı Temsilleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.2",
+            "kazanim_adi": "Gerçek yaşam durumlarında rasyonel sayıların ondalık gösterimlerini yansıtabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K03",
+        "konu_adi": "Rasyonel Sayılarda Karşılaştırma ve Sıralama",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.3",
+            "kazanim_adi": "Rasyonel sayıların karşılaştırma ve sıralama ilişkilerini yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K04",
+        "konu_adi": "Rasyonel Sayılarla İşlemler ve Problem Çözme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.4",
+            "kazanim_adi": "Rasyonel sayılar ve işlemler içeren gerçek yaşam problemlerini çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K05",
+        "konu_adi": "Cisimlerin Farklı Yönlerden Görünümleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.1",
+            "kazanim_adi": "Eş küplerle oluşturulan yapılar ile görünümleri arasındaki ilişkiyi çözümleyebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K06",
+        "konu_adi": "Dikdörtgenler Prizmasının Hacmi ve Yüzey Alanı",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.2",
+            "kazanim_adi": "Dikdörtgenler prizmasının yüzey alanını yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.4.3",
+            "kazanim_adi": "Dikdörtgenler prizmasının hacmini eş nesneler aracılığıyla yorumlayabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.4.4",
+            "kazanim_adi": "Dikdörtgenler prizmasının hacim bağıntısını değerlendirebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.4.6",
+            "kazanim_adi": "Günlük hayat durumlarında dikdörtgenler prizmaları ile modellenen cisimlerin yüzey alanı ve hacmine yönelik problem çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K07",
+        "konu_adi": "Hacim Ölçme Birimleri",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.5",
+            "kazanim_adi": "Hacim ölçme birimleri arasındaki ilişkileri değerlendirebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K08",
+        "konu_adi": "Kategorik ve Nicel (Sürekli) Veri Dağılımları",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.6.1",
+            "kazanim_adi": "Kategorik veya nicel (sürekli) veri ile çalışabilme ve veriye dayalı karar verebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.6.2",
+            "kazanim_adi": "Başkaları tarafından oluşturulan kategorik veya nicel (sürekli) veriye dayalı istatistiksel sonuç veya yorumları tartışabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K09",
+        "konu_adi": "Yansıma Dönüşümü",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.3.1",
+            "kazanim_adi": "Şekillerin yansıma dönüşümü altındaki görüntülerinin oluşturulmasına dair çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K10",
+        "konu_adi": "Orta Dikme ve Açıortay İnşası",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.3.2",
+            "kazanim_adi": "Yansıma dönüşümündeki deneyimlerini orta dikme ve açıortay inşasına yansıtabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K11",
+        "konu_adi": "Üçgenlerde Kenarortay ve İnşası, Açıortay, Yükseklik",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.5.1",
+            "kazanim_adi": "Matematiksel araç ve teknolojiden yararlanarak üçgende kenarortayı, açıortayı ve yüksekliği çözümleyebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.5.2",
+            "kazanim_adi": "Orta dikme inşasına yönelik deneyimlerini üçgende kenarortay inşasına yansıtabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K12",
+        "konu_adi": "Oran",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.5",
+            "kazanim_adi": "Gerçek yaşam durumları üzerinden oran ilişkileri hakkında muhakeme yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K13",
+        "konu_adi": "Orantılı Durumlar",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.6",
+            "kazanim_adi": "Gerçek yaşam durumları üzerinden orantılı durumları yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K14",
+        "konu_adi": "Doğru Orantılı Durumlara İlişkin Problem Çözme",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.1.7",
+            "kazanim_adi": "Gerçek yaşam durumları üzerinden doğru orantılı durumlara ilişkin problemleri çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K15",
+        "konu_adi": "Teorik Olasılık",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.7.1",
+            "kazanim_adi": "Bir olayın ve tümleyeninin olasılığına ilişkin tümevarımsal akıl yürütebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.7.2",
+            "kazanim_adi": "Aynı deneye ait olayların eşit olasılıklı olma durumlarını değerlendirebilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.7.3",
+            "kazanim_adi": "Olayları ayrık olma ve ayrık olmama durumlarına göre sınıflandırabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K16",
+        "konu_adi": "Cebirsel İfadelerle İşlemler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.2.1",
+            "kazanim_adi": "Gerçek yaşam durumları ya da matematiksel durumlar üzerinden cebirsel ifadelerle toplama, çıkarma ve bir rasyonel sayıyla çarpma işlemlerini yorumlayabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K17",
+        "konu_adi": "Denklem ve Eşitsizlikler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.2.2",
+            "kazanim_adi": "Birinci dereceden bir bilinmeyenli denklem ve birinci dereceden bir bilinmeyenli eşitsizlik içeren gerçek yaşam problemlerini çözebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K18",
+        "konu_adi": "İspat",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.2.3",
+            "kazanim_adi": "Sayılar ve özelliklerini içeren ispatlara ilişkin matematiksel muhakeme yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K19",
+        "konu_adi": "Cebirsel İfadelerle İşlemler ve Algoritma",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.2.4",
+            "kazanim_adi": "Temel aritmetik ve cebirsel ifadelerle işlem içeren durumlardaki süreci algoritma ifade yöntemlerini kullanarak yapılandırabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K20",
+        "konu_adi": "Daire ve Daire Diliminin Alanı",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.7",
+            "kazanim_adi": "Dikdörtgenin, paralelkenarın alanına ve çemberin uzunluğuna ilişkin deneyimlerini dairenin alan bağıntısına yansıtabilme"
+          },
+          {
+            "kazanim_kodu": "MAT.7.4.8",
+            "kazanim_adi": "Çemberde merkez açı ve gördüğü yay uzunluğu arasındaki ilişkiden yola çıkarak daire ve daire diliminin alanları arasındaki ilişkiye yönelik analojik akıl yürütebilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K21",
+        "konu_adi": "Eşkenar Dörtgen ve Yamuk",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.9",
+            "kazanim_adi": "Eşkenar dörtgen ve yamuğun alan bağıntılarına dair çıkarım yapabilme"
+          }
+        ]
+      },
+      {
+        "konu_id": "7.K22",
+        "konu_adi": "Daire ve Daire Diliminin Alanı Eşkenar Dörtgen ve Yamuk",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "MAT.7.4.10",
+            "kazanim_adi": "Günlük hayat durumlarında daire, daire dilimi, eşkenar dörtgen ve yamuğun alanına ilişkin problem çözebilme"
+          }
+        ]
+      }
+    ]
+  },
+  "8": {
+    "sinif": 8,
+    "konular": [
+      {
+        "konu_id": "8.K01",
+        "konu_adi": "Çarpanlar ve Katlar",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.1.1.1",
+            "kazanim_adi": "Verilen pozitif tam sayıların pozitif tam sayı çarpanlarını bulur, pozitif tam sayıların pozitif tam sayı çarpanlarını üslü ifadelerin çarpımı şeklinde yazar"
+          },
+          {
+            "kazanim_kodu": "M.8.1.1.2",
+            "kazanim_adi": "İki doğal sayının en büyük ortak bölenini (EBOB) ve en küçük ortak katını (EKOK) hesaplar, ilgili problemleri çözer"
+          },
+          {
+            "kazanim_kodu": "M.8.1.1.3",
+            "kazanim_adi": "Verilen iki doğal sayının aralarında asal olup olmadığını belirler"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K02",
+        "konu_adi": "Üslü İfadeler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.1.2.1",
+            "kazanim_adi": "Tam sayıların, tam sayı kuvvetlerini hesaplar"
+          },
+          {
+            "kazanim_kodu": "M.8.1.2.2",
+            "kazanim_adi": "Üslü ifadelerle ilgili temel kuralları anlar, birbirine denk ifadeler oluşturur"
+          },
+          {
+            "kazanim_kodu": "M.8.1.2.3",
+            "kazanim_adi": "Sayıların ondalık gösterimlerini 10’un tam sayı kuvvetlerini kullanarak çözümler"
+          },
+          {
+            "kazanim_kodu": "M.8.1.2.4",
+            "kazanim_adi": "Verilen bir sayıyı 10’un farklı tam sayı kuvvetlerini kullanarak ifade eder"
+          },
+          {
+            "kazanim_kodu": "M.8.1.2.5",
+            "kazanim_adi": "Çok büyük ve çok küçük sayıları bilimsel gösterimle ifade eder ve karşılaştırır"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K03",
+        "konu_adi": "Kareköklü İfadeler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.1.3.1",
+            "kazanim_adi": "Tamkare pozitif tam sayılarla bu sayıların karekökleri arasındaki ilişkiyi belirler"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.2",
+            "kazanim_adi": "Tam kare olmayan kareköklü bir sayının hangi iki doğal sayı arasında olduğunu belirler"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.3",
+            "kazanim_adi": "Kareköklü bir ifadeyi a√b şeklinde yazar ve a√b şeklindeki ifadede katsayıyı kök içine alır"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.4",
+            "kazanim_adi": "Kareköklü ifadelerde çarpma ve bölme işlemlerini yapar"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.5",
+            "kazanim_adi": "Kareköklü ifadelerde toplama ve çıkarma işlemlerini yapar"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.6",
+            "kazanim_adi": "Kareköklü bir ifade ile çarpıldığında, sonucu bir doğal sayı yapan çarpanlara örnek verir"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.7",
+            "kazanim_adi": "Ondalık ifadelerin kareköklerini belirler"
+          },
+          {
+            "kazanim_kodu": "M.8.1.3.8",
+            "kazanim_adi": "Gerçek sayıları tanır, rasyonel ve irrasyonel sayılarla ilişkilendirir"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K04",
+        "konu_adi": "Veri Analizi",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.4.1.1",
+            "kazanim_adi": "En fazla üç veri grubuna ait çizgi ve sütun grafiklerini yorumlar"
+          },
+          {
+            "kazanim_kodu": "M.8.4.1.2",
+            "kazanim_adi": "Verileri sütun, daire veya çizgi grafiği ile gösterir ve bu gösterimler arasında uygun olan dönüşümleri yapar"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K05",
+        "konu_adi": "Basit Olayların Olma Olasılığı",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.5.1.1",
+            "kazanim_adi": "Bir olaya ait olası durumları belirler"
+          },
+          {
+            "kazanim_kodu": "M.8.5.1.2",
+            "kazanim_adi": "“Daha fazla”, “eşit”, “daha az” olasılıklı olayları ayırt eder, örnek verir"
+          },
+          {
+            "kazanim_kodu": "M.8.5.1.3",
+            "kazanim_adi": "Eşit şansa sahip olan olaylarda her bir çıktının olasılık değerinin eşit olduğunu ve bu değerin 1/n olduğunu açıklar"
+          },
+          {
+            "kazanim_kodu": "M.8.5.1.4",
+            "kazanim_adi": "Olasılık değerinin 0 ile 1 arasında (0 ve 1 dâhil) olduğunu anlar"
+          },
+          {
+            "kazanim_kodu": "M.8.5.1.5",
+            "kazanim_adi": "Basit bir olayın olma olasılığını hesaplar"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K06",
+        "konu_adi": "Cebirsel İfadeler ve Özdeşlikler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.2.1.1",
+            "kazanim_adi": "Basit cebirsel ifadeleri anlar ve farklı biçimlerde yazar"
+          },
+          {
+            "kazanim_kodu": "M.8.2.1.2",
+            "kazanim_adi": "Cebirsel ifadelerin çarpımını yapar"
+          },
+          {
+            "kazanim_kodu": "M.8.2.1.3",
+            "kazanim_adi": "Özdeşlikleri modellerle açıklar"
+          },
+          {
+            "kazanim_kodu": "M.8.2.1.4",
+            "kazanim_adi": "Cebirsel ifadeleri çarpanlara ayırır"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K07",
+        "konu_adi": "Doğrusal Denklemler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.2.2.1",
+            "kazanim_adi": "Birinci dereceden bir bilinmeyenli denklemleri çözer"
+          },
+          {
+            "kazanim_kodu": "M.8.2.2.2",
+            "kazanim_adi": "Koordinat sistemini özellikleriyle tanır ve sıralı ikilileri gösterir"
+          },
+          {
+            "kazanim_kodu": "M.8.2.2.3",
+            "kazanim_adi": "Aralarında doğrusal ilişki bulunan iki değişkenden birinin diğerine bağlı olarak nasıl değiştiğini tablo ve denklem ile ifade eder"
+          },
+          {
+            "kazanim_kodu": "M.8.2.2.4",
+            "kazanim_adi": "Doğrusal denklemlerin grafiğini çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.2.2.5",
+            "kazanim_adi": "Doğrusal ilişki içeren gerçek hayat durumlarına ait denklem, tablo ve grafiği oluşturur ve yorumlar"
+          },
+          {
+            "kazanim_kodu": "M.8.2.2.6",
+            "kazanim_adi": "Doğrunun eğimini modellerle açıklar, doğrusal denklemleri ve grafiklerini eğimle ilişkilendirir"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K08",
+        "konu_adi": "Eşitsizlikler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.2.3.1",
+            "kazanim_adi": "Birinci dereceden bir bilinmeyenli eşitsizlik içeren günlük hayat durumlarına uygun matematik cümleleri yazar"
+          },
+          {
+            "kazanim_kodu": "M.8.2.3.2",
+            "kazanim_adi": "Birinci dereceden bir bilinmeyenli eşitsizlikleri sayı doğrusunda gösterir"
+          },
+          {
+            "kazanim_kodu": "M.8.2.3.3",
+            "kazanim_adi": "Birinci dereceden bir bilinmeyenli eşitsizlikleri çözer"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K09",
+        "konu_adi": "Üçgenler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.3.1.1",
+            "kazanim_adi": "Üçgende kenarortay, açıortay ve yüksekliği inşa eder"
+          },
+          {
+            "kazanim_kodu": "M.8.3.1.2",
+            "kazanim_adi": "Üçgenin iki kenar uzunluğunun toplamı veya farkı ile üçüncü kenarının uzunluğunu ilişkilendirir"
+          },
+          {
+            "kazanim_kodu": "M.8.3.1.3",
+            "kazanim_adi": "Üçgenin kenar uzunlukları ile bu kenarların karşısındaki açıların ölçülerini ilişkilendirir"
+          },
+          {
+            "kazanim_kodu": "M.8.3.1.4",
+            "kazanim_adi": "Yeterli sayıda elemanının ölçüleri verilen bir üçgeni çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.1.5",
+            "kazanim_adi": "Pisagor bağıntısını oluşturur, ilgili problemleri çözer"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K10",
+        "konu_adi": "Eşlik ve Benzerlik",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.3.3.1",
+            "kazanim_adi": "Eşlik ve benzerliği ilişkilendirir, eş ve benzer şekillerin kenar ve açı ilişkilerini belirler"
+          },
+          {
+            "kazanim_kodu": "M.8.3.3.2",
+            "kazanim_adi": "Benzer çokgenlerin benzerlik oranını belirler, bir çokgene eş ve benzer çokgenler oluşturur"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K11",
+        "konu_adi": "Dönüşüm Geometrisi",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.3.2.1",
+            "kazanim_adi": "Nokta, doğru parçası ve diğer şekillerin öteleme sonucundaki görüntülerini çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.2.2",
+            "kazanim_adi": "Nokta, doğru parçası ve diğer şekillerin yansıma sonucu oluşan görüntüsünü oluşturur"
+          },
+          {
+            "kazanim_kodu": "M.8.3.2.3",
+            "kazanim_adi": "Çokgenlerin öteleme ve yansımalar sonucunda ortaya çıkan görüntüsünü oluşturur"
+          }
+        ]
+      },
+      {
+        "konu_id": "8.K12",
+        "konu_adi": "Geometrik Cisimler",
+        "kazanimlar": [
+          {
+            "kazanim_kodu": "M.8.3.4.1",
+            "kazanim_adi": "Dik prizmaları tanır, temel elemanlarını belirler, inşa eder ve açınımını çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.4.2",
+            "kazanim_adi": "Dik dairesel silindirin temel elemanlarını belirler, inşa eder ve açınımını çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.4.3",
+            "kazanim_adi": "Dik dairesel silindirin yüzey alanı bağıntısını oluşturur, ilgili problemleri çözer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.4.4",
+            "kazanim_adi": "Dik dairesel silindirin hacim bağıntısını oluşturur; ilgili problemleri çözer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.4.5",
+            "kazanim_adi": "Dik piramidi tanır, temel elemanlarını belirler, inşa eder ve açınımını çizer"
+          },
+          {
+            "kazanim_kodu": "M.8.3.4.6",
+            "kazanim_adi": "Dik koniyi tanır, temel elemanlarını belirler, inşa eder ve açınımını çizer"
+          }
+        ]
+      }
+    ]
+  }
+}
