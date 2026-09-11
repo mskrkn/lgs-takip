@@ -818,12 +818,21 @@
       const data = await res.json();
       if (!res.ok) { card.innerHTML = `<div class="ep-card" style="margin-top:10px"><p class="text-muted">❌ ${data.error}</p></div>`; return; }
 
+      // kaynak: "native_db" | "drive_havuzu" (bkz. edupusula-drive-entegrasyon-
+      // prompt.md bölüm 5/6) - imageUrl backend'de zaten dogru uca (native
+      // /api/student/question-image ya da Drive proxy) isaret ediyor,
+      // burada kaynaga gore ayrica dal budaklanmaya gerek yok. Cevap
+      // input'unda hangi kimlik alaninin dolu oldugu submitAssignment'a
+      // data-drive-referans-id ile tasiniyor (questionBankId drive
+      // sorularinda null).
       const questionsHtml = data.questions.map((q, i) => `
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bg-glass-border)">
           <div style="font-size:13px;color:var(--text-muted)">Soru ${i + 1} — ${escapeHtml(q.displayCode)}</div>
           ${q.questionText ? `<div style="margin-top:6px">${escapeHtml(q.questionText)}</div>` : ''}
-          ${q.hasImage ? `<img src="/api/student/question-image/${q.questionBankId}" alt="Soru ${i + 1}" style="margin-top:8px;max-width:100%;border-radius:8px;border:1px solid var(--bg-glass-border)" loading="lazy">` : ''}
-          <input type="text" class="form-control assignment-answer-input" data-question-id="${q.questionBankId}"
+          ${q.hasImage && q.imageUrl ? `<img src="${q.imageUrl}" alt="Soru ${i + 1}" style="margin-top:8px;max-width:100%;border-radius:8px;border:1px solid var(--bg-glass-border)" loading="lazy"
+                 onerror="this.outerHTML='<p class=&quot;text-muted&quot; style=&quot;margin-top:8px;font-size:12px&quot;>🖼️ Görsel şu an yüklenemedi (silinmiş/taşınmış olabilir) - öğretmeninize danışın.</p>'">` : ''}
+          <input type="text" class="form-control assignment-answer-input"
+                 data-question-id="${q.questionBankId ?? ''}" data-drive-referans-id="${q.driveReferansId ?? ''}"
                  style="margin-top:8px;max-width:200px" placeholder="Cevabınız"
                  value="${escapeHtml(q.myAnswer || '')}" ${data.status !== 'active' ? 'disabled' : ''}>
           ${q.isCorrect !== null && q.isCorrect !== undefined ? `<span style="margin-left:8px">${q.isCorrect ? '✅' : '❌'}</span>` : ''}
@@ -844,7 +853,11 @@
     async function submitAssignment(id) {
       const inputs = [...document.querySelectorAll('.assignment-answer-input')];
       const answers = inputs
-        .map(el => ({ questionBankId: Number(el.dataset.questionId), answer: el.value.trim() }))
+        .map(el => ({
+          questionBankId: el.dataset.questionId ? Number(el.dataset.questionId) : null,
+          driveReferansId: el.dataset.driveReferansId || null,
+          answer: el.value.trim(),
+        }))
         .filter(a => a.answer);
       const statusEl = document.getElementById('assignment-submit-status');
       if (!answers.length) { statusEl.textContent = '❌ En az bir soruyu cevaplayın.'; return; }

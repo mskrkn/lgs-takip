@@ -24,13 +24,16 @@ import re
 import sys
 import io
 import csv
+import glob
 import json
 import time
+import random
 import socket
 import sqlite3
 import secrets
 import zipfile
 import difflib
+import mimetypes
 import traceback
 import threading
 import webbrowser
@@ -100,6 +103,9 @@ DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
+# Bolum 4: Drive'dan cekilen soru gorselleri burada onbekleklenir - ayni
+# gorsele ikinci istekte artik Drive'a GIDILMEZ (bkz. api_drive_havuzu_image).
+DRIVE_HAVUZU_CACHE_DIR = os.path.join(UPLOADS_DIR, "drive_havuzu_cache")
 PORT = int(os.environ.get("PORT", 8080))
 _SERVER_STARTED_AT = datetime.now()
 
@@ -225,6 +231,21 @@ if os.path.exists(FIREBASE_ADMIN_KEY_PATH):
         firebase_auth = None
 else:
     print("[firebase-admin] firebase-adminsdk-key.json bulunamadi, bulut senkronizasyonu devre disi.")
+
+
+# ============================================================
+# Drive Soru Havuzu (2. Adim - edupusula-drive-entegrasyon-prompt.md)
+# EduPusula Soru Merkezi'nin (ayri, local masaustu uygulamasi) yazdigi
+# ortak Google Sheets/Drive soru havuzunu okur. Servis hesabi anahtari
+# yoksa (bkz. soru_havuzu_drive.is_configured()) sessizce devre disi
+# kalir, native question_bank sorulari etkilenmez.
+import soru_havuzu_drive
+import soru_havuzu_merge
+
+if soru_havuzu_drive.is_configured():
+    print("[soru-havuzu-drive] Yapilandirildi - Drive havuzu sorulari kullanilabilir.")
+else:
+    print("[soru-havuzu-drive] soru-havuzu-service-account.json veya SORU_HAVUZU_SHEET_ID eksik, Drive havuzu devre disi.")
 
 
 # ============================================================
@@ -1224,6 +1245,8 @@ def _create_question_bank_tables(conn):
 
     _migrate_question_bank_lifecycle(conn)
     _migrate_question_import_batches_progress(conn)
+    _migrate_assignment_drive_source(conn)
+    _migrate_assignment_submissions_drive_source(conn)
     _migrate_question_import_batches_queue(conn)
 
     tc_cols = [r[1] for r in conn.execute("PRAGMA table_info(teacher_classes)").fetchall()]
@@ -1377,6 +1400,113 @@ def _migrate_question_bank_lifecycle(conn):
             SELECT {", ".join(cols)} FROM question_bank;
         DROP TABLE question_bank;
         ALTER TABLE question_bank_new RENAME TO question_bank;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_assignment_drive_source(conn):
+    """Faz 6 (edupusula-drive-entegrasyon-prompt.md bolum 5): assignment_
+    questions.question_bank_id NOT NULL'du - Drive Soru Havuzu'ndan (native
+    question_bank'te HICBIR satiri olmayan) bir soru bir odeve eklenemiyordu.
+    SQLite NOT NULL/CHECK kisitini dogrudan ALTER edemedigi icin
+    _migrate_question_bank_lifecycle ile AYNI kanitlanmis desen kullanilir:
+    assignment_questions adini ASLA gecici bir isme cevirmiyoruz (baskasi
+    buna REFERENCES ile baglanmadigi dogrulandi, ama yine de ayni guvenli
+    desen tekrarlaniyor - bkz. o fonksiyondaki uzun yorum), once yeni semali
+    gecici tabloyu olusturup veriyi kopyaliyoruz, sonra ESKI TABLOYU SILIP
+    geciciyi asil isme yeniden adlandiriyoruz.
+
+    soru_kaynagi='native_db' -> question_bank_id dolu, drive_* NULL (mevcut
+    TUM satirlar bu haldeydi zaten, kopyalama sirasinda oyle isaretlenir).
+    soru_kaynagi='drive_havuzu' -> question_bank_id NULL, drive_soru_
+    referans_id (Sheets'teki soru_id UUID'si) dolu."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='assignment_questions'"
+    ).fetchone()
+    if not row or "soru_kaynagi" in row["sql"]:
+        return  # tablo yok (ilk kurulum) ya da zaten migrate edilmis
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    aq_cols = [r[1] for r in conn.execute("PRAGMA table_info(assignment_questions)").fetchall()]
+    has_student_id = "student_id" in aq_cols
+    student_col_sql = "student_id INTEGER REFERENCES students(id) ON DELETE CASCADE," if has_student_id else ""
+    student_copy_sql = ", student_id" if has_student_id else ""
+
+    conn.executescript(
+        f"""
+        CREATE TABLE assignment_questions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            question_bank_id INTEGER REFERENCES question_bank(id) ON DELETE CASCADE,
+            order_index INTEGER NOT NULL DEFAULT 0,
+            {student_col_sql}
+            soru_kaynagi TEXT NOT NULL DEFAULT 'native_db' CHECK(soru_kaynagi IN ('native_db','drive_havuzu')),
+            drive_soru_referans_id TEXT,
+            drive_file_id TEXT,
+            CHECK (
+                (soru_kaynagi = 'native_db' AND question_bank_id IS NOT NULL AND drive_soru_referans_id IS NULL)
+                OR
+                (soru_kaynagi = 'drive_havuzu' AND question_bank_id IS NULL AND drive_soru_referans_id IS NOT NULL)
+            )
+        );
+        INSERT INTO assignment_questions_new (id, assignment_id, question_bank_id, order_index{student_copy_sql}, soru_kaynagi)
+            SELECT id, assignment_id, question_bank_id, order_index{student_copy_sql}, 'native_db' FROM assignment_questions;
+        DROP TABLE assignment_questions;
+        ALTER TABLE assignment_questions_new RENAME TO assignment_questions;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_assignment_submissions_drive_source(conn):
+    """assignment_submissions icin AYNI gerekce/desen (bkz.
+    _migrate_assignment_drive_source) - bir ogrenci Drive havuzundan gelen
+    bir soruya cevap verdiginde bu tabloya da yazilabilmeli.
+
+    Orijinal UNIQUE(assignment_id, student_id, question_bank_id) dogrudan
+    tasinamiyor: question_bank_id artik drive_havuzu satirlarinda HER ZAMAN
+    NULL olacak, ve SQL'de bir UNIQUE kisitinda NULL hicbir seyle (bir baska
+    NULL ile bile) 'esit' sayilmadigindan boyle bir kisit ayni ogrencinin
+    ayni Drive sorusuna birden fazla cevap kaydetmesini ENGELLEMEZ. Bunun
+    yerine iki AYRI kismi (partial) unique index kullanilir - proje zaten
+    question_curriculum_tags.idx_qct_one_primary'de ayni WHERE'li-unique-
+    index desenini kullaniyor."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='assignment_submissions'"
+    ).fetchone()
+    if not row or "soru_kaynagi" in row["sql"]:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    conn.executescript(
+        """
+        CREATE TABLE assignment_submissions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            question_bank_id INTEGER REFERENCES question_bank(id) ON DELETE CASCADE,
+            answer TEXT,
+            is_correct INTEGER,
+            submitted_at TEXT NOT NULL,
+            soru_kaynagi TEXT NOT NULL DEFAULT 'native_db' CHECK(soru_kaynagi IN ('native_db','drive_havuzu')),
+            drive_soru_referans_id TEXT,
+            CHECK (
+                (soru_kaynagi = 'native_db' AND question_bank_id IS NOT NULL AND drive_soru_referans_id IS NULL)
+                OR
+                (soru_kaynagi = 'drive_havuzu' AND question_bank_id IS NULL AND drive_soru_referans_id IS NOT NULL)
+            )
+        );
+        INSERT INTO assignment_submissions_new (id, assignment_id, student_id, question_bank_id, answer, is_correct, submitted_at, soru_kaynagi)
+            SELECT id, assignment_id, student_id, question_bank_id, answer, is_correct, submitted_at, 'native_db' FROM assignment_submissions;
+        DROP TABLE assignment_submissions;
+        ALTER TABLE assignment_submissions_new RENAME TO assignment_submissions;
+        CREATE UNIQUE INDEX idx_as_native_unique ON assignment_submissions(assignment_id, student_id, question_bank_id)
+            WHERE soru_kaynagi = 'native_db';
+        CREATE UNIQUE INDEX idx_as_drive_unique ON assignment_submissions(assignment_id, student_id, drive_soru_referans_id)
+            WHERE soru_kaynagi = 'drive_havuzu';
         """
     )
     conn.commit()
@@ -5363,11 +5493,15 @@ def api_teacher_send_message():
 @app.route("/api/teacher/question-bank/approved")
 @login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
 def api_teacher_approved_questions():
-    """Ogretmenin odev olustururken secebilecegi, YAYINLANMIS (published)
-    sorularin sade (batch/inceleme detaylari olmadan) listesi - tam admin
-    soru bankasi ekranindan FARKLI, kasitli olarak basit bir secim listesi.
-    'approved' henuz yayina hazir degil - published olmadan odeve
-    eklenemez (bkz. questions.publish, _migrate_question_bank_lifecycle)."""
+    """Ogretmenin odev olustururken secebilecegi sorularin sade listesi -
+    tam admin soru bankasi ekranindan FARKLI, kasitli olarak basit bir
+    secim listesi. Iki kaynagi birlestirir (edupusula-drive-entegrasyon-
+    prompt.md bolum 5): native_db (published, eskisi gibi) + drive_havuzu
+    (Aktif durumundaki Drive Soru Havuzu sorulari, bkz. soru_havuzu_merge).
+    Drive sorulari SADECE bu uc icin eklendi - auto/otomatik ve
+    smart/akilli mod dropdown'lari (populateAssignmentSubjectSelects)
+    bilerek degistirilmedi, onlar hala sadece native_db'yi kullaniyor
+    (Faz 7/8'in kapsami)."""
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
@@ -5381,12 +5515,26 @@ def api_teacher_approved_questions():
         "ORDER BY s.name, qb.display_code",
         (org_id,),
     ).fetchall()
-    return jsonify([{
-        "id": r["id"], "displayCode": r["display_code"],
+    native_items = [{
+        "kaynak": "native_db",
+        "id": r["id"], "driveReferansId": None, "driveFileId": None,
+        "displayCode": r["display_code"],
         "questionText": r["question_text"], "hasImage": bool(r["image_path"]),
         "subjectId": r["subject_id"], "subjectName": r["subject_name"],
         "topicId": r["topic_id"], "topicName": r["topic_name"], "difficulty": r["difficulty"],
-    } for r in rows])
+    } for r in rows]
+
+    drive_items = []
+    for d in soru_havuzu_merge.fetch_drive_questions_as_dto():
+        drive_items.append({
+            "kaynak": "drive_havuzu",
+            "id": None, "driveReferansId": d["soru_referans_id"], "driveFileId": d["drive_file_id"],
+            "displayCode": d["display_id"], "questionText": None, "hasImage": bool(d["drive_file_id"]),
+            "subjectId": None, "subjectName": d["ders"],
+            "topicId": None, "topicName": d["konu_adi"], "difficulty": d["zorluk_derecesi"],
+        })
+
+    return jsonify(native_items + drive_items)
 
 
 def _teacher_can_use_class(class_name):
@@ -5398,6 +5546,24 @@ def _teacher_can_use_class(class_name):
         return True
     allowed = teacher_class_list(session.get("class_name"))
     return allowed is None or class_name in allowed
+
+
+def _auto_select_drive_questions(subject_name, topic_name, difficulty, exclude_ids=None):
+    """Faz 7 (edupusula-drive-entegrasyon-prompt.md bölüm 6): otomatik ödev
+    modunun Drive Soru Havuzu tarafı. subject_id/topic_id native'in
+    INTEGER FK'leri olduğu için, çağıran taraf bunları ÖNCE isme çözümleyip
+    buraya subject_name/topic_name (string) olarak vermeli - iki kaynağın
+    kod şemaları eşleşmediğinden (bkz. soru_havuzu_merge.py'deki keşif notu)
+    eşleştirme İSİM bazlı yapılıyor. count LIMIT'i burada UYGULANMIYOR -
+    çağıran taraf native ile Drive adaylarını BİRLEŞTİRİP karıştırdıktan
+    sonra kendi kesiyor (bkz. api_teacher_create_assignment 'auto' dalı)."""
+    exclude_ids = exclude_ids or set()
+    items = soru_havuzu_merge.fetch_drive_questions_as_dto(ders=subject_name)
+    if topic_name:
+        items = [i for i in items if (i.get("konu_adi") or "").strip().lower() == topic_name.strip().lower()]
+    if difficulty:
+        items = [i for i in items if (i.get("zorluk_derecesi") or "").strip().lower() == difficulty.strip().lower()]
+    return [i for i in items if i["soru_referans_id"] not in exclude_ids]
 
 
 def _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, count, exclude_ids=None):
@@ -5425,12 +5591,49 @@ def _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, count, 
     return [r["id"] for r in db.execute(query, params).fetchall()]
 
 
+def _find_similar_drive_question(subject_name, grade_level, skill_name, difficulty, exclude_ids=None):
+    """Faz 8 (edupusula-drive-entegrasyon-prompt.md bölüm 6): akıllı atamanın
+    Drive tarafı. skill_name (native skills.name) ile Drive'ın kazanim_adi/
+    konu_adi alanları BİREBİR metin eşitliğiyle karşılaştırılır - iki
+    taksonomi BAĞIMSIZ yazıldığı için (bkz. soru_havuzu_merge.py'deki keşif
+    notu) bu eşleşme SIK ÇALIŞMAYABİLİR; bulunamazsa None döner ve çağıran
+    taraf (aşağıdaki _smart_select_questions_for_student) sadece o soruyu
+    atlar, hiçbir şey UYDURULMAZ. Genel bir ders/sınıf bazlı Drive
+    tamamlaması ayrı bir 'filler' aşamasında (aynı fonksiyonun sonunda)
+    yapılır."""
+    exclude_ids = exclude_ids or set()
+    items = soru_havuzu_merge.fetch_drive_questions_as_dto(sinif_duzeyi=grade_level, ders=subject_name)
+    if skill_name:
+        name_lower = skill_name.strip().lower()
+        matches = [
+            i for i in items
+            if (i.get("kazanim_adi") or "").strip().lower() == name_lower
+            or (i.get("konu_adi") or "").strip().lower() == name_lower
+        ]
+        if not matches:
+            return None
+        items = matches
+    if difficulty:
+        filtered = [i for i in items if (i.get("zorluk_derecesi") or "").strip().lower() == difficulty.strip().lower()]
+        if filtered:
+            items = filtered
+    items = [i for i in items if i["soru_referans_id"] not in exclude_ids]
+    return items[0] if items else None
+
+
 def _smart_select_questions_for_student(db, org_id, student_id, subject_id, grade_level, count):
     """admin-panel-soru-havuzu-2 bölüm 10.7 (Akıllı ödev): bu öğrencinin
     (varsa) en zayıf becerilerinden başlayarak, her biri için bölüm 10.8'in
     aynı gevşeme algoritmasıyla bir soru seçer - mastery verisi olmayan bir
     öğrenci için (henüz hiç çözüm geçmişi yok) rastgele/filtre gevşetilmiş
-    seçime düşer (bkz. _auto_select_questions çağrısı en sonda)."""
+    seçime düşer (bkz. _auto_select_questions çağrısı en sonda).
+
+    Faz 8 (bölüm 6): native'de o zayıf beceriye uygun soru YOKSA, Drive
+    havuzunda AYNI beceri adına (best-effort isim eşleşmesi) sahip bir soru
+    denenir; o da yoksa filler aşamasında native + Drive'ın genel (beceri
+    bağımsız) ders/sınıf havuzundan tamamlanır. Dönüş artık ham question_bank
+    id listesi değil, {"kaynak":..., ...} sözlük listesi (bkz.
+    api_teacher_create_assignment'taki birleşik insert döngüsü)."""
     weak_skills = db.execute(
         "SELECT ss.skill_id FROM student_skills ss "
         "JOIN question_skills qs ON qs.skill_id = ss.skill_id "
@@ -5439,20 +5642,49 @@ def _smart_select_questions_for_student(db, org_id, student_id, subject_id, grad
         (subject_id, org_id, student_id, count),
     ).fetchall()
 
+    subject_row = db.execute("SELECT name FROM subjects WHERE id=?", (subject_id,)).fetchone()
+    subject_name = subject_row["name"] if subject_row else None
+
     selected = []
-    seen = set()
+    seen_native = set()
+    seen_drive = set()
     for row in weak_skills:
         qid = _find_similar_question(
-            db, org_id, subject_id, grade_level, None, row["skill_id"], "orta", exclude_ids=seen,
+            db, org_id, subject_id, grade_level, None, row["skill_id"], "orta", exclude_ids=seen_native,
         )
         if qid:
-            selected.append(qid)
-            seen.add(qid)
+            selected.append({"kaynak": "native_db", "question_bank_id": qid})
+            seen_native.add(qid)
+            continue
+        if subject_name:
+            skill_row = db.execute("SELECT name FROM skills WHERE id=?", (row["skill_id"],)).fetchone()
+            drive_match = _find_similar_drive_question(
+                subject_name, grade_level, skill_row["name"] if skill_row else None, "orta", exclude_ids=seen_drive,
+            )
+            if drive_match:
+                selected.append({
+                    "kaynak": "drive_havuzu",
+                    "drive_soru_referans_id": drive_match["soru_referans_id"],
+                    "drive_file_id": drive_match["drive_file_id"],
+                })
+                seen_drive.add(drive_match["soru_referans_id"])
+
     if len(selected) < count:
         filler = _auto_select_questions(
-            db, org_id, subject_id, None, None, count - len(selected), exclude_ids=seen,
+            db, org_id, subject_id, None, None, count - len(selected), exclude_ids=seen_native,
         )
-        selected.extend(filler)
+        selected.extend({"kaynak": "native_db", "question_bank_id": qid} for qid in filler)
+
+    if len(selected) < count and subject_name:
+        remaining = count - len(selected)
+        drive_filler = _auto_select_drive_questions(subject_name, None, None, exclude_ids=seen_drive)
+        drive_filler = [d for d in drive_filler if str(d.get("sinif_duzeyi")) == str(grade_level)]
+        selected.extend({
+            "kaynak": "drive_havuzu",
+            "drive_soru_referans_id": d["soru_referans_id"],
+            "drive_file_id": d["drive_file_id"],
+        } for d in drive_filler[:remaining])
+
     return selected
 
 
@@ -5460,14 +5692,17 @@ def _smart_select_questions_for_student(db, org_id, student_id, subject_id, grad
 @login_required(role=("teacher", "admin", "super_admin"), permission="assignments.create")
 def api_teacher_create_assignment():
     """Üç mod (bölüm 10.7, 'hepsi aynı anda' geliştirilir):
-    - manual: öğretmen questionIds ile soruları tek tek seçer (mevcut/
-      değişmemiş davranış) - tüm sınıf AYNI soruları görür (student_id NULL).
+    - manual: öğretmen questionIds (native) ve/veya driveQuestionIds (Drive
+      Soru Havuzu, edupusula-drive-entegrasyon-prompt.md bölüm 5) ile
+      soruları tek tek seçer - tüm sınıf AYNI soruları görür (student_id NULL).
     - auto: öğretmen filtre (subjectId/topicId/difficulty) + questionCount
       verir, sistem _auto_select_questions ile seçer - yine sınıf geneli
-      PAYLAŞIMLI tek bir set (student_id NULL).
+      PAYLAŞIMLI tek bir set (student_id NULL). Şimdilik SADECE native_db
+      (bkz. bölüm 8'in "Faz 7" notu - Drive entegrasyonu ileride).
     - smart: öğretmen sadece subjectId + questionCount verir, sistem HER
       öğrenci için AYRI, kişiselleştirilmiş bir set üretir (assignment_
-      questions.student_id = o öğrenci) - bkz. _smart_select_questions_for_student."""
+      questions.student_id = o öğrenci) - bkz. _smart_select_questions_for_student.
+      Şimdilik SADECE native_db (bölüm 8, Faz 8'in kapsamı)."""
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
@@ -5487,22 +5722,52 @@ def api_teacher_create_assignment():
     if not _teacher_can_use_class(class_name):
         return jsonify({"error": "Bu sınıfa ödev verme yetkiniz yok."}), 403
 
-    # (student_id, question_id) çiftleri - manual/auto'da tüm liste tek bir
-    # None student_id (paylaşımlı) taşır, smart'ta öğrenci başına ayrı liste.
-    assignments_to_insert = []  # [(student_id_or_None, [question_id, ...])]
+    # (student_id, [item, ...]) - her item {"kaynak":"native_db","question_bank_id":id}
+    # ya da {"kaynak":"drive_havuzu","drive_soru_referans_id":uuid,"drive_file_id":fid}.
+    # manual/auto'da tum liste tek bir None student_id (paylasimli) tasir,
+    # smart'ta ogrenci basina ayri liste.
+    assignments_to_insert = []  # [(student_id_or_None, [item, ...])]
 
     if mode == "manual":
         question_ids = data.get("questionIds") or []
-        if not isinstance(question_ids, list) or not question_ids:
+        drive_question_ids = data.get("driveQuestionIds") or []
+        if not isinstance(question_ids, list) or not isinstance(drive_question_ids, list) or not (question_ids or drive_question_ids):
             return jsonify({"error": "En az bir soru seçilmeli."}), 400
-        placeholders = ",".join("?" * len(question_ids))
-        valid_rows = db.execute(
-            f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'published'",
-            (*question_ids, org_id),
-        ).fetchall()
-        if len({r["id"] for r in valid_rows}) != len(set(question_ids)):
-            return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz yayınlanmamış."}), 400
-        assignments_to_insert.append((None, question_ids))
+
+        items = []
+        if question_ids:
+            placeholders = ",".join("?" * len(question_ids))
+            valid_rows = db.execute(
+                f"SELECT id FROM question_bank WHERE id IN ({placeholders}) AND organization_id = ? AND status = 'published'",
+                (*question_ids, org_id),
+            ).fetchall()
+            if len({r["id"] for r in valid_rows}) != len(set(question_ids)):
+                return jsonify({"error": "Seçilen sorulardan biri veya birden fazlası bulunamadı ya da henüz yayınlanmamış."}), 400
+            items.extend({"kaynak": "native_db", "question_bank_id": qid} for qid in question_ids)
+
+        if drive_question_ids:
+            # Bolum 7: Drive havuzuna erisilemiyorsa (cache bos/hata) net bir
+            # hata donuyoruz - sessizce "bulunamadi" gibi yanlis bir mesaj
+            # yerine ogretmen gercek nedeni gorsun.
+            drive_status = soru_havuzu_drive.get_status()
+            if not drive_status["configured"]:
+                return jsonify({"error": "Drive Soru Havuzu yapılandırılmamış."}), 400
+            drive_by_id = {
+                d["soru_id"]: d for d in soru_havuzu_drive.get_all_questions()
+                if (d.get("durum") or "").strip().lower() == "aktif"
+            }
+            missing = [rid for rid in drive_question_ids if rid not in drive_by_id]
+            if missing:
+                return jsonify({"error": f"Drive havuzunda bulunamayan/aktif olmayan soru(lar): {', '.join(missing)}"}), 400
+            for rid in drive_question_ids:
+                d = drive_by_id[rid]
+                items.append({
+                    "kaynak": "drive_havuzu",
+                    "drive_soru_referans_id": rid,
+                    "drive_file_id": d.get("drive_file_id"),
+                })
+
+        assignments_to_insert.append((None, items))
 
     elif mode == "auto":
         subject_id = data.get("subjectId")
@@ -5511,10 +5776,34 @@ def api_teacher_create_assignment():
         count = data.get("questionCount")
         if not subject_id or not count or int(count) < 1:
             return jsonify({"error": "Ders ve soru sayısı gerekli."}), 400
-        question_ids = _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, int(count))
-        if not question_ids:
+        count = int(count)
+
+        # Faz 7 (bölüm 6): önce native'den TÜM eşleşen adaylar (LIMIT YOK,
+        # 10000 sadece kaçak/anormal veriye karşı güvenlik sınırı) + Drive
+        # havuzundan aynı kritere uyan tüm adaylar tek bir havuzda birleşip
+        # KARIŞTIRILIR, sonra `count` kadarı çekilir - "her iki kaynaktan da
+        # rastgele seçim" (bölüm 6) sadece native tükenince Drive'a
+        # düşülmesinden farklı, gerçekten karışık bir sonuç verir.
+        native_ids = _auto_select_questions(db, org_id, subject_id, topic_id, difficulty, 10000)
+        candidates = [{"kaynak": "native_db", "question_bank_id": qid} for qid in native_ids]
+
+        subject_row = db.execute("SELECT name FROM subjects WHERE id=?", (subject_id,)).fetchone()
+        topic_row = db.execute("SELECT name FROM topics WHERE id=?", (topic_id,)).fetchone() if topic_id else None
+        subject_name = subject_row["name"] if subject_row else None
+        if subject_name:
+            drive_candidates = _auto_select_drive_questions(
+                subject_name, topic_row["name"] if topic_row else None, difficulty
+            )
+            candidates.extend({
+                "kaynak": "drive_havuzu",
+                "drive_soru_referans_id": d["soru_referans_id"],
+                "drive_file_id": d["drive_file_id"],
+            } for d in drive_candidates)
+
+        if not candidates:
             return jsonify({"error": "Bu filtrelerle eşleşen yayınlanmış soru bulunamadı."}), 404
-        assignments_to_insert.append((None, question_ids))
+        random.shuffle(candidates)
+        assignments_to_insert.append((None, candidates[:count]))
 
     else:  # smart
         subject_id = data.get("subjectId")
@@ -5529,9 +5818,9 @@ def api_teacher_create_assignment():
             return jsonify({"error": "Bu sınıfta öğrenci bulunamadı."}), 404
         for s in students:
             grade_level = (s["class_name"] or "").split("/")[0].strip()
-            qids = _smart_select_questions_for_student(db, org_id, s["id"], subject_id, grade_level, int(count))
-            if qids:
-                assignments_to_insert.append((s["id"], qids))
+            items = _smart_select_questions_for_student(db, org_id, s["id"], subject_id, grade_level, int(count))
+            if items:
+                assignments_to_insert.append((s["id"], items))
         if not assignments_to_insert:
             return jsonify({"error": "Bu ders için hiçbir öğrenciye uygun soru bulunamadı."}), 404
 
@@ -5542,13 +5831,20 @@ def api_teacher_create_assignment():
         (org_id, session["user_id"], class_name, title, description, due_date, "active", mode, now, now),
     )
     assignment_id = cur.lastrowid
-    for student_id, question_ids in assignments_to_insert:
-        for i, qid in enumerate(question_ids):
-            db.execute(
-                "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index, student_id) "
-                "VALUES (?,?,?,?)",
-                (assignment_id, qid, i, student_id),
-            )
+    for student_id, items in assignments_to_insert:
+        for i, item in enumerate(items):
+            if item["kaynak"] == "native_db":
+                db.execute(
+                    "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index, student_id, soru_kaynagi) "
+                    "VALUES (?,?,?,?,'native_db')",
+                    (assignment_id, item["question_bank_id"], i, student_id),
+                )
+            else:
+                db.execute(
+                    "INSERT INTO assignment_questions (assignment_id, question_bank_id, order_index, student_id, "
+                    "soru_kaynagi, drive_soru_referans_id, drive_file_id) VALUES (?,NULL,?,?,'drive_havuzu',?,?)",
+                    (assignment_id, i, student_id, item["drive_soru_referans_id"], item["drive_file_id"]),
+                )
     db.commit()
     log_audit(db, "ASSIGNMENT_CREATED", resource_type="assignment", resource_id=assignment_id)
     return jsonify({"ok": True, "id": assignment_id})
@@ -5622,12 +5918,29 @@ def api_teacher_assignment_results(assignment_id):
     # dolu: akilli moddaki kisisellestirilmis sorular (SADECE o ogrenciye ait) -
     # bkz. api_teacher_create_assignment. Asagida her ogrenci icin kendi
     # gecerli soru kumesi (paylasimli + varsa kendine ozel) ayri hesaplanir.
+    #
+    # LEFT JOIN (bolum 5/6): drive_havuzu satirlarinin question_bank_id'si
+    # NULL - eskiden buradaki INNER JOIN bu sorulari SESSIZCE listeden
+    # dusuruyordu (bkz. Faz 5 kesif notu). Goruntulenecek metin/kod artik
+    # ya question_bank'ten (native) ya da drive_lookup'tan (drive) geliyor.
     all_questions = db.execute(
-        "SELECT aq.student_id, aq.question_bank_id, qb.display_code, qb.question_text, qb.correct_answer "
-        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "SELECT aq.student_id, aq.question_bank_id, aq.soru_kaynagi, aq.drive_soru_referans_id, "
+        "qb.display_code, qb.question_text, qb.correct_answer "
+        "FROM assignment_questions aq LEFT JOIN question_bank qb ON qb.id = aq.question_bank_id "
         "WHERE aq.assignment_id = ? ORDER BY aq.order_index",
         (assignment_id,),
     ).fetchall()
+    drive_lookup = {d["soru_id"]: d for d in soru_havuzu_drive.get_all_questions()}
+
+    def _q_identity(q):
+        return ("drive_havuzu", q["drive_soru_referans_id"]) if q["soru_kaynagi"] == "drive_havuzu" else ("native_db", q["question_bank_id"])
+
+    def _q_display(q):
+        if q["soru_kaynagi"] == "drive_havuzu":
+            d = drive_lookup.get(q["drive_soru_referans_id"]) or {}
+            return d.get("display_id") or q["drive_soru_referans_id"]
+        return q["display_code"]
+
     shared_questions = [q for q in all_questions if q["student_id"] is None]
     personal_questions = {}
     for q in all_questions:
@@ -5640,10 +5953,15 @@ def api_teacher_assignment_results(assignment_id):
         (org_id, assignment["class_name"]),
     ).fetchall()
     submissions = db.execute(
-        "SELECT student_id, question_bank_id, answer, is_correct FROM assignment_submissions WHERE assignment_id = ?",
+        "SELECT student_id, question_bank_id, soru_kaynagi, drive_soru_referans_id, answer, is_correct "
+        "FROM assignment_submissions WHERE assignment_id = ?",
         (assignment_id,),
     ).fetchall()
-    sub_map = {(s["student_id"], s["question_bank_id"]): s for s in submissions}
+    sub_map = {}
+    for sub in submissions:
+        key_kind = "drive_havuzu" if sub["soru_kaynagi"] == "drive_havuzu" else "native_db"
+        key_ref = sub["drive_soru_referans_id"] if key_kind == "drive_havuzu" else sub["question_bank_id"]
+        sub_map[(sub["student_id"], key_kind, key_ref)] = sub
 
     student_results = []
     for s in students:
@@ -5652,13 +5970,15 @@ def api_teacher_assignment_results(assignment_id):
         correct_count = 0
         submitted = False
         for q in questions:
-            sub = sub_map.get((s["id"], q["question_bank_id"]))
+            kind, ref = _q_identity(q)
+            sub = sub_map.get((s["id"], kind, ref))
             if sub:
                 submitted = True
                 if sub["is_correct"]:
                     correct_count += 1
             answers.append({
-                "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
+                "questionBankId": q["question_bank_id"], "driveReferansId": q["drive_soru_referans_id"],
+                "kaynak": q["soru_kaynagi"], "displayCode": _q_display(q),
                 "answer": sub["answer"] if sub else None,
                 "isCorrect": bool(sub["is_correct"]) if sub else None,
             })
@@ -5754,28 +6074,58 @@ def api_student_assignment_detail(assignment_id):
     # student_id IS NULL: paylasimli (manuel/otomatik) - herkes ayni soruyu
     # gorur. dolu: akilli moddaki KISISELLESTIRILMIS set - SADECE o ogrenciye
     # ait olanlar (bkz. api_teacher_create_assignment mode='smart').
+    #
+    # LEFT JOIN (bolum 5/6): eskiden buradaki INNER JOIN, drive_havuzu'ndan
+    # (question_bank_id NULL) secilmis sorulari ogrenciye HIC GOSTERMEZDI -
+    # bkz. Faz 5 kesif notu. Gorsel de artik /api/drive-havuzu/image
+    # proxy'sinden (Faz 4) gelebiliyor.
     questions = db.execute(
-        "SELECT aq.question_bank_id, qb.display_code, qb.question_text, qb.image_path, qb.question_type "
-        "FROM assignment_questions aq JOIN question_bank qb ON qb.id = aq.question_bank_id "
+        "SELECT aq.question_bank_id, aq.soru_kaynagi, aq.drive_soru_referans_id, aq.drive_file_id, "
+        "qb.display_code, qb.question_text, qb.image_path, qb.question_type "
+        "FROM assignment_questions aq LEFT JOIN question_bank qb ON qb.id = aq.question_bank_id "
         "WHERE aq.assignment_id = ? AND (aq.student_id IS NULL OR aq.student_id = ?) ORDER BY aq.order_index",
         (assignment_id, student_id),
     ).fetchall()
-    my_submissions = {
-        r["question_bank_id"]: dict(r) for r in db.execute(
-            "SELECT question_bank_id, answer, is_correct FROM assignment_submissions "
-            "WHERE assignment_id = ? AND student_id = ?", (assignment_id, student_id),
-        ).fetchall()
-    }
+    drive_lookup = {d["soru_id"]: d for d in soru_havuzu_drive.get_all_questions()}
+
+    my_submissions = {}
+    for r in db.execute(
+        "SELECT question_bank_id, soru_kaynagi, drive_soru_referans_id, answer, is_correct FROM assignment_submissions "
+        "WHERE assignment_id = ? AND student_id = ?", (assignment_id, student_id),
+    ).fetchall():
+        key = ("drive_havuzu", r["drive_soru_referans_id"]) if r["soru_kaynagi"] == "drive_havuzu" else ("native_db", r["question_bank_id"])
+        my_submissions[key] = dict(r)
+
+    out_questions = []
+    for q in questions:
+        if q["soru_kaynagi"] == "drive_havuzu":
+            key = ("drive_havuzu", q["drive_soru_referans_id"])
+            d = drive_lookup.get(q["drive_soru_referans_id"]) or {}
+            display_code = d.get("display_id") or q["drive_soru_referans_id"]
+            has_image = bool(q["drive_file_id"])
+            image_url = f"/api/drive-havuzu/image/{q['drive_file_id']}" if q["drive_file_id"] else None
+            question_text = None
+            question_type = d.get("soru_turu")
+        else:
+            key = ("native_db", q["question_bank_id"])
+            display_code = q["display_code"]
+            has_image = bool(q["image_path"])
+            image_url = f"/api/student/question-image/{q['question_bank_id']}" if has_image else None
+            question_text = q["question_text"]
+            question_type = q["question_type"]
+        sub = my_submissions.get(key) or {}
+        out_questions.append({
+            "questionBankId": q["question_bank_id"], "driveReferansId": q["drive_soru_referans_id"],
+            "kaynak": q["soru_kaynagi"], "displayCode": display_code,
+            "questionText": question_text, "questionType": question_type,
+            "hasImage": has_image, "imageUrl": image_url,
+            "myAnswer": sub.get("answer"), "isCorrect": sub.get("is_correct"),
+        })
+
     return jsonify({
         "id": assignment["id"], "title": assignment["title"], "description": assignment["description"],
         "dueDate": assignment["due_date"], "status": assignment["status"],
-        "questions": [{
-            "questionBankId": q["question_bank_id"], "displayCode": q["display_code"],
-            "questionText": q["question_text"], "questionType": q["question_type"],
-            "hasImage": bool(q["image_path"]),
-            "myAnswer": (my_submissions.get(q["question_bank_id"]) or {}).get("answer"),
-            "isCorrect": (my_submissions.get(q["question_bank_id"]) or {}).get("is_correct"),
-        } for q in questions],
+        "questions": out_questions,
     })
 
 
@@ -6236,19 +6586,53 @@ def api_student_submit_assignment(assignment_id):
     # KENDINE ozel bir soru seti vardir - student_id filtresi olmadan bu
     # ogrenci, ayni odevdeki BASKA bir ogrenciye ozel bir soruyu da
     # cevaplayabilir/kaydedebilirdi.
-    valid_question_ids = {
-        r["question_bank_id"] for r in db.execute(
-            "SELECT question_bank_id FROM assignment_questions WHERE assignment_id = ? "
-            "AND (student_id IS NULL OR student_id = ?)",
-            (assignment_id, student_id),
-        ).fetchall()
-    }
+    #
+    # Bolum 5/6: gecerli soru kumesi artik iki ayri kimlik uzayindan olusuyor
+    # (native question_bank_id VE drive_soru_referans_id) - eskiden burada
+    # sadece question_bank_id kontrol ediliyordu, bir drive sorusuna cevap
+    # HICBIR ZAMAN kaydedilemiyordu (valid_question_ids'te hic yer almiyordu).
+    aq_rows = db.execute(
+        "SELECT question_bank_id, soru_kaynagi, drive_soru_referans_id FROM assignment_questions "
+        "WHERE assignment_id = ? AND (student_id IS NULL OR student_id = ?)",
+        (assignment_id, student_id),
+    ).fetchall()
+    valid_question_ids = {r["question_bank_id"] for r in aq_rows if r["soru_kaynagi"] != "drive_havuzu"}
+    valid_drive_ids = {r["drive_soru_referans_id"] for r in aq_rows if r["soru_kaynagi"] == "drive_havuzu"}
+    drive_lookup = {d["soru_id"]: d for d in soru_havuzu_drive.get_all_questions()} if valid_drive_ids else {}
+
     now = datetime.now().isoformat()
     saved = 0
     for a in answers:
         qid = a.get("questionBankId")
+        drive_ref_id = a.get("driveReferansId")
         answer_text = (a.get("answer") or "").strip()
-        if qid not in valid_question_ids or not answer_text:
+        if not answer_text:
+            continue
+
+        if drive_ref_id is not None:
+            if drive_ref_id not in valid_drive_ids:
+                continue
+            d = drive_lookup.get(drive_ref_id) or {}
+            correct = (d.get("dogru_cevap") or "").strip()
+            is_correct = bool(correct) and answer_text.lower() == correct.lower()
+            db.execute(
+                "INSERT INTO assignment_submissions (assignment_id, student_id, question_bank_id, "
+                "soru_kaynagi, drive_soru_referans_id, answer, is_correct, submitted_at) "
+                "VALUES (?,?,NULL,'drive_havuzu',?,?,?,?) "
+                "ON CONFLICT(assignment_id, student_id, drive_soru_referans_id) WHERE soru_kaynagi='drive_havuzu' "
+                "DO UPDATE SET answer=excluded.answer, is_correct=excluded.is_correct, submitted_at=excluded.submitted_at",
+                (assignment_id, student_id, drive_ref_id, answer_text, 1 if is_correct else 0, now),
+            )
+            # Bolum 5/6 kesif notu: Drive havuzu sorulari bu platformun
+            # beceri/mastery agacina (question_skills) hic etiketlenmemis -
+            # _record_attempt/mastery guncellemesi BILEREK atlaniyor, native
+            # olmayan bir soru icin sahte/anlamsiz bir beceri eslesmesi
+            # uydurmaktansa bu kaydin mastery sistemine hic girmemesi tercih
+            # edildi.
+            saved += 1
+            continue
+
+        if qid not in valid_question_ids:
             continue
         correct_answer = db.execute(
             "SELECT correct_answer FROM question_bank WHERE id = ?", (qid,)
@@ -6260,7 +6644,7 @@ def api_student_submit_assignment(assignment_id):
         db.execute(
             "INSERT INTO assignment_submissions (assignment_id, student_id, question_bank_id, answer, "
             "is_correct, submitted_at) VALUES (?,?,?,?,?,?) "
-            "ON CONFLICT(assignment_id, student_id, question_bank_id) DO UPDATE SET "
+            "ON CONFLICT(assignment_id, student_id, question_bank_id) WHERE soru_kaynagi='native_db' DO UPDATE SET "
             "answer=excluded.answer, is_correct=excluded.is_correct, submitted_at=excluded.submitted_at",
             (assignment_id, student_id, qid, answer_text, 1 if is_correct else 0, now),
         )
@@ -7001,6 +7385,61 @@ _MAX_CONCURRENT_PROCESSING_BATCHES = 2
 # başlasa bile kaybolmaz ve kullanıcı sekmeyi kapatıp saatler sonra geri
 # dönse bile (bkz. frontend'deki liste-bazlı polling) doğru durumu
 # okuyabilir.
+
+
+@app.route("/api/admin/soru-havuzu-drive/status")
+@login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
+def api_soru_havuzu_drive_status():
+    """Drive Soru Havuzu baglantisinin durumu (bolum 7/9: ogretmen ekraninda
+    'Drive havuzuna su an ulasilamiyor' uyarisi gostermek icin kullanilacak
+    ayni bilginin admin/debug gorunumu)."""
+    return jsonify(soru_havuzu_drive.get_status())
+
+
+@app.route("/api/admin/soru-havuzu-drive/refresh", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="questions.view")
+def api_soru_havuzu_drive_refresh():
+    """'Drive Havuzunu Yenile' butonu (bolum 2) - onbellegi temizleyip
+    hemen taze bir cekim dener, sonucunu (basarili/basarisiz) dondurur."""
+    soru_havuzu_drive.invalidate_cache()
+    questions = soru_havuzu_drive.get_all_questions(force_refresh=True)
+    status = soru_havuzu_drive.get_status()
+    return jsonify({"ok": status["last_error"] is None, "count": len(questions), **status})
+
+
+@app.route("/api/drive-havuzu/image/<file_id>")
+@login_required()
+def api_drive_havuzu_image(file_id):
+    """Bolum 4: Drive Soru Havuzu'ndaki bir sorunun gorselini servis hesabi
+    ile ceker - ogrenciye/ogretmene DOGRUDAN Drive linki asla verilmez.
+    Ilk cekimden sonra diskte onbeklenir (DRIVE_HAVUZU_CACHE_DIR); sonraki
+    istekler Drive'a HIC gitmez, dogrudan diskten servis edilir."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{10,}", file_id or ""):
+        return jsonify({"error": "Geçersiz dosya kimliği."}), 400
+
+    os.makedirs(DRIVE_HAVUZU_CACHE_DIR, exist_ok=True)
+    cached = glob.glob(os.path.join(DRIVE_HAVUZU_CACHE_DIR, f"{file_id}.*"))
+    if cached:
+        filename = os.path.basename(cached[0])
+        resp = send_from_directory(DRIVE_HAVUZU_CACHE_DIR, filename)
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+        return resp
+
+    result = soru_havuzu_drive.fetch_drive_image_bytes(file_id)
+    if result is None:
+        # Bolum 7: dosya silinmis/tasinmis olabilir - o soru listeden
+        # filtrelenir ya da placeholder gosterilir (cagiran taraftaki iş),
+        # burada sadece net bir 404 donuyoruz.
+        return jsonify({"error": "Görsel bulunamadı."}), 404
+    data, mime_type = result
+    ext = mimetypes.guess_extension(mime_type) or ".bin"
+    cache_path = os.path.join(DRIVE_HAVUZU_CACHE_DIR, f"{file_id}{ext}")
+    with open(cache_path, "wb") as f:
+        f.write(data)
+
+    resp = send_from_directory(DRIVE_HAVUZU_CACHE_DIR, os.path.basename(cache_path))
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])

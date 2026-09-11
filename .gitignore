@@ -3,12 +3,15 @@ deneme_sonuclari.csv
 *.csv
 
 # Yardımcı/tek seferlik Python betikleri (örnek/gerçek öğrenci verisi gömülü
-# olabilir). server.py ve pdf_question_extractor.py bunun DIŞINDA - ikisi de
-# uygulamanın gerçek backend'inin parçası, sürüm kontrolünde olmalı.
+# olabilir). server.py, pdf_question_extractor.py ve soru_havuzu_drive.py
+# bunun DIŞINDA - üçü de uygulamanın gerçek backend'inin parçası, sürüm
+# kontrolünde olmalı.
 *.py
 !server.py
 !pdf_question_extractor.py
 !diagnose_pdf_extraction.py
+!soru_havuzu_drive.py
+!soru_havuzu_merge.py
 __pycache__/
 
 # Soru Havuzu: yüklenen kaynak PDF'ler ve kırpılan soru görüntüleri -
@@ -32,6 +35,11 @@ tunnel_hata.txt
 yetki_veritabani.db
 .flask_secret_key
 firebase-adminsdk-key.json
+
+# Drive Soru Havuzu entegrasyonu (2. Adım) - EduPusula Soru Merkezi'nin
+# yazdığı ortak Sheets/Drive havuzunu OKUMAK için kullanılan servis hesabı
+# anahtarı - repo'ya commit edilmez (firebase-adminsdk-key.json ile aynı mantık).
+soru-havuzu-service-account.json
 
 # gunicorn worker'ları arasında init_db()'yi tek sıraya sokan dosya kilidi -
 # içeriği yok, sadece fcntl.flock için bir tutamaç (bkz. server.py init_db() çağrısı üstündeki not)
