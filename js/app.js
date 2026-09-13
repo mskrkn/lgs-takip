@@ -2899,8 +2899,8 @@ const App = {
   async reviewSkill(skillId, status) {
     let rejectionReason = null;
     if (status === 'rejected') {
-      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
-      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+      rejectionReason = await this._qbTextPromptModal('Reddetme Gerekçesi', 'Zorunlu');
+      if (!rejectionReason) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
     }
     try {
       const res = await fetch(`/api/admin/question-bank/skills/${skillId}`, {
@@ -3274,8 +3274,8 @@ const App = {
     if (!s || !s.selected.size) { UI.toast('Önce soru seçin.', 'warning'); return; }
     let rejectionReason = null;
     if (status === 'excluded') {
-      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
-      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+      rejectionReason = await this._qbTextPromptModal('Reddetme Gerekçesi', 'Zorunlu');
+      if (!rejectionReason) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
     }
     try {
       const res = await fetch('/api/admin/question-bank/questions/bulk-update', {
@@ -4243,12 +4243,51 @@ const App = {
     select.value = selectedId || '';
   },
 
+  // Tarayicinin yerlesik prompt()'u yerine kendi modalimiz - bazi
+  // tarayicilar/ortamlar (Chrome dahil) bir sayfadaki prompt/alert/confirm
+  // cagrilarini, kullanicinin "bir daha gosterme" secenegini isaretlemesi
+  // (ya da baska bir ic mekanizma) sonrasi SESSIZCE (konsolda hata OLMADAN,
+  // hicbir gorsel gostergesi OLMADAN) engelleyebiliyor - gercek bir olayla
+  // dogrulandi ("+" butonuna basinca hicbir sey olmuyordu). Kendi modalimiz
+  // bu riski tamamen ortadan kaldirir.
+  _qbTextPromptModal(title, placeholder = '') {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay active';
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:420px">
+          <div class="modal-header">
+            <h2>${title}</h2>
+            <button class="modal-close" id="qb-text-prompt-x">✕</button>
+          </div>
+          <div class="modal-body">
+            <input type="text" class="form-input" id="qb-text-prompt-input" placeholder="${placeholder}">
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" id="qb-text-prompt-cancel">İptal</button>
+            <button class="btn btn-primary" id="qb-text-prompt-ok">Ekle</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector('#qb-text-prompt-input');
+      input.focus();
+      const cleanup = (value) => { overlay.remove(); resolve(value); };
+      overlay.querySelector('#qb-text-prompt-ok').onclick = () => cleanup(input.value.trim() || null);
+      overlay.querySelector('#qb-text-prompt-cancel').onclick = () => cleanup(null);
+      overlay.querySelector('#qb-text-prompt-x').onclick = () => cleanup(null);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') cleanup(input.value.trim() || null);
+        if (e.key === 'Escape') cleanup(null);
+      });
+    });
+  },
+
   async _qbAddTopic() {
     const q = this._qbCurrentQuestion;
     const s = this._qbState;
     if (!q) return;
-    const name = prompt('Yeni konu adı:');
-    if (!name || !name.trim()) return;
+    const name = await this._qbTextPromptModal('Yeni Konu Adı', 'Örn: Kesirler');
+    if (!name) return;
     try {
       const res = await fetch('/api/admin/question-bank/topics', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4285,8 +4324,8 @@ const App = {
     const s = this._qbState;
     const topicId = parseInt(document.getElementById('qbr-topic-select').value);
     if (!topicId) { UI.toast('Önce bir konu seçin.', 'warning'); return; }
-    const name = prompt('Yeni kazanım adı:');
-    if (!name || !name.trim()) return;
+    const name = await this._qbTextPromptModal('Yeni Kazanım Adı', 'Örn: Kesirlerde toplama işlemi yapar');
+    if (!name) return;
     try {
       const res = await fetch('/api/admin/question-bank/learning-outcomes', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4315,8 +4354,8 @@ const App = {
     }
     let rejectionReason;
     if (status === 'excluded') {
-      rejectionReason = prompt('Reddetme gerekçesi (zorunlu):');
-      if (!rejectionReason || !rejectionReason.trim()) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
+      rejectionReason = await this._qbTextPromptModal('Reddetme Gerekçesi', 'Zorunlu');
+      if (!rejectionReason) { UI.toast('Gerekçe girilmeden reddedilemez.', 'warning'); return; }
     }
 
     const payload = {

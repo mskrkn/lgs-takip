@@ -140,6 +140,11 @@ const OptikProfiles = {
         { role: 'booklet', start: 50, end: 51 },
       ],
       sessionField: { start: 49, end: 50 },
+      // Oturum hanesinin anlamı vendor'a göre değişiyor (bkz. aşağıdaki
+      // lgs-iki-oturum-sayisal-dosya'daki TERSİNE-dönük not) - bu yüzden
+      // kod yorumuna gömülü kalmasın diye ekranda da gösterilir (bkz.
+      // import.js profil seçici/Kalibratör).
+      sessionLabels: { '1': 'Sözel', '2': 'Sayısal' },
       variants: {
         '1': { fields: [
           { role: 'answerBlock', start: 51, end: 71, subjectKey: 'turkce', label: 'Türkçe' },
@@ -173,6 +178,7 @@ const OptikProfiles = {
         { role: 'fullName', start: 29, end: 50 },
       ],
       sessionField: { start: 27, end: 28 },
+      sessionLabels: { '1': 'Sayısal', '2': 'Sözel' },
       variants: {
         '1': { fields: [
           { role: 'answerBlock', start: 130, end: 150, subjectKey: 'matematik', label: 'Matematik' },
@@ -411,12 +417,34 @@ const OptikProfiles = {
     },
   ],
 
-  // ---- Profil listesi (hazır + kullanıcı tarafından kaydedilmiş) ----
-  async getAllProfiles() {
-    let custom = [];
+  // ---- Profil listesi (hazır + okulun sunucudaki özel şablonları) ----
+  // Özel şablonlar artık /api/admin/optical-templates'te (okul bazlı,
+  // cihazlar arası paylaşılan) tutuluyor - eskiden sadece bu tarayıcının
+  // Dexie'sindeydi (bkz. import.js _maybeOfferLocalProfileMigration - tek
+  // seferlik göç). Her tuş vuruşunda
+  // (onOpticalContentChange textarea'ya bağlı) yeniden sorgulamamak için
+  // sonuç bellekte önbekleniyor; invalidateCache() kaydet/sil sonrası çağrılır.
+  _customProfilesCache: null,
+
+  invalidateCache() {
+    this._customProfilesCache = null;
+  },
+
+  async _fetchCustomProfiles() {
+    if (this._customProfilesCache) return this._customProfilesCache;
     try {
-      custom = (await db.getCustomOptikProfiles()) || [];
-    } catch (_) { /* db henüz hazır değilse hazır profillerle devam et */ }
+      const res = await fetch('/api/admin/optical-templates');
+      if (!res.ok) throw new Error('Şablonlar alınamadı');
+      const data = await res.json();
+      this._customProfilesCache = (data.templates || []).map(t => ({ ...t, builtIn: false }));
+    } catch (_) {
+      this._customProfilesCache = []; // sunucuya ulaşılamazsa hazır profillerle devam
+    }
+    return this._customProfilesCache;
+  },
+
+  async getAllProfiles() {
+    const custom = await this._fetchCustomProfiles();
     return [...custom, ...this.builtIn];
   },
 
@@ -465,27 +493,41 @@ const OptikProfiles = {
     return hits / lines.length;
   },
 
-  _lineMatchesFields(profile, line, fields) {
+  // Asıl kontrol mantığı - hem hızlı boolean yolu (_lineMatchesFields, ana
+  // ayrıştırma döngüsünde binlerce kez çağrılır) hem de tanılı yolu
+  // (diagnoseLine, sadece Kalibratör'ün "Test Et"i ve başarısız-satır uyarı
+  // bandı için) TEK bir yerden besler ki iki kontrol asla birbirinden
+  // sapmasın (bkz. HARUNİYE 8 ALTIN KARMA 3.txt notu - iki ayrı kontrol
+  // yolunun tutarsızlaşması geçmişte sessiz yanlış-kesime yol açmıştı).
+  _lineMatchReasons(profile, line, fields) {
     if (profile.kind === 'delimited') {
       const parts = line.split(profile.delimiter);
       const maxIndex = Math.max(...fields.map(f => f.index));
-      if (parts.length <= maxIndex) return false;
+      if (parts.length <= maxIndex) {
+        return { ok: false, reason: `Satır "${profile.delimiter}" ile ${parts.length} parçaya ayrıldı, en az ${maxIndex + 1} parça bekleniyordu.` };
+      }
       const bookletField = fields.find(f => f.role === 'booklet');
       const bookletVal = bookletField ? (parts[bookletField.index] || '').trim() : '';
-      if (bookletField && bookletVal && !/^[A-E]$/i.test(bookletVal)) return false;
-      return true;
+      if (bookletField && bookletVal && !/^[A-E]$/i.test(bookletVal)) {
+        return { ok: false, reason: `Kitapçık alanı ("${bookletVal}") A-E arası bir harf değil.` };
+      }
+      return { ok: true };
     }
 
     const maxEnd = Math.max(...fields.map(f => f.end));
     // Alt sınır: satır sonu boşlukları kırpılmış olabilir (biraz tolerans).
     // Üst sınır: `\` ayraçlı formatlar da satır uzunluğu bakımından
     // fixedWidth profillerle yanlışlıkla eşleşmesin diye sıkı tutulur.
-    if (line.length < maxEnd - 5 || line.length > maxEnd + 20) return false;
+    if (line.length < maxEnd - 5 || line.length > maxEnd + 20) {
+      return { ok: false, reason: `Satır uzunluğu ${line.length} karakter - tanımlı alanlara (son alan ${maxEnd}'de bitiyor) göre ${maxEnd - 5}-${maxEnd + 20} arası bekleniyordu.` };
+    }
     const bookletField = fields.find(f => f.role === 'booklet');
     if (bookletField) {
       const raw = line.slice(bookletField.start, bookletField.end).trim();
       const letter = raw ? raw[raw.length - 1].toUpperCase() : '';
-      if (letter && !/^[A-E]$/.test(letter)) return false;
+      if (letter && !/^[A-E]$/.test(letter)) {
+        return { ok: false, reason: `Kitapçık alanı [${bookletField.start}:${bookletField.end}] = "${raw}" - A-E arası bir harf bekleniyordu.` };
+      }
     }
     // Tanımlı alanlar arasındaki boşluk bırakılmış aralıklar gerçek bir
     // satırda da boş olmalı - farklı sabit-genişlikli formatları ayırt eder.
@@ -497,11 +539,56 @@ const OptikProfiles = {
     for (const f of covered) {
       if (f.start > cursor) {
         const gap = line.slice(cursor, f.start);
-        if (gap.trim().length > 0) return false;
+        if (gap.trim().length > 0) {
+          return { ok: false, reason: `[${cursor}:${f.start}] bölgesi hiçbir alana atanmamış ama satırda boş değil: "${gap}" - bu aralığı bir alana ya da "Yoksay"a ekleyin.` };
+        }
       }
       cursor = Math.max(cursor, f.end);
     }
-    return true;
+    return { ok: true };
+  },
+
+  _lineMatchesFields(profile, line, fields) {
+    return this._lineMatchReasons(profile, line, fields).ok;
+  },
+
+  // ---- Test Et / başarısız-satır tanısı ----
+  // extractLine ile AYNI adımları izler ama null yerine hangi kontrolün
+  // nerede ve neden başarısız olduğunu Türkçe döndürür. extractLine'ın
+  // kendisi ana ayrıştırma döngüsünde (yüzlerce satır) çalıştığı için bu
+  // ayrıntılı haliyle DEĞİŞTİRİLMEDİ - sadece Kalibratör'ün "Test Et"
+  // butonu ve başarısız-satır uyarı bandı bunu kullanır.
+  diagnoseLine(profile, rawLine) {
+    if (!rawLine || !rawLine.trim()) {
+      return { ok: false, reason: 'Satır boş.' };
+    }
+    const base = this._lineMatchReasons(profile, rawLine, profile.fields);
+    if (!base.ok) return base;
+
+    if (profile.variants) {
+      const isDelimited = profile.kind === 'delimited';
+      const parts = isDelimited ? rawLine.split(profile.delimiter) : null;
+      const get = (field) => isDelimited ? (parts[field.index] ?? '').trim() : rawLine.slice(field.start, field.end).trim();
+
+      const sessionVal = get(profile.sessionField);
+      const variant = profile.variants[sessionVal];
+      if (!variant) {
+        const known = Object.keys(profile.variants).join(', ');
+        return { ok: false, reason: `Oturum hanesi [${profile.sessionField.start}:${profile.sessionField.end}] = "${sessionVal}" - tanınan değerler: ${known}.` };
+      }
+      const combined = this._lineMatchReasons(profile, rawLine, [...profile.fields, ...variant.fields]);
+      if (!combined.ok) {
+        const label = (profile.sessionLabels && profile.sessionLabels[sessionVal]) || sessionVal;
+        return { ok: false, reason: `Oturum hanesi "${sessionVal}" (${label}) geçerli ama bu oturumun alan yapısı uymuyor: ${combined.reason}` };
+      }
+    }
+
+    // Yapısal olarak her şey uyuyor ama extractLine yine de null dönerse
+    // (Okul No ve Ad Soyad'ın ikisi de boş çıktığı tek durum) bunu da adlandır.
+    if (!this.extractLine(profile, rawLine, {})) {
+      return { ok: false, reason: '"Okul No" ve "Ad Soyad" alanlarının ikisi de boş çıktı - en az birini doğru konuma taşıyın.' };
+    }
+    return { ok: true };
   },
 
   // ---- Bir satırı verilen profile göre ayrıştır ----
