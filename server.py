@@ -940,6 +940,32 @@ def _create_invite_tables(conn):
     conn.commit()
 
 
+def _create_optical_templates_table(conn):
+    """Optik Okuyucu'nun 'Kalibratör'de tanımlanan özel şablonları - eskiden
+    sadece tarayıcının kendi IndexedDB'sinde (js/db.js optikProfiles tablosu)
+    tutuluyordu, bu yüzden bir okul admininin başka bir cihazında/tarayıcısında
+    hiç görünmüyordu. Buraya taşınınca okul içinde paylaşılır. id sunucuda
+    AUTOINCREMENT ile üretilir (istemciden id gelmez) - students/exams/results
+    senkronunda yaşanan çapraz-organizasyon id çakışmasının aynısı bu tabloda
+    yapısal olarak mümkün değil."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS optical_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            label TEXT NOT NULL,
+            exam_type TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('fixedWidth','delimited')),
+            definition_json TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+
+
 # ============================================================
 # Soru Havuzu (EduPusula Adaptif Öğrenme Motoru - Aşama 1)
 # ============================================================
@@ -2031,6 +2057,7 @@ def run_v2_migration(conn):
     _create_v2_tables(conn)
     _create_question_bank_tables(conn)
     _create_invite_tables(conn)
+    _create_optical_templates_table(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -4709,6 +4736,123 @@ def api_platform_add_result():
     db.commit()
     log_audit(db, "RESULT_CREATED_BY_PLATFORM", resource_type="result", resource_id=new_id)
     return jsonify({"ok": True, "id": new_id})
+
+
+# ============================================================
+# API: Admin - Optik Okuyucu şablonları (okul içinde paylaşılan)
+# ============================================================
+# Eskiden bu şablonlar sadece tarayıcının kendi IndexedDB'sinde
+# tutuluyordu (js/db.js optikProfiles) - bir okul admininin başka bir
+# cihazında/tarayıcısında hiç görünmüyordu. Burada okula (organization_id)
+# bağlı, sunucu tarafında AUTOINCREMENT id'li bir kayıt olarak tutulur;
+# hazır (built-in) profiller js/optikProfiles.js'de sabit kalmaya devam
+# eder, sadece kullanıcı tarafından Kalibratör ile tanımlanan ÖZEL
+# şablonlar buraya taşınır (bkz. js/importOptical.js saveCalibratedProfile).
+
+@app.route("/api/admin/optical-templates", methods=["GET"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="results.create")
+def api_admin_list_optical_templates():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    rows = db.execute(
+        "SELECT id, label, exam_type, kind, definition_json, created_at, updated_at "
+        "FROM optical_templates WHERE organization_id = ? ORDER BY label",
+        (org_id,),
+    ).fetchall()
+    templates = []
+    for r in rows:
+        definition = json.loads(r["definition_json"]) if r["definition_json"] else {}
+        templates.append({
+            "id": r["id"], "label": r["label"], "examType": r["exam_type"], "kind": r["kind"],
+            "createdAt": r["created_at"], "updatedAt": r["updated_at"], **definition,
+        })
+    return jsonify({"templates": templates})
+
+
+@app.route("/api/admin/optical-templates", methods=["POST"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="results.create")
+def api_admin_create_optical_template():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    data = request.get_json(silent=True) or {}
+    label = (data.get("label") or "").strip()
+    exam_type = (data.get("examType") or "").strip()
+    kind = data.get("kind")
+    if not label:
+        return jsonify({"error": "Şablon adı gerekli."}), 400
+    if kind not in ("fixedWidth", "delimited"):
+        return jsonify({"error": "Geçersiz şablon türü."}), 400
+    if not data.get("fields"):
+        return jsonify({"error": "En az bir alan tanımlanmalı."}), 400
+    definition = {k: v for k, v in data.items() if k not in ("label", "examType", "kind", "id", "createdAt", "updatedAt")}
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO optical_templates (organization_id, label, exam_type, kind, definition_json, "
+        "created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (org_id, label, exam_type or "LGS", kind, json.dumps(definition, ensure_ascii=False),
+         session["user_id"], now, now),
+    )
+    db.commit()
+    log_audit(db, "OPTICAL_TEMPLATE_CREATED", resource_type="optical_template", resource_id=cur.lastrowid)
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+def _get_owned_optical_template(db, template_id, org_id):
+    return db.execute(
+        "SELECT id FROM optical_templates WHERE id = ? AND organization_id = ?",
+        (template_id, org_id),
+    ).fetchone()
+
+
+@app.route("/api/admin/optical-templates/<int:template_id>", methods=["PUT"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="results.create")
+def api_admin_update_optical_template(template_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    # Sahiplik kontrolü: baska bir okulun sablonu asla ne gorunur ne
+    # duzenlenebilir olmali (bkz. bugunku students.id cakismasi olayi -
+    # ayni yanlisi burada da yapmamak icin okul id'si her adimda dogrulanir).
+    if not _get_owned_optical_template(db, template_id, org_id):
+        return jsonify({"error": "Şablon bulunamadı."}), 404
+    data = request.get_json(silent=True) or {}
+    label = (data.get("label") or "").strip()
+    exam_type = (data.get("examType") or "").strip()
+    kind = data.get("kind")
+    if not label:
+        return jsonify({"error": "Şablon adı gerekli."}), 400
+    if kind not in ("fixedWidth", "delimited"):
+        return jsonify({"error": "Geçersiz şablon türü."}), 400
+    definition = {k: v for k, v in data.items() if k not in ("label", "examType", "kind", "id", "createdAt", "updatedAt")}
+    now = datetime.now().isoformat()
+    db.execute(
+        "UPDATE optical_templates SET label=?, exam_type=?, kind=?, definition_json=?, updated_at=? "
+        "WHERE id=? AND organization_id=?",
+        (label, exam_type or "LGS", kind, json.dumps(definition, ensure_ascii=False), now, template_id, org_id),
+    )
+    db.commit()
+    log_audit(db, "OPTICAL_TEMPLATE_UPDATED", resource_type="optical_template", resource_id=template_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/optical-templates/<int:template_id>", methods=["DELETE"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="results.create")
+def api_admin_delete_optical_template(template_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not _get_owned_optical_template(db, template_id, org_id):
+        return jsonify({"error": "Şablon bulunamadı."}), 404
+    db.execute("DELETE FROM optical_templates WHERE id=? AND organization_id=?", (template_id, org_id))
+    db.commit()
+    log_audit(db, "OPTICAL_TEMPLATE_DELETED", resource_type="optical_template", resource_id=template_id)
+    return jsonify({"ok": True})
 
 
 # ============================================================
@@ -8034,6 +8178,164 @@ def _classify_question_with_ai(db, question_row):
         return json.loads(text_content)
     except ValueError:
         raise AIClassificationError("AI yanıtı ayrıştırılamadı (beklenmeyen format).")
+
+
+# ============================================================
+# AI: Optik Okuyucu şablon önerisi (Kalibratör'ü ön-doldurmak için)
+# ============================================================
+# Yeni/tanınmayan bir optik format geldiğinde (bkz. OptikProfiles.detectBest
+# güven eşiği %50'nin altındaysa, js/importOptical.js onOpticalContentChange)
+# kullanıcı elle kalibre etmek yerine örnek satırları AI'ya gösterip bir
+# başlangıç şablonu isteyebilir. Bu uç HİÇBİR ŞEY KAYDETMEZ - sadece
+# js/importOptical.js'teki Kalibratör'ün alan listesini (_calibratorFields)
+# ön-doldurmak için bir öneri döner; kalıcı kayıt kullanıcı "Profili
+# Kaydet"e basınca zaten var olan POST /api/admin/optical-templates ile olur.
+# Böylece production okuma (extractLine) hiçbir zaman AI'ya gitmez - AI
+# sadece "bu dosya nasıl yapılandırılmış" sorusuna bir kere cevap verir.
+
+_AI_OPTICAL_TEMPLATE_SYSTEM_PROMPT = """Sana bir optik okuyucudan alınan .txt dosyasının örnek satırları verilecek.
+Her satır SABİT GENİŞLİKLİ (fixed-width) sütunlar içerir - yani her alan
+satırda her zaman AYNI karakter pozisyonlarında durur.
+
+Görevin: farklı satırlardaki isim uzunluklarına, kitapçık harflerine ve
+cevap bloklarının konumuna dikkat ederek gerçek sütun sınırlarını
+(0-tabanlı, Python/JavaScript slice mantığıyla - yani bir alan [start:end)
+aralığını kapsar, end DAHİL DEĞİL) tespit et.
+
+Her alana şu rollerden BİRİNİ ata (başka rol adı UYDURMA):
+- schoolNumber: öğrenci/okul numarası
+- fullName: ad ve soyad TEK alanda birleşik
+- firstName / lastName: ad ve soyad AYRI alanlarda ise
+- className: sınıf/şube
+- booklet: kitapçık türü (genelde tek harf, A/B/C/D)
+- tcNo: T.C. kimlik no (varsa)
+- answerBlock: bir dersin cevap harfleri dizisi (her ders için AYRI bir
+  alan) - "label" alanına dersin adını (ör. "Matematik", "Türkçe") yaz;
+  hangi ders olduğundan EMİN DEĞİLSEN label'ı boş bırak, kullanıcı
+  sonradan elle eşler
+- ignore: yukarıdakilerin hiçbirine uymayan (kurum kodu, boşluk,
+  kullanılmayan alan) bölgeler - satırdaki HER karakter bir role dahil
+  olmalı, boşta bırakılan aralık OLMAMALI (alanlar arasında boşluk varsa
+  onu da ayrı bir "ignore" alanı olarak tanımla)
+
+Çıktıyı SADECE aşağıdaki JSON formatında ver, başka hiçbir açıklama,
+markdown ya da metin ekleme:
+
+{{
+  "fields": [
+    {{"role": "ignore", "start": 0, "end": 10}},
+    {{"role": "schoolNumber", "start": 10, "end": 14}},
+    {{"role": "fullName", "start": 29, "end": 51}},
+    {{"role": "answerBlock", "start": 51, "end": 71, "label": "Matematik"}}
+  ],
+  "confidenceNotes": "Kitapçık alanı tek karakter varsayıldı, emin değilim; öğrenci no bazı satırlarda boşlukla dolu."
+}}
+
+Sınav türü: {exam_type}
+"""
+
+_OPTICAL_TEMPLATE_VALID_ROLES = {
+    "schoolNumber", "fullName", "firstName", "lastName", "className",
+    "booklet", "tcNo", "answerBlock", "ignore",
+}
+
+
+def _validate_optical_template_suggestion(data, max_line_len):
+    """AI yanıtına asla körü körüne güvenilmez - burada özellikle önemli,
+    çünkü yanlış bir start/end sessizce yanlış sütunları kesip öğrenci
+    verisini (cevap anahtarı karşılaştırması dahil) bozabilir. Her alan
+    tek tek yapısal olarak doğrulanır, herhangi biri şüpheliyse TÜM öneri
+    reddedilir (kısmen bozuk bir şablonla Kalibratör'ü doldurmaktansa)."""
+    if not isinstance(data, dict):
+        raise AIClassificationError("AI yanıtı beklenmeyen formatta (obje değil).")
+    fields = data.get("fields")
+    if not isinstance(fields, list) or not fields:
+        raise AIClassificationError("AI yanıtında geçerli bir 'fields' listesi yok.")
+    cleaned = []
+    for f in fields:
+        if not isinstance(f, dict):
+            raise AIClassificationError("AI yanıtındaki bir alan tanımı geçersiz.")
+        role = f.get("role")
+        start, end = f.get("start"), f.get("end")
+        if role not in _OPTICAL_TEMPLATE_VALID_ROLES:
+            raise AIClassificationError(f"AI bilinmeyen bir alan türü (\"{role}\") önerdi.")
+        if not isinstance(start, int) or not isinstance(end, int) or isinstance(start, bool) or isinstance(end, bool):
+            raise AIClassificationError("AI yanıtındaki alan pozisyonları sayısal değil.")
+        if start < 0 or end <= start:
+            raise AIClassificationError("AI yanıtındaki bir alanın başlangıç/bitiş değerleri geçersiz.")
+        if max_line_len and end > max_line_len + 20:
+            raise AIClassificationError("AI'nin önerdiği alan sınırları örnek satırların uzunluğunu aşıyor.")
+        item = {"role": role, "start": start, "end": end}
+        if f.get("label"):
+            item["label"] = str(f["label"])[:100]
+        cleaned.append(item)
+    return {
+        "fields": cleaned,
+        "confidenceNotes": str(data.get("confidenceNotes") or "")[:500],
+    }
+
+
+def _suggest_optical_template_with_ai(sample_lines, exam_type):
+    if not GEMINI_SDK_AVAILABLE:
+        raise AIClassificationError("AI şablon önerisi için gerekli kütüphane sunucuda kurulu değil.")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise AIClassificationError("AI şablon önerisi yapılandırılmamış (GEMINI_API_KEY ayarlanmamış).")
+    sample_lines = sample_lines[:15]
+    if not sample_lines:
+        raise AIClassificationError("Örnek satır bulunamadı.")
+
+    system_prompt = _AI_OPTICAL_TEMPLATE_SYSTEM_PROMPT.format(exam_type=exam_type or "LGS")
+    sample_text = "\n".join(sample_lines)
+
+    client = gemini_sdk.Client(api_key=api_key)
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=[sample_text],
+            config=gemini_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                max_output_tokens=2048,
+            ),
+        )
+    except gemini_errors.ClientError as exc:
+        if exc.code in (401, 403):
+            raise AIClassificationError("AI şablon önerisi yapılandırılmamış (GEMINI_API_KEY eksik veya geçersiz).")
+        if exc.code == 429:
+            raise AIClassificationError("AI servisi şu an yoğun (rate limit). Birazdan tekrar deneyin.")
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.ServerError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.APIError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except Exception as exc:
+        raise AIClassificationError(f"AI servisine bağlanılamadı: {exc}")
+
+    text_content = (response.text or "").strip()
+    try:
+        data = json.loads(text_content)
+    except ValueError:
+        raise AIClassificationError("AI yanıtı ayrıştırılamadı (beklenmeyen format).")
+
+    max_len = max((len(l) for l in sample_lines), default=0)
+    return _validate_optical_template_suggestion(data, max_len)
+
+
+@app.route("/api/admin/optical-templates/suggest", methods=["POST"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="results.create")
+def api_admin_suggest_optical_template():
+    """Kalibratör'ü AI ile ön-doldurmak için bir şablon önerisi döner - hiçbir
+    şey KAYDETMEZ (bkz. yukarısı). Kullanıcı Test Et ile doğrulayıp
+    "Profili Kaydet"e basana kadar hiçbir kalıcı iz bırakmaz."""
+    data = request.get_json(silent=True) or {}
+    sample_lines = [str(l) for l in (data.get("sampleLines") or []) if str(l).strip()]
+    exam_type = data.get("examType") or "LGS"
+    try:
+        suggestion = _suggest_optical_template_with_ai(sample_lines, exam_type)
+    except AIClassificationError as exc:
+        return jsonify({"error": str(exc)}), 503
+    return jsonify(suggestion)
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
