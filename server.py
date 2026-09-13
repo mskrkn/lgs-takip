@@ -8296,7 +8296,12 @@ def _suggest_optical_template_with_ai(sample_lines, exam_type):
             config=gemini_types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 response_mime_type="application/json",
-                max_output_tokens=2048,
+                # 2048 gercek bir dosyada (9 alan + confidenceNotes, pretty-
+                # printed JSON) yaniti yariyor kesiyordu (bkz. proje notu -
+                # gercek bir HARUNIYE txt'iyle test edilirken bulundu) - JSON
+                # yarim kalinca _validate_optical_template_suggestion degil,
+                # json.loads zaten patlayip "ayristirilamadi" hatasi veriyordu.
+                max_output_tokens=8192,
             ),
         )
     except gemini_errors.ClientError as exc:
