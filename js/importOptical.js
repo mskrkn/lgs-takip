@@ -59,7 +59,10 @@ const ImportOptical = {
         <div class="card mt-2" style="background:var(--bg-secondary);border:1px solid rgba(255,255,255,0.08);padding:16px;border-radius:12px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
             <h4 style="margin:0;font-size:15px;display:flex;align-items:center;gap:6px;"><span>🧬</span> Optik Format</h4>
-            <span id="optical-detected-format-info" class="text-muted" style="font-size:12px;">Henüz veri girilmedi.</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span id="optical-detected-format-info" class="text-muted" style="font-size:12px;">Henüz veri girilmedi.</span>
+              <button type="button" class="btn btn-secondary btn-sm" id="optical-ai-suggest-btn" style="display:none" onclick="ImportModule.suggestTemplateWithAI()">🤖 AI ile Öner</button>
+            </div>
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label class="form-label">Format Profili</label>
@@ -149,11 +152,81 @@ const ImportOptical = {
   // Optik sekmesi ilk render edildiğinde format profili listesini doldurur
   async initOpticalTab() {
     this._opticalProfiles = await OptikProfiles.getAllProfiles();
+    await this._maybeOfferLocalProfileMigration();
     const sel = document.getElementById('optical-profile-select');
     if (!sel) return;
+    // sessionLabels varsa (çoklu oturum/sözel-sayısal profilleri) oturum
+    // hanesinin anlamı seçicide de gösterilir - kod yorumuna gömülü kalıp
+    // vendor'lar arası TERSİNE dönebilen anlamı (bkz. optikProfiles.js)
+    // artık ekranda görünür.
+    const sessionInfo = (p) => p.sessionLabels
+      ? ` · Oturum: ${Object.entries(p.sessionLabels).map(([k, v]) => `${k}=${v}`).join(', ')}`
+      : '';
     sel.innerHTML = '<option value="">-- Otomatik tespit edilecek --</option>' +
-      this._opticalProfiles.map(p => `<option value="${p.id}">${p.builtIn ? '' : '⭐ '}${p.label} (${EXAM_TYPE_LABELS[p.examType] || p.examType})</option>`).join('') +
+      this._opticalProfiles.map(p => `<option value="${p.id}">${p.builtIn ? '' : '⭐ '}${p.label} (${EXAM_TYPE_LABELS[p.examType] || p.examType}${sessionInfo(p)})</option>`).join('') +
       '<option value="__calibrate__">➕ Yeni format tanımla (Kalibratör)</option>';
+  },
+
+  // Tek seferlik göç: şablonlar eskiden sadece bu tarayıcının Dexie'sinde
+  // tutuluyordu (bkz. db.js optikProfiles), artık okul bazlı sunucuda
+  // paylaşılıyor (bkz. server.py /api/admin/optical-templates). Bu
+  // tarayıcıda hâlâ yerel özel şablon varsa VE sunucuda bu okul için hiç
+  // şablon yoksa, bir kerelik yükleme teklif edilir - db._migrateLegacyDbIfNeeded
+  // ile AYNI localStorage-bayrağı deseni kullanılır, org bazlı anahtarla.
+  async _maybeOfferLocalProfileMigration() {
+    const orgId = (typeof db !== 'undefined' && db._openOrgId) || 'none';
+    const migKey = `optik_templates_migrated_${orgId}`;
+    if (localStorage.getItem(migKey)) return;
+    let localCustom = [];
+    try {
+      localCustom = (await db.getCustomOptikProfiles()) || [];
+    } catch (_) { /* Dexie henüz hazır değilse göçü atla, bir dahaki girişte tekrar denenir */ return; }
+    if (localCustom.length === 0) {
+      localStorage.setItem(migKey, '1');
+      return;
+    }
+    const serverProfiles = await OptikProfiles._fetchCustomProfiles();
+    if (serverProfiles.length > 0) {
+      // Sunucuda zaten şablon var (başka bir cihazdan yüklenmiş olabilir) - tekrar sorma
+      localStorage.setItem(migKey, '1');
+      return;
+    }
+    const ok = await UI.confirm(
+      `Bu cihazda daha önce kaydedilmiş ${localCustom.length} özel optik şablonu var. Bunları okulunuzun ortak listesine yükleyip başka cihazlarınızdan da kullanılabilir hale getirmek ister misiniz?`,
+      '📤 Şablonları Paylaş'
+    );
+    if (ok) {
+      let migrated = 0;
+      for (const p of localCustom) {
+        const { id: _id, builtIn: _b, createdAt: _c, ...profile } = p;
+        try {
+          await this._saveOpticalTemplateToServer(profile);
+          migrated++;
+        } catch (err) {
+          console.warn('Şablon göçü başarısız:', p.label, err);
+        }
+      }
+      UI.toast(`${migrated}/${localCustom.length} şablon okulun ortak listesine yüklendi`,
+                migrated === localCustom.length ? 'success' : 'warning');
+      this._opticalProfiles = await OptikProfiles.getAllProfiles();
+    }
+    localStorage.setItem(migKey, '1');
+  },
+
+  // saveCalibratedProfile/saveOpticalProfileWithMapping/göç ortak yolu -
+  // özel şablon artık Dexie'ye değil okulun sunucu kaydına yazılır (bkz.
+  // server.py /api/admin/optical-templates), böylece başka bir cihazdan da
+  // görünür.
+  async _saveOpticalTemplateToServer(profile) {
+    const res = await fetch('/api/admin/optical-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Şablon kaydedilemedi.');
+    OptikProfiles.invalidateCache();
+    return result;
   },
 
   // Process Optical File - Türkçe karakter kodlamasını otomatik algıla.
@@ -281,9 +354,11 @@ const ImportOptical = {
   async onOpticalContentChange() {
     const textarea = document.getElementById('optical-raw-textarea');
     const infoEl = document.getElementById('optical-detected-format-info');
+    const aiBtn = document.getElementById('optical-ai-suggest-btn');
     const text = textarea?.value || '';
     const lines = text.split(/\r?\n/).filter(l => l.trim().length > 5);
     this._opticalLines = lines;
+    if (aiBtn) aiBtn.style.display = 'none';
     if (lines.length === 0) {
       if (infoEl) infoEl.textContent = 'Henüz veri girilmedi.';
       this._opticalDetectedEncoding = null;
@@ -310,10 +385,53 @@ const ImportOptical = {
       if (infoEl) infoEl.textContent = `${lines.length} kayıt bulundu. Algılanan format: "${detected.profile.label}" (Güven: %${Math.round(detected.confidence * 100)})${this._opticalFormatDetailsSuffix(detected.profile)}`;
       if (sel) sel.value = detected.profile.id;
     } else {
-      if (infoEl) infoEl.textContent = `${lines.length} kayıt bulundu. Format otomatik tanınamadı - lütfen elle seçin ya da kalibratörle yeni bir profil tanımlayın.${this._opticalFormatDetailsSuffix(null)}`;
+      if (infoEl) infoEl.textContent = `${lines.length} kayıt bulundu. Format otomatik tanınamadı - lütfen elle seçin, kalibratörle yeni bir profil tanımlayın ya da AI'dan bir öneri isteyin.${this._opticalFormatDetailsSuffix(null)}`;
       if (sel) sel.value = '';
+      // Tanınamayan formatlarda Kalibratör'ü sıfırdan doldurmak yerine AI'dan
+      // bir başlangıç noktası istenebilir (bkz. suggestTemplateWithAI) -
+      // production okuma bundan asla etkilenmez, sadece bu öneri adımı AI'ya gider.
+      if (aiBtn) aiBtn.style.display = '';
     }
     this.onOpticalProfileChange();
+  },
+
+  // AI (Gemini) ile Kalibratör'ü ön-doldurur - production okuma
+  // (extractLine) bundan HİÇ etkilenmez, sadece bu tek seferlik öneri
+  // adımı sunucudaki /api/admin/optical-templates/suggest'e gider (bkz.
+  // server.py). Hem "format tanınamadı" durumunda hem de çok satırın
+  // başarısız olduğu bir değerlendirmeden sonra (bkz. evaluateOpticalData)
+  // çağrılabilir - her ikisinde de sadece kullanıcı tıklamasıyla tetiklenir.
+  async suggestTemplateWithAI() {
+    const lines = (this._opticalLines || []).slice(0, 15);
+    if (lines.length === 0) {
+      UI.toast('Önce yukarıya optik satırlarını yapıştırın ya da bir dosya yükleyin', 'warning');
+      return;
+    }
+    const btn = document.getElementById('optical-ai-suggest-btn');
+    const originalLabel = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = '🤖 AI düşünüyor...'; }
+    try {
+      const res = await fetch('/api/admin/optical-templates/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sampleLines: lines, examType: this._opticalExamType }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'AI önerisi alınamadı.');
+
+      this._calibratorFields = result.fields;
+      this._calibratorActiveFieldIdx = 0;
+      this._calibratorAiNote = result.confidenceNotes || '';
+
+      const sel = document.getElementById('optical-profile-select');
+      if (sel) sel.value = '__calibrate__';
+      this.onOpticalProfileChange();
+      UI.toast('AI bir başlangıç şablonu önerdi - lütfen "Test Et" ile doğrulayın', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalLabel || '🤖 AI ile Öner'; }
+    }
   },
 
   // Profil seçimi değiştiğinde: blok eşleme formunu ve cevap anahtarı
@@ -368,9 +486,17 @@ const ImportOptical = {
   async deleteSelectedOpticalProfile() {
     const profile = (this._opticalProfiles || []).find(p => p.id === this._opticalActiveProfileId);
     if (!profile || profile.builtIn) return;
-    const ok = await UI.confirm(`"${profile.label}" profilini kalıcı olarak silmek istediğinize emin misiniz?`, '🗑 Profili Sil');
+    const ok = await UI.confirm(`"${profile.label}" profilini kalıcı olarak silmek istediğinize emin misiniz? (Okulunuzdaki tüm cihazlardan kaldırılır)`, '🗑 Profili Sil');
     if (!ok) return;
-    await db.deleteOptikProfile(profile.id);
+    try {
+      const res = await fetch(`/api/admin/optical-templates/${profile.id}`, { method: 'DELETE' });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Şablon silinemedi.');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+      return;
+    }
+    OptikProfiles.invalidateCache();
     UI.toast('Profil silindi', 'success');
     this._opticalActiveProfileId = null;
     await this.initOpticalTab();
@@ -505,9 +631,15 @@ const ImportOptical = {
       const i = blockIdx++;
       return { ...f, subjectKey: f.subjectKey || this._opticalBlockOverrides[i] };
     });
-    const newProfile = { ...base, id: undefined, builtIn: false, label: customLabel || `${base.label} (kaydedilmiş eşleme)`, fields };
-    await db.addOptikProfile(newProfile);
-    UI.toast('Profil kaydedildi - bir sonraki içe aktarımda otomatik tanınacak', 'success');
+    const { id: _id, builtIn: _b, createdAt: _c, updatedAt: _u, ...newProfile } =
+      { ...base, label: customLabel || `${base.label} (kaydedilmiş eşleme)`, fields };
+    try {
+      await this._saveOpticalTemplateToServer(newProfile);
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+      return;
+    }
+    UI.toast('Şablon okulunuzun ortak listesine kaydedildi - bir sonraki içe aktarımda otomatik tanınacak', 'success');
     await this.initOpticalTab();
     const sel = document.getElementById('optical-profile-select');
     if (sel) { sel.value = ''; }
@@ -716,6 +848,11 @@ const ImportOptical = {
         <p class="text-muted" style="font-size:12px;margin-bottom:10px">
           Bir alanın satırına tıkla (🖱️ ile işaretlenir), sonra aşağıdaki örnek satırda o alana denk gelen bölgeyi fare ile seç — başlangıç/bitiş pozisyonları otomatik yazılır. İstersen elle de girebilirsin. "Test Et" ile sonucu anında gör.
         </p>
+        ${this._calibratorAiNote ? `
+        <div style="font-size:12px;padding:8px 10px;margin-bottom:10px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;color:var(--text-muted)">
+          🤖 <b>AI önerisi:</b> alanlar aşağıya otomatik dolduruldu, lütfen "Test Et" ile doğrulayıp gerekirse düzelt.
+          ${this._calibratorAiNote ? `<br><i>${this._escapeHtml(this._calibratorAiNote)}</i>` : ''}
+        </div>` : ''}
 
         <div style="font-family:monospace;font-size:10px;color:var(--text-muted);white-space:pre;overflow-x:auto;padding:0 8px;margin-bottom:2px">${ruler}</div>
         <input type="text" id="calibrator-sample-line" class="font-mono" readonly
@@ -817,6 +954,11 @@ const ImportOptical = {
       return;
     }
     const tempProfile = { kind: 'fixedWidth', fields: this._calibratorFields };
+    const diag = OptikProfiles.diagnoseLine(tempProfile, sampleLine);
+    if (!diag.ok) {
+      resultEl.textContent = '❌ ' + diag.reason;
+      return;
+    }
     const rec = OptikProfiles.extractLine(tempProfile, sampleLine, {});
     resultEl.textContent = JSON.stringify(rec, null, 2);
   },
@@ -839,8 +981,13 @@ const ImportOptical = {
       optionCount: EXAM_TYPE_OPTION_COUNT[examType] || 5,
       fields: this._calibratorFields.map(f => f.role === 'answerBlock' ? { ...f, subjectKey: null } : f),
     };
-    await db.addOptikProfile(profile);
-    UI.toast('Yeni profil kaydedildi!', 'success');
+    try {
+      await this._saveOpticalTemplateToServer(profile);
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+      return;
+    }
+    UI.toast('Yeni şablon okulunuzun ortak listesine kaydedildi!', 'success');
     await this.initOpticalTab();
     const sel = document.getElementById('optical-profile-select');
     this.onOpticalContentChange();
@@ -887,7 +1034,11 @@ const ImportOptical = {
     allLines.forEach((line, idx) => {
       if (line.trim().length <= 5) return; // boş/anlamsız satır - sessizce atlanır
       const rec = OptikProfiles.extractLine(profile, line, this._opticalBlockOverrides);
-      if (!rec) { failedLines.push(idx + 1); return; }
+      if (!rec) {
+        const diag = OptikProfiles.diagnoseLine(profile, line);
+        failedLines.push({ line: idx + 1, reason: diag.reason || 'Bilinmeyen sebep' });
+        return;
+      }
 
       const activeKey = keys[rec.booklet] || keys['A'];
       const rowSubjects = {};
@@ -910,15 +1061,22 @@ const ImportOptical = {
       });
     });
 
-    this._renderFailedLinesWarning(failedLines);
+    // %5'ten fazla satır başarısızsa muhtemelen yanlış profil seçilmiş
+    // demektir (bkz. edupusula-optik-okuma-parser-prompt.md, "anomali
+    // yönetimi") - kullanıcıya AI ile yeniden tanımlama seçeneği sunulur,
+    // ama HİÇBİR ZAMAN otomatik/sessizce tetiklenmez.
+    const dataLineCount = rawRows.length + failedLines.length;
+    const highFailureRate = dataLineCount > 0 && (failedLines.length / dataLineCount) > 0.05;
 
     if (rawRows.length === 0) {
+      this._renderFailedLinesWarning(failedLines, [], highFailureRate);
       UI.toast('Satırlar ayrıştırılamadı. Formatı ve cevap anahtarlarını kontrol ediniz.', 'danger');
       return;
     }
 
-    const results = this.mergeOpticalRows(rawRows, subjects);
+    const { results, collisions } = this.mergeOpticalRows(rawRows, subjects);
     results.sort((a, b) => b.totalNet - a.totalNet);
+    this._renderFailedLinesWarning(failedLines, collisions, highFailureRate);
 
     this.opticalResults = results;
     this._opticalResultsExamType = examType;
@@ -930,31 +1088,54 @@ const ImportOptical = {
   // kaybolmasın diye kalıcı bir <div> olarak gösterilir (bkz. FAZ 1.2,
   // ölçülen kanıt: 7.txt'de %25, narharuniye9.txt'de %4 satır sessizce
   // atlanıyordu ve kullanıcı arayüzünde hiçbir izi yoktu).
-  _renderFailedLinesWarning(failedLines) {
+  _renderFailedLinesWarning(failedLines, collisions, highFailureRate) {
     const el = document.getElementById('optical-failed-lines-warning');
     if (!el) return;
-    if (!failedLines.length) {
+    collisions = collisions || [];
+    if (!failedLines.length && !collisions.length) {
       el.style.display = 'none';
       el.innerHTML = '';
       return;
     }
     el.style.display = '';
-    el.innerHTML = `
+    const failedHtml = failedLines.length ? `
       <div class="card" style="padding:12px 16px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.35)">
         <div style="font-weight:700;color:#ef4444;font-size:13px">
           ⚠️ ${failedLines.length} satır ayrıştırılamadı ve değerlendirmeye dahil EDİLMEDİ
         </div>
-        <div style="font-size:12px;margin-top:4px;color:var(--text-muted)">
-          Satır no: ${failedLines.join(', ')}. Bu öğrenciler eksik kalabilir - yukarıdaki
-          metin kutusunda bu satırları bulup formatla uyumlu olup olmadığını gözle kontrol edin.
+        ${highFailureRate ? `
+        <div style="font-size:12px;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,0.15);border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <span>Satırların %5'inden fazlası başarısız oldu - <b>seçili profil bu dosya için yanlış olabilir.</b></span>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="ImportModule.suggestTemplateWithAI()">🤖 AI ile Yeniden Tanı</button>
+        </div>` : ''}
+        <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
+          Bu öğrenciler eksik kalabilir - aşağıdaki satır no ve sebeplerini yukarıdaki
+          metin kutusunda bulup formatla uyumlu olup olmadığını kontrol edin:
         </div>
-      </div>`;
+        <ul style="font-size:12px;margin:6px 0 0;padding-left:18px;color:var(--text-muted)">
+          ${failedLines.map(f => `<li><b>Satır ${f.line}:</b> ${this._escapeHtml(f.reason)}</li>`).join('')}
+        </ul>
+      </div>` : '';
+    const collisionHtml = collisions.length ? `
+      <div class="card mt-2" style="padding:12px 16px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35)">
+        <div style="font-weight:700;color:#f59e0b;font-size:13px">
+          ⚠️ ${collisions.length} öğrencide iki dosya/satır arasında çakışan ders verisi bulundu
+        </div>
+        <div style="font-size:12px;margin-top:6px;color:var(--text-muted)">
+          Aynı öğrenci için aynı ders birden fazla satırda dolu geldi - ikinci satırdaki değer kullanıldı:
+        </div>
+        <ul style="font-size:12px;margin:6px 0 0;padding-left:18px;color:var(--text-muted)">
+          ${collisions.map(c => `<li>${this._escapeHtml(c)}</li>`).join('')}
+        </ul>
+      </div>` : '';
+    el.innerHTML = failedHtml + collisionHtml;
   },
 
   // Aynı öğrenciye (okul no, yoksa ad-soyad ile) ait birden fazla satırı
   // (ör. sözel bölüm satırı + sayısal bölüm satırı) tek sonuçta birleştirir.
   mergeOpticalRows(rawRows, subjects) {
     const byKey = new Map();
+    const collisions = [];
     rawRows.forEach(row => {
       const cleanNo = normalizeSchoolNo(row.schoolNumber);
       const key = cleanNo ? `no:${cleanNo}` : `name:${normalizeTrText(row.fullName)}`;
@@ -962,12 +1143,23 @@ const ImportOptical = {
         byKey.set(key, { ...row, subjects: { ...row.subjects } });
       } else {
         const existing = byKey.get(key);
+        // İki farklı satır (ör. sayısal.txt + sözel.txt) aynı öğrenci için
+        // aynı dersi doldurmuşsa bu gerçek bir veri çakışmasıdır (bilinçli
+        // boş-atlama durumu değil - evaluateOpticalData boş bloğu zaten
+        // row.subjects'e hiç eklemiyor). Eskiden Object.assign sessizce
+        // ikinciyi üzerine yazardı, artık kullanıcıya bildirilir.
+        Object.keys(row.subjects).forEach(subjKey => {
+          if (existing.subjects[subjKey]) {
+            const subjLabel = subjects.find(s => s.key === subjKey)?.name || subjKey;
+            collisions.push(`${row.fullName || row.schoolNumber || '?'} — ${subjLabel}`);
+          }
+        });
         Object.assign(existing.subjects, row.subjects);
         if (!existing.className && row.className) existing.className = row.className;
       }
     });
 
-    return [...byKey.values()].map(r => {
+    const results = [...byKey.values()].map(r => {
       let totalCorrect = 0, totalWrong = 0, totalBlank = 0, totalNet = 0;
       subjects.forEach(sub => {
         const s = r.subjects[sub.key];
@@ -976,6 +1168,7 @@ const ImportOptical = {
       });
       return { ...r, totalCorrect, totalWrong, totalBlank, totalNet: parseFloat(totalNet.toFixed(2)) };
     });
+    return { results, collisions };
   },
 
   // Sonuç önizleme tablosu ve özet kartları (ders sayısı türe göre dinamik)

@@ -590,16 +590,39 @@
         if (!approvedQuestionsCache) {
           approvedQuestionsCache = await fetch('/api/teacher/question-bank/approved').then(r => r.json());
         }
+        // Bolum 7/9: Drive havuzu yapilandirilmis ama su an erisilemiyorsa
+        // (gecici Sheets/Drive hatasi) ogretmene sessizce eksik bir liste
+        // gostermek yerine acikca uyariyoruz - islem tamamen DURMUYOR,
+        // sadece o an icin yalnizca native sorular gorunuyor olabilir.
+        let driveWarningHtml = '';
+        try {
+          const driveStatus = await fetch('/api/admin/soru-havuzu-drive/status').then(r => r.json());
+          if (driveStatus.configured && driveStatus.last_error) {
+            driveWarningHtml = `<p style="color:#fbbf24;font-size:12px;margin-bottom:8px">⚠️ Drive havuzuna şu an ulaşılamıyor, yalnızca yerel sorular gösteriliyor.</p>`;
+          }
+        } catch (_e) {
+          // durum kontrolu basarisiz olsa bile secim ekrani calismaya devam etmeli
+        }
+
         if (!approvedQuestionsCache.length) {
-          picker.innerHTML = '<p class="text-muted">Henüz onaylanmış soru yok - önce yönetici soru bankasından soru onaylamalı.</p>';
+          picker.innerHTML = driveWarningHtml + '<p class="text-muted">Henüz onaylanmış soru yok - önce yönetici soru bankasından soru onaylamalı.</p>';
           return;
         }
-        picker.innerHTML = approvedQuestionsCache.map(q => `
+        // Kaynak ayrimi (edupusula-drive-entegrasyon-prompt.md bolum 5): checkbox
+        // value'su "native:<id>" ya da "drive:<referansId>" seklinde kodlanir -
+        // createAssignment() bunu iki ayri listeye (questionIds/driveQuestionIds)
+        // ayristirir. Ogretmen icin kaynak kucuk bir rozetle gosterilir, secim
+        // deneyimi aksi halde AYNI tek liste.
+        picker.innerHTML = driveWarningHtml + approvedQuestionsCache.map(q => {
+          const value = q.kaynak === 'drive_havuzu' ? `drive:${q.driveReferansId}` : `native:${q.id}`;
+          const badge = q.kaynak === 'drive_havuzu' ? ' <span style="color:var(--text-muted);font-size:11px">☁️ Havuz</span>' : '';
+          return `
           <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px">
-            <input type="checkbox" value="${q.id}" class="assignment-question-checkbox">
-            <span>${escapeHtml(q.displayCode)} — ${escapeHtml(q.subjectName || '-')}${q.hasImage && !q.questionText ? ' (görsel soru)' : ''}</span>
+            <input type="checkbox" value="${value}" class="assignment-question-checkbox">
+            <span>${escapeHtml(q.displayCode)} — ${escapeHtml(q.subjectName || '-')}${q.hasImage && !q.questionText ? ' (görsel soru)' : ''}${badge}</span>
           </label>
-        `).join('');
+        `;
+        }).join('');
       } catch (e) {
         picker.innerHTML = '<p class="text-muted">❌ Sorular yüklenemedi.</p>';
       }
@@ -616,8 +639,14 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Öneri alınamadı.');
+        // /api/teacher/ai/generate-assignment sadece native_db sorularini
+        // onerir (bkz. edupusula-drive-entegrasyon-prompt.md bolum 8 -
+        // Drive havuzunun akilli/AI onerisine entegrasyonu ayri bir faz) -
+        // "drive:" ile baslayan checkbox'lar bu oneriyle hic eslesmez, oldugu
+        // gibi (secili olmayan) birakilir.
         document.querySelectorAll('.assignment-question-checkbox').forEach(el => {
-          el.checked = data.suggestedQuestionIds.includes(Number(el.value));
+          const isNative = el.value.startsWith('native:');
+          el.checked = isNative && data.suggestedQuestionIds.includes(Number(el.value.slice('native:'.length)));
         });
         note.textContent = '🤖 ' + data.note;
       } catch (err) {
@@ -638,8 +667,10 @@
 
       const payload = { className, title, description, dueDate, mode };
       if (mode === 'manual') {
-        payload.questionIds = [...document.querySelectorAll('.assignment-question-checkbox:checked')].map(el => Number(el.value));
-        if (!payload.questionIds.length) { statusEl.textContent = '❌ En az bir soru seçin.'; return; }
+        const checked = [...document.querySelectorAll('.assignment-question-checkbox:checked')].map(el => el.value);
+        payload.questionIds = checked.filter(v => v.startsWith('native:')).map(v => Number(v.slice('native:'.length)));
+        payload.driveQuestionIds = checked.filter(v => v.startsWith('drive:')).map(v => v.slice('drive:'.length));
+        if (!payload.questionIds.length && !payload.driveQuestionIds.length) { statusEl.textContent = '❌ En az bir soru seçin.'; return; }
       } else if (mode === 'auto') {
         payload.subjectId = Number(document.getElementById('assignment-auto-subject').value) || null;
         payload.topicId = Number(document.getElementById('assignment-auto-topic').value) || null;
