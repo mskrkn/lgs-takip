@@ -37,11 +37,22 @@ const AdminUsers = {
       ? `?school_id=${App.actingSchool.id}` : '';
   },
 
-  exitSchoolContext() {
+  async exitSchoolContext() {
+    if (App._dirtyForms.size > 0) {
+      const ok = await UI.confirm(
+        'Kaydedilmemiş değişiklikler var, okuldan çıkılsın mı? Kaydedilmemiş veriler kaybolur.',
+        '⚠️ Okuldan Çık'
+      );
+      if (!ok) return;
+      App._dirtyForms.clear();
+    }
     App.actingSchool = null;
-    if (App.currentUser?.role === 'super_admin') {
+    if (App.currentUser?.role === 'super_admin' && !App.currentUser?.organizationId) {
       // Saf platform hesabinin (kendi okulu yok) tek sayfasi Okullar'dir.
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+        item.style.display = item.dataset.page === 'schools' ? '' : 'none';
+      });
+      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
         item.style.display = item.dataset.page === 'schools' ? '' : 'none';
       });
       App.navigateTo('schools');
@@ -56,12 +67,14 @@ const AdminUsers = {
     const container = document.getElementById('page-users');
     if (!container) return;
 
-    if (App.currentUser?.role === 'super_admin' && !App.actingSchool) {
-      // Dogrudan gecmis/geri tusuyla buraya dusulduyse (okul secilmeden) -
-      // Okullar sayfasina geri gonder, aksi halde school_id'siz istekler
-      // sunucudan hep 400 doner. (Platform sahibi hibrit admin icin bu
-      // sorun degil - okul_id verilmeyince kendi okuluna sabitlenir.)
-      App.navigateTo('schools');
+    if (App.needsActiveSchool()) {
+      // Dogrudan gecmis/geri tusuyla ya da header'daki Aktif Okul
+      // seçicisinden önce okul seçmeden buraya düşülduyse - sessizce
+      // başka bir sayfaya yönlendirmek yerine bu ekranın içinde bir seçim
+      // istemi gösterilir (bkz. App.showSchoolRequiredPrompt). Platform
+      // sahibi hibrit admin icin bu sorun degil - okul_id verilmeyince
+      // kendi okuluna sabitlenir (bkz. server.py _effective_org_id).
+      App.showSchoolRequiredPrompt('page-users');
       return;
     }
 
