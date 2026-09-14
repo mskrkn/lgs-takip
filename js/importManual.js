@@ -94,7 +94,7 @@ const ImportManual = {
   async onManualExamChange() {
     const sel = document.getElementById('manual-exam-select');
     const examId = parseInt(sel?.value);
-    const exam = examId ? await db.getExam(examId) : null;
+    const exam = examId ? await this.resolveExam(examId) : null;
     this._manualActiveExamType = exam?.examType || 'LGS';
     const container = document.getElementById('manual-subject-inputs');
     if (container) container.innerHTML = this.buildManualSubjectInputsHtml(this._manualActiveExamType);
@@ -107,7 +107,7 @@ const ImportManual = {
     if (!container) return;
 
     const trimmed = (query || '').trim();
-    const students = trimmed.length > 0 ? await db.searchStudents(trimmed) : (await db.getAllStudents()).slice(0, 8);
+    const students = trimmed.length > 0 ? await this.searchResolvedStudents(trimmed) : (await this.resolveAllStudents()).slice(0, 8);
 
     if (students.length === 0) {
       const safeQuery = trimmed.replace(/"/g, '&quot;');
@@ -141,7 +141,7 @@ const ImportManual = {
 
     let id;
     try {
-      id = await db.addStudent({
+      id = await this.commitStudent({
         firstName,
         lastName,
         schoolNumber,
@@ -184,7 +184,12 @@ const ImportManual = {
       };
     });
 
-    await db.addResult({ studentId: Number(studentId), examId: Number(examId), subjects });
+    try {
+      await this.commitResult({ studentId: Number(studentId), examId: Number(examId), subjects });
+    } catch (err) {
+      UI.toast(err.message || 'Sonuç kaydedilemedi.', 'danger');
+      return;
+    }
     UI.toast('Sonuç başarıyla kaydedildi!', 'success');
 
     // Reset form

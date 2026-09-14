@@ -1310,11 +1310,13 @@ const ImportOptical = {
       };
     });
 
-    const res = await db.batchImportResults(examId, rowsToImport);
-    await db.repairAndLinkStudents();
+    const res = await this.commitBatchResults(examId, rowsToImport);
+    if (!App.actingSchool) await db.repairAndLinkStudents();
 
-    // Excel'den yüklenmiş konu (kazanım) haritası varsa bu denemeye kalıcı olarak kaydet
-    if (this._opticalTopicMap && Object.keys(this._opticalTopicMap).length > 0) {
+    // Excel'den yüklenmiş konu (kazanım) haritası varsa bu denemeye kalıcı
+    // olarak kaydet - aktif okul modunda bu (nadir) adım şimdilik atlanır,
+    // öğrenci/sonuç girişi (asıl istenen) etkilenmez.
+    if (!App.actingSchool && this._opticalTopicMap && Object.keys(this._opticalTopicMap).length > 0) {
       const exam = await db.getExam(examId);
       await db.updateExam(examId, { topicMap: { ...(exam?.topicMap || {}), ...this._opticalTopicMap } });
       this._opticalTopicMap = null;
