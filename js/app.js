@@ -179,7 +179,7 @@ const App = {
     const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
       (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
     if (isPurePlatformAccount) {
-      const visiblePages = ['schools', 'system-logs', 'users', 'students', 'exams', 'import'];
+      const visiblePages = ['dashboard', 'schools', 'system-logs', 'users', 'students', 'exams', 'import', 'question-bank', 'reports'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.style.display = visiblePages.includes(item.dataset.page) ? '' : 'none';
@@ -599,7 +599,17 @@ const App = {
         await this.renderQuestionBank();
         break;
       case 'reports':
-        await this.renderReports();
+        // Not: gate şimdilik sadece "önce okul seç" istemini gösteriyor -
+        // renderReports() (öğrenci/deneme PDF raporu, JSON yedekle/geri
+        // yükle) henüz seçili okulun sunucu verisine göre ÇALIŞMIYOR, hâlâ
+        // yerel IndexedDB okuyor (bkz. proje notu - bu ayrı, daha büyük bir
+        // iş: js/export.js'in PDF/JSON mantığının okul-farkındalı hale
+        // getirilmesi gerekiyor).
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-reports');
+        } else {
+          await this.renderReports();
+        }
         break;
       case 'settings':
         await this.renderSettings();
