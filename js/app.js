@@ -168,24 +168,27 @@ const App = {
 
     // Super admin VE kendi okulu olmayan platform sahibi (canManageSchools=true
     // ama organizationId=null - admin'in kendi okulu kaldirildiginda bu hale
-    // gelir) sadece "Okullar" sayfasini yonetir - hicbir okulun kendi
-    // verisine (Ogrenciler/Denemeler/Kullanicilar/...) erisimi yok, bu
-    // yuzden diger tum nav ogeleri gizlenip dogrudan Okullar acilir.
+    // gelir): kendi okulu yok ama "Aktif Okul" ile (bkz. renderSchoolSwitcher,
+    // needsActiveSchool) HERHANGİ bir okula girip Kullanıcılar/Öğrenciler/
+    // Denemeler/Veri Girişi'ni yönetebilir - bu yüzden bu sayfalar ARTIK
+    // nav'da GÖRÜNÜR kalıyor (eskiden tamamen gizlenip sadece Okullar
+    // açılıyordu - o dönem "Aktif Okul" özelliği yoktu, bkz. proje notu
+    // [[edupusula_aktif_okul_context_switcher]]). Okul seçilmeden bu
+    // sayfalardan birine girilirse zaten showSchoolRequiredPrompt devreye
+    // girer - nav'da görünmeleri güvenlik açığı değil, sadece erişilebilirlik.
     const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
       (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
     if (isPurePlatformAccount) {
-      const visiblePages = ['schools', 'system-logs'];
+      const visiblePages = ['schools', 'system-logs', 'users', 'students', 'exams', 'import'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.style.display = visiblePages.includes(item.dataset.page) ? '' : 'none';
       });
       // Mobil alt navigasyon çubuğu (Anasayfa/Öğrenciler/Denemeler/Giriş/
-      // Ayarlar) yukarıdaki .nav-item filtresine dahil değil - hiçbiri bu
-      // hesap için geçerli değil (Okullar/Sistem Logları alt çubukta hiç
-      // yok), gizlenmezse dar ekranda eski (kendi okulu olan) admin gibi
-      // bu sayfalara erişilebiliyordu.
+      // Ayarlar) - "Aktif Okul" ile bu hesap da Öğrenciler/Denemeler/Giriş'i
+      // kullanabildiği için artık gösteriliyor (eskiden tamamen gizliydi).
       const mobileBar = document.getElementById('mobile-bottom-nav');
-      if (mobileBar) mobileBar.style.display = 'none';
+      if (mobileBar) mobileBar.style.display = '';
       await this.navigateTo('schools');
       return;
     }
