@@ -602,15 +602,15 @@ const ImportPDF = {
       return;
     }
 
-    const exam = await db.getExam(examId);
+    const exam = await this.resolveExam(examId);
     const rowsToImport = this.buildRowsToImport(exam?.examType || 'LGS');
     if (rowsToImport.length === 0) {
       UI.toast('İçe aktarılacak geçerli satır bulunamadı', 'warning');
       return;
     }
 
-    const res = await db.batchImportResults(examId, rowsToImport);
-    await db.repairAndLinkStudents();
+    const res = await this.commitBatchResults(examId, rowsToImport);
+    if (!App.actingSchool) await db.repairAndLinkStudents();
 
     const extra = [
       res.errors > 0 ? `${res.errors} hata` : null,

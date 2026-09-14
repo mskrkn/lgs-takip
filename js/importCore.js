@@ -133,7 +133,21 @@ const ImportCore = {
 
   // ---- Load Exam Selects ----
   async loadExamSelects() {
-    const exams = await db.getAllExams();
+    // Aktif Okul seçiliyse (bkz. commitExam/commitBatchResults) bu okulun
+    // yerel tarayıcıda HİÇ verisi yok - deneme listesi de sunucudan
+    // (/api/teacher/overview) gelir, alan adları (exam_type -> examType)
+    // yerel db.getAllExams() şekliyle eşleşecek şekilde normalize edilir.
+    let exams;
+    if (App.actingSchool) {
+      try {
+        const data = await fetch(`/api/teacher/overview?school_id=${App.actingSchool.id}`).then(r => r.json());
+        exams = (data.exams || []).map(e => ({ id: e.id, name: e.name, date: e.date, examType: e.exam_type || 'LGS' }));
+      } catch (_) {
+        exams = [];
+      }
+    } else {
+      exams = await db.getAllExams();
+    }
     this._examsCache = exams;
     ['manual-exam-select', 'excel-exam-select', 'pdf-exam-select', 'optical-exam-select'].forEach(selId => {
       const sel = document.getElementById(selId);
@@ -148,6 +162,165 @@ const ImportCore = {
         sel.appendChild(opt);
       });
     });
+  },
+
+  // ---- Aktif Okul farkındalıklı kayıt adaptörleri ----
+  // Okulsuz bir platform hesabı (App.actingSchool doluyken) bu ekranda
+  // hiçbir okulun yerel (IndexedDB) verisine sahip değil - bu yüzden
+  // ekleme/kaydetme işlemleri seçili okulun SUNUCUSUNA yazmalı, tıpkı
+  // js/schoolView.js'in yaptığı gibi (aynı /api/teacher/* uçları, aynı
+  // ?school_id= deseni). Okulun kendi admini için (App.actingSchool boş)
+  // davranış BİREBİR eskisi gibi kalır - hiçbir şey değişmez.
+  _schoolQuery() {
+    return App.actingSchool ? `?school_id=${App.actingSchool.id}` : '';
+  },
+
+  // db.getExam(examId) yerine - aktif okul modunda o sınavı yerel değil
+  // _examsCache'ten (loadExamSelects ile sunucudan doldurulmuş) okur.
+  async resolveExam(examId) {
+    if (App.actingSchool) {
+      return (this._examsCache || []).find(e => String(e.id) === String(examId)) || null;
+    }
+    return await db.getExam(examId);
+  },
+
+  async commitExam(examData) {
+    if (App.actingSchool) {
+      const res = await fetch(`/api/teacher/exams${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(examData),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Deneme oluşturulamadı.');
+      return d.id;
+    }
+    return await db.addExam(examData);
+  },
+
+  async commitStudent(studentData) {
+    if (App.actingSchool) {
+      const res = await fetch(`/api/teacher/students${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(studentData),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Öğrenci eklenemedi.');
+      return d.id;
+    }
+    return await db.addStudent(studentData);
+  },
+
+  async commitResult(resultData) {
+    if (App.actingSchool) {
+      const res = await fetch(`/api/teacher/results${this._schoolQuery()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resultData),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Sonuç kaydedilemedi.');
+      return d.id;
+    }
+    return await db.addResult(resultData);
+  },
+
+  // db.getAllStudents/searchStudents'ın aktif-okul farkındalıklı hali -
+  // Manuel Giriş sekmesindeki öğrenci arama kutusu için (bkz. importManual.js
+  // searchManualStudent). Aktif okul modunda /api/teacher/overview'dan
+  // gelen listeye karşı AYNI (db.js:311-325) filtre mantığı uygulanır.
+  async resolveAllStudents() {
+    if (App.actingSchool) {
+      try {
+        const data = await fetch(`/api/teacher/overview${this._schoolQuery()}`).then(r => r.json());
+        return (data.students || []).map(s => ({
+          id: s.id, firstName: s.first_name, lastName: s.last_name,
+          schoolNumber: s.school_number, className: s.class_name,
+        }));
+      } catch (_) {
+        return [];
+      }
+    }
+    return await db.getAllStudents();
+  },
+
+  async searchResolvedStudents(query) {
+    if (!query || query.length < 1) return [];
+    if (!App.actingSchool) return await db.searchStudents(query);
+    const q = normalizeTrText(query);
+    const qCleanNo = normalizeSchoolNo(query);
+    const all = await this.resolveAllStudents();
+    return all.filter(s => {
+      const fn = normalizeTrText(s.firstName);
+      const ln = normalizeTrText(s.lastName);
+      const fullName = `${fn} ${ln}`.trim();
+      const sn = normalizeSchoolNo(s.schoolNumber);
+      const cn = normalizeTrText(s.className);
+      return fn.includes(q) || ln.includes(q) || fullName.includes(q) || (sn && sn === qCleanNo) || (sn && sn.includes(q)) || cn.includes(q);
+    }).slice(0, 30);
+  },
+
+  // db.batchImportResults'ın aktif-okul farkındalıklı hali - okulun kendi
+  // admini için AYNEN eskisi gibi çalışır (tek IndexedDB transaction'ı).
+  // Aktif okul modunda db.js:473-520'deki AYNI eşleştirme mantığı (okul
+  // no -> tam ad -> yoksa yeni öğrenci) sunucudan çekilen güncel öğrenci
+  // listesine karşı client-side tekrarlanır, sonra her satır tek tek
+  // /api/teacher/results'a yazılır (okullar-arası yardım senaryosu rutin/
+  // yüksek hacimli olmadığı için kabul edilebilir - gerçek bir toplu uç
+  // noktası ileride bir optimizasyon).
+  async commitBatchResults(examId, rowsToImport) {
+    if (!App.actingSchool) {
+      return await db.batchImportResults(examId, rowsToImport);
+    }
+
+    let students;
+    try {
+      const data = await fetch(`/api/teacher/overview${this._schoolQuery()}`).then(r => r.json());
+      students = data.students || [];
+    } catch (_) {
+      students = [];
+    }
+
+    const schoolNoMap = new Map();
+    const fullNameMap = new Map();
+    students.forEach(s => {
+      const cNo = normalizeSchoolNo(s.school_number);
+      if (cNo && !cNo.startsWith('AUTO-')) schoolNoMap.set(cNo, s.id);
+      const fn = normalizeTrText(`${s.first_name || ''} ${s.last_name || ''}`);
+      if (fn) fullNameMap.set(fn, s.id);
+    });
+
+    let imported = 0;
+    let errors = 0;
+    for (const item of rowsToImport) {
+      try {
+        const { studentData, subjects } = item;
+        const rawSNum = String(studentData.schoolNumber || '').trim();
+        const cleanSNum = normalizeSchoolNo(rawSNum);
+        const isAuto = !rawSNum || rawSNum.startsWith('AUTO-');
+        const cleanName = normalizeTrText(`${studentData.firstName || ''} ${studentData.lastName || ''}`);
+
+        let studentId = null;
+        if (!isAuto && cleanSNum && schoolNoMap.has(cleanSNum)) {
+          studentId = schoolNoMap.get(cleanSNum);
+        } else if (cleanName && fullNameMap.has(cleanName)) {
+          studentId = fullNameMap.get(cleanName);
+        }
+        if (!studentId) {
+          studentId = await this.commitStudent(studentData);
+          if (cleanSNum) schoolNoMap.set(cleanSNum, studentId);
+          if (cleanName) fullNameMap.set(cleanName, studentId);
+        }
+
+        await this.commitResult({ studentId, examId, subjects });
+        imported++;
+      } catch (err) {
+        console.error('commitBatchResults satır hatası:', err);
+        errors++;
+      }
+    }
+    return { imported, errors, skippedForLimit: 0 };
   },
 
   // ---- Drop Zone Setup ----
@@ -636,12 +809,17 @@ const ImportCore = {
         return null;
       }
 
-      examId = await db.addExam({
-        name,
-        date: date || new Date().toISOString().split('T')[0],
-        examType,
-      });
-      this.loadExamSelects();
+      try {
+        examId = await this.commitExam({
+          name,
+          date: date || new Date().toISOString().split('T')[0],
+          examType,
+        });
+      } catch (err) {
+        UI.toast(err.message, 'danger');
+        return null;
+      }
+      await this.loadExamSelects();
     }
 
     return parseInt(examId);
