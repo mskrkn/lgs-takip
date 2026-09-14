@@ -130,10 +130,23 @@ const App = {
     // Gerekenler ile aynı veri kümesinden türetiliyor.
     if (this.currentUser?.canManageSchools) this.initNotifications();
 
-    // Initialize Cloud Sync Module
-    if (typeof SyncModule !== 'undefined') {
-      await SyncModule.init();
-      SyncModule.updateStatus();
+    // Initialize Cloud Sync Module - SADECE kendi okulu olan hesaplar için
+    // (bkz. yukarısı - saf platform hesabının senkronize edecek yerel
+    // verisi yok). Eskiden organizationId'siz hesaplarda da SyncModule.init()
+    // koşulsuz çağrılıyordu - localStorage'da başka bir org'dan kalma ESKİ
+    // bir 'lgs_sync_key' varsa (ör. admin org 1'den ayrılmadan önceki hali)
+    // sunucudan o okul için token almaya çalışıp başarısız oluyor, header'da
+    // kırmızı "Bağlantı Hatası" gösteriyordu - saf platform hesabı için bu
+    // özellik zaten anlamsız olduğundan artık rozet tamamen gizleniyor.
+    const syncBadge = document.getElementById('sync-status-badge');
+    if (this.currentUser?.organizationId) {
+      if (typeof SyncModule !== 'undefined') {
+        await SyncModule.init();
+        SyncModule.updateStatus();
+      }
+    } else {
+      localStorage.removeItem('lgs_sync_key');
+      if (syncBadge) syncBadge.style.display = 'none';
     }
 
     // PWA Install Prompt Listener
