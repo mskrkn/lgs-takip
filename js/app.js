@@ -35,7 +35,6 @@ const App = {
       if (value) sessionStorage.setItem(this._ACTING_SCHOOL_KEY, JSON.stringify(value));
       else sessionStorage.removeItem(this._ACTING_SCHOOL_KEY);
     } catch (_) { /* gizli sekme/depolama kapalı - sadece bu sekmenin ömrü boyunca bellekte kalır */ }
-    this._syncSchoolSwitcherUI();
   },
 
   // Pure platform hesapları (Süper Admin, Admin Yardımcısı - kendi okulu
@@ -54,9 +53,14 @@ const App = {
   markDirty(key) { this._dirtyForms.add(key); },
   clearDirty(key) { this._dirtyForms.delete(key); },
 
-  // Header'daki Aktif Okul seçicisinden VE Okullar tablosundaki "Okula Gir"
-  // butonundan (js/schools.js) çağrılan TEK ortak yol - ikisi asla
-  // birbirinden sapmasın diye. Kirli form varsa onay ister.
+  // Okul-özel bir ekranın kendi "önce okul seç" istemi (bkz.
+  // showSchoolRequiredPrompt) VE Okullar tablosundaki "Okula Gir" butonundan
+  // (js/schools.js) çağrılan TEK ortak yol - ikisi asla birbirinden
+  // sapmasın diye. Kirli form varsa onay ister. NAVİGASYONU KENDİSİ
+  // YAPMAZ - çağıran taraf (submitSchoolRequiredPrompt/enterSchool) kendi
+  // tek bir navigateTo çağrısını yapar; burada da yapılsaydı aynı sayfa
+  // art arda İKİ KEZ render edilip bir anlık "yanıp sönme" oluyordu
+  // (bkz. proje notu - gerçek bir kullanıcı şikayetiyle bulundu).
   async setActingSchoolWithGuard(school) {
     if (this._dirtyForms.size > 0) {
       const ok = await UI.confirm(
@@ -67,9 +71,6 @@ const App = {
       this._dirtyForms.clear();
     }
     this.actingSchool = school;
-    if (school && ['users', 'students', 'exams'].includes(this.currentPage)) {
-      this.navigateTo(this.currentPage, this._currentPageData);
-    }
     return true;
   },
 
@@ -123,7 +124,7 @@ const App = {
     }
 
     this.renderRoleBadge();
-    this.renderSchoolSwitcher();
+    this._loadSwitcherSchools();
     // Bildirim Merkezi (Ana Sayfa Geliştirme Önerileri madde 9) - şu an
     // sadece platform (okul yönetimi) yetkisi olan hesaplar için, Dikkat
     // Gerekenler ile aynı veri kümesinden türetiliyor.
@@ -168,8 +169,9 @@ const App = {
 
     // Super admin VE kendi okulu olmayan platform sahibi (canManageSchools=true
     // ama organizationId=null - admin'in kendi okulu kaldirildiginda bu hale
-    // gelir): kendi okulu yok ama "Aktif Okul" ile (bkz. renderSchoolSwitcher,
-    // needsActiveSchool) HERHANGİ bir okula girip Kullanıcılar/Öğrenciler/
+    // gelir): kendi okulu yok ama her ekranın kendi "önce okul seç" istemi
+    // ile (bkz. showSchoolRequiredPrompt, needsActiveSchool) HERHANGİ bir
+    // okula girip Kullanıcılar/Öğrenciler/
     // Denemeler/Veri Girişi'ni yönetebilir - bu yüzden bu sayfalar ARTIK
     // nav'da GÖRÜNÜR kalıyor (eskiden tamamen gizlenip sadece Okullar
     // açılıyordu - o dönem "Aktif Okul" özelliği yoktu, bkz. proje notu
@@ -273,65 +275,28 @@ const App = {
     el.style.cssText = 'display:inline-flex;cursor:default;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.3);color:#c4b5fd';
   },
 
-  // Header'daki kalıcı "Aktif Okul" seçici - eskiden tek giriş noktası
-  // Okullar tablosundaki satır bazlı "Okula Gir" butonuydu (js/schools.js),
-  // artık header'dan da (ve her sayfada) okul değiştirilebilir. actsAsSuperAdmin
-  // olan HER hesapta görünür (saf Süper Admin/Admin Yardımcısı VE kendi
-  // okulu olan hibrit "Platform Sahibi" - üçü de bugün zaten "Okula Gir"
-  // yapabiliyor, bkz. js/schools.js enterSchool).
-  async renderSchoolSwitcher() {
-    const wrap = document.getElementById('school-switcher-wrap');
-    const select = document.getElementById('school-switcher-select');
-    if (!wrap || !select) return;
-    if (!this.currentUser?.actsAsSuperAdmin) {
-      wrap.style.display = 'none';
-      return;
-    }
-    wrap.style.display = '';
+  // Okul listesini sessizce (herhangi bir header UI'ı OLMADAN) önbekler -
+  // her okula-özel ekranın kendi "önce okul seç" istemi (bkz.
+  // showSchoolRequiredPrompt) bu listeyi kullanır. Eskiden burada kalıcı
+  // bir header dropdown'ı vardı ("Aktif Okul") ama okul değiştirdiğinde
+  // her zaman Kullanıcılar sayfasına zıplayıp o an açık olan ekranın bir
+  // anlığına değişmesine (çift render) yol açıyordu - gerçek kullanıcı
+  // şikayeti üzerine kaldırıldı, artık TEK giriş noktası her ekranın
+  // kendi içindeki seçim istemi.
+  async _loadSwitcherSchools() {
+    if (!this.currentUser?.actsAsSuperAdmin) return;
     try {
       const schools = await fetch('/api/superadmin/organizations').then(r => r.json());
       this._switcherSchools = Array.isArray(schools) ? schools : [];
     } catch (_) {
       this._switcherSchools = [];
     }
-    const ownOrgId = this.currentUser.organizationId;
-    select.innerHTML = (ownOrgId ? '<option value="">-- Kendi Okulum --</option>' : '<option value="">-- Okul Seçin --</option>')
-      + this._switcherSchools
-          .filter(s => s.id !== ownOrgId)
-          .map(s => `<option value="${s.id}">${this._escapeHtmlAttr(s.name)}</option>`)
-          .join('');
-    this._syncSchoolSwitcherUI();
   },
 
   _escapeHtmlAttr(text) {
     const div = document.createElement('div');
     div.textContent = text == null ? '' : String(text);
     return div.innerHTML;
-  },
-
-  _syncSchoolSwitcherUI() {
-    const select = document.getElementById('school-switcher-select');
-    if (!select) return;
-    select.value = this.actingSchool?.id ? String(this.actingSchool.id) : '';
-  },
-
-  async onSchoolSwitcherChange(selectEl) {
-    const raw = selectEl.value;
-    if (!raw) {
-      await AdminUsers.exitSchoolContext();
-      return;
-    }
-    const school = (this._switcherSchools || []).find(s => String(s.id) === raw);
-    if (!school) return;
-    const applied = await this.setActingSchoolWithGuard({ id: school.id, name: school.name });
-    if (!applied) { this._syncSchoolSwitcherUI(); return; }
-    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
-    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
-    this.navigateTo('users');
   },
 
   // Okula-özel bir ekrana (users/students/exams/...) okul seçmeden giren
@@ -356,6 +321,11 @@ const App = {
       </div>`;
   },
 
+  // Okul seçildikten sonra AYNI ekranı (aynı sayfa, sadece artık okul
+  // bilgisiyle) yeniden çizer - başka bir sayfaya ASLA zıplamaz, nav'ı da
+  // daraltmaz (bu hesap için zaten init()'te tüm ilgili sayfalar görünür
+  // kalıyor - bkz. isPurePlatformAccount - okul seçmek "admin paneli
+  // gibi" davranışı KISITLAMAMALI, sadece o ekranın içeriğini açmalı).
   async submitSchoolRequiredPrompt() {
     const sel = document.getElementById('school-required-prompt-select');
     const raw = sel?.value;
@@ -363,12 +333,6 @@ const App = {
     const school = (this._switcherSchools || []).find(s => String(s.id) === raw);
     if (!school) return;
     await this.setActingSchoolWithGuard({ id: school.id, name: school.name });
-    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
-    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
     this.navigateTo(this.currentPage, this._currentPageData);
   },
 

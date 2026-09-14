@@ -607,16 +607,27 @@ const Schools = {
       App.navigateTo('students');
       return;
     }
-    // setActingSchoolWithGuard - header'daki Aktif Okul seçicisiyle AYNI
-    // ortak yol (kirli form kontrolü dahil), bkz. js/app.js.
+    // setActingSchoolWithGuard - her ekranın kendi "önce okul seç"
+    // istemiyle (bkz. js/app.js showSchoolRequiredPrompt) AYNI ortak yol
+    // (kirli form kontrolü dahil).
     const applied = await App.setActingSchoolWithGuard({ id: schoolId, name: btn.dataset.schoolName });
     if (!applied) return;
-    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
-    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
-      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
-    });
+    // Kendi okulu OLAN hibrit "Platform Sahibi" başka bir okula geçici
+    // olarak "girdiğinde" nav daraltılır (users/students/exams) - dönünce
+    // (Okullara Dön) kendi tam paneline geri döner. Kendi okulu OLMAYAN
+    // saf platform hesabı (admin gibi) için nav zaten init()'te tüm ilgili
+    // sayfaları (dashboard/users/students/exams/import/question-bank/
+    // reports) gösterecek şekilde ayarlandı - okul seçmek bunu
+    // DARALTMAMALI, aksi halde "admin paneli gibi çalışsın" beklentisi
+    // bozulur (gerçek kullanıcı şikayetiyle bulundu).
+    if (App.currentUser?.organizationId) {
+      document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+        item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+      });
+      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
+        item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+      });
+    }
     App.navigateTo('users');
   },
 

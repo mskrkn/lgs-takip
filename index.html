@@ -169,14 +169,6 @@
           </div>
           <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
           <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
-          <!-- Aktif Okul seçici: sadece okula bağlı olmayan roller (Süper
-               Admin/Admin Yardımcısı, hibrit Platform Sahibi) için görünür
-               (bkz. App.renderSchoolSwitcher). Seçim sessionStorage'da
-               tutulur, sayfa yenilense bile kaybolmaz. -->
-          <div id="school-switcher-wrap" style="display:none;align-items:center;gap:6px">
-            <span style="font-size:12px;color:var(--text-muted)" class="school-switcher-label">🏫 Aktif Okul:</span>
-            <select id="school-switcher-select" class="form-select" style="max-width:180px;font-size:12px;padding:4px 8px" onchange="App.onSchoolSwitcherChange(this)"></select>
-          </div>
           <!-- Hesap Turu Rozeti: hangi yetki seviyesinde oturum acildigini
                her zaman gorunur kilar (bkz. App.init() -> App.renderRoleBadge) -->
           <div id="role-badge" class="sync-status-pill" style="display:none"></div>

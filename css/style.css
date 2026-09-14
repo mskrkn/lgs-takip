@@ -2721,16 +2721,6 @@ select.form-control option {
     padding: 8px 12px 8px 36px;
   }
 
-  /* Aktif Okul seçicisi de aynı dar-ekran taşmasına katkıda bulunuyordu -
-     etiket metni gizlenip sadece kompakt <select> bırakılıyor. */
-  .school-switcher-label {
-    display: none;
-  }
-
-  #school-switcher-select {
-    max-width: 110px !important;
-  }
-
   /* Dar ekranlarda başlık + senkron rozeti + arama kutusu sığmıyordu
      (yatay taşma). Senkron rozetinin metnini gizleyip sadece durum
      noktasını bırakmak yeterli alanı açıyor. */
