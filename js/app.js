@@ -581,7 +581,16 @@ const App = {
         await this.renderClassDetail(data.className, data.examId);
         break;
       case 'import':
-        await this.renderImport();
+        // Veri Girişi (İçe Aktar) de okula-özel bir ekran - okulsuz platform
+        // hesabı önce okul seçmeli (bkz. ImportModule.commitExam/commitStudent/
+        // commitBatchResults, js/importCore.js - seçili okul varsa içe
+        // aktarım sunucudaki o okulun verisine yazar, yoksa bu ekran hiç
+        // açılmaz).
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-import');
+        } else {
+          await this.renderImport();
+        }
         break;
       case 'question-bank':
         await this.renderQuestionBank();
