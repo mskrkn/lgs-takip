@@ -592,7 +592,7 @@ const Schools = {
   // tarayicisindaki yerel (IndexedDB) veri, super_admin'in tarayicisinda
   // o veri hic yok. data-* attribute'lardan okunuyor (JS string olarak
   // gomulseydi okul adindaki bir tirnak isareti HTML'i bozardi).
-  enterSchool(btn) {
+  async enterSchool(btn) {
     const schoolId = Number(btn.dataset.schoolId);
     // Platform sahibi admin kendi okuluna "girerse" (Okullar listesinde
     // kendi okulu da gorunur) - salt-okunur SchoolView yerine normal (tam
@@ -607,8 +607,14 @@ const Schools = {
       App.navigateTo('students');
       return;
     }
-    App.actingSchool = { id: schoolId, name: btn.dataset.schoolName };
+    // setActingSchoolWithGuard - header'daki Aktif Okul seçicisiyle AYNI
+    // ortak yol (kirli form kontrolü dahil), bkz. js/app.js.
+    const applied = await App.setActingSchoolWithGuard({ id: schoolId, name: btn.dataset.schoolName });
+    if (!applied) return;
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+    });
+    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
       item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
     });
     App.navigateTo('users');

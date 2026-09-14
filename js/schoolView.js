@@ -1,15 +1,19 @@
 // ============================================
-// LGS Deneme Takip - Süper Admin: Bir Okulun Öğrenci/Deneme Verisini
-// SALT OKUNUR Görüntülemesi (App.actingSchool doluyken).
+// LGS Deneme Takip - Süper Admin/Admin Yardımcısı: "Aktif Okul" seçiliyken
+// (App.actingSchool) bir okulun öğrenci/deneme verisini yönetme ekranı.
 //
 // Mevcut js/app.js'teki renderStudents/renderExams/... TAMAMEN tarayıcının
 // yerel deposundaki (IndexedDB) veriyi okur/yazar - süper adminin
 // tarayıcısında hiçbir okulun yerel verisi yok, o yüzden onlara
 // DOKUNULMADI. Bunun yerine burada PARALEL, sunucudan (zaten var olan
 // öğretmen uçlarından - /api/teacher/overview,exam/<id>,student/<id> -
-// school_id ile) okuyan, hiçbir ekleme/düzenleme/silme butonu
-// İÇERMEYEN bir görünüm var. Okul admini kendi verisini yine eskisi gibi
-// (js/app.js, IndexedDB) yönetir.
+// school_id ile) okuyan, ekleme/düzenleme/silme destekleyen bir görünüm
+// var. Yazılan/değiştirilen satırlar source='platform_admin' ile
+// damgalanır (bkz. server.py _get_owned_platform_admin_row) - bu okulun
+// KENDİ tarayıcısından gelen ('browser_sync') satırlar burada
+// düzenlenemez/silinemez, çünkü okulun bir sonraki senkronu o değişikliği
+// sessizce ezerdi. Okul admini kendi verisini yine eskisi gibi (js/app.js,
+// IndexedDB) yönetir.
 // ============================================
 
 function _svEscapeHtml(text) {
@@ -30,7 +34,7 @@ const SchoolView = {
   _banner() {
     return `<div class="card" style="border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.08)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <span>🏫 <b>${_svEscapeHtml(App.actingSchool?.name || '')}</b> okulunun verisi görüntüleniyor (salt okunur)</span>
+        <span>🏫 <b>${_svEscapeHtml(App.actingSchool?.name || '')}</b> okulu için işlem yapıyorsunuz</span>
         <button class="btn btn-secondary btn-sm" onclick="AdminUsers.exitSchoolContext()">⬅️ Okullara Dön</button>
       </div>
     </div>`;
@@ -51,16 +55,21 @@ const SchoolView = {
   // bkz. server.py POST /api/teacher/students,exams,results. Yazilan
   // satirlar source='platform_admin' ile damgalanir, bu okulun kendi
   // senkronu bunlara asla dokunmaz (bkz. server.py api_admin_sync).
+  // _editingStudentId dolu olduğunda form güncelleme moduna geçer (bkz.
+  // editStudent/submitAddStudent) - ayrı bir "düzenleme formu" yerine aynı
+  // formun tekrar kullanılması state'i basit tutar.
+  _editingStudentId: null,
+
   _addStudentFormHtml() {
     return `<div id="sv-add-student-form" style="display:none" class="card mt-2">
       <div class="form-row" style="grid-template-columns:repeat(4,1fr)">
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Ad</label><input class="form-input" id="sv-student-firstname"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Soyad</label><input class="form-input" id="sv-student-lastname"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Okul No</label><input class="form-input" id="sv-student-schoolnumber"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Sınıf</label><input class="form-input" id="sv-student-classname" placeholder="8A"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Ad</label><input class="form-input" id="sv-student-firstname" oninput="App.markDirty('sv-student')"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Soyad</label><input class="form-input" id="sv-student-lastname" oninput="App.markDirty('sv-student')"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Okul No</label><input class="form-input" id="sv-student-schoolnumber" oninput="App.markDirty('sv-student')"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Sınıf</label><input class="form-input" id="sv-student-classname" placeholder="8A" oninput="App.markDirty('sv-student')"></div>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px">
-        <button class="btn btn-primary btn-sm" onclick="SchoolView.submitAddStudent()">💾 Kaydet</button>
+        <button class="btn btn-primary btn-sm" id="sv-student-save-btn" onclick="SchoolView.submitAddStudent()">💾 Kaydet</button>
         <button class="btn btn-secondary btn-sm" onclick="SchoolView.toggleAddStudentForm(false)">İptal</button>
       </div>
     </div>`;
@@ -69,6 +78,50 @@ const SchoolView = {
   toggleAddStudentForm(show) {
     const el = document.getElementById('sv-add-student-form');
     if (el) el.style.display = show ? 'block' : 'none';
+    if (!show) {
+      this._editingStudentId = null;
+      App.clearDirty('sv-student');
+      const btn = document.getElementById('sv-student-save-btn');
+      if (btn) btn.textContent = '💾 Kaydet';
+      ['sv-student-firstname', 'sv-student-lastname', 'sv-student-schoolnumber', 'sv-student-classname']
+        .forEach(id => { const el2 = document.getElementById(id); if (el2) el2.value = ''; });
+    }
+  },
+
+  editStudent(id) {
+    const s = (this._studentsCache || []).find(x => x.id === id);
+    if (!s) return;
+    this._editingStudentId = id;
+    this.toggleAddStudentForm(true);
+    document.getElementById('sv-student-firstname').value = s.first_name || '';
+    document.getElementById('sv-student-lastname').value = s.last_name || '';
+    document.getElementById('sv-student-schoolnumber').value = s.school_number || '';
+    document.getElementById('sv-student-classname').value = s.class_name || '';
+    const btn = document.getElementById('sv-student-save-btn');
+    if (btn) btn.textContent = '💾 Güncelle';
+    App.clearDirty('sv-student');
+  },
+
+  // id/name data-* attribute'lardan okunuyor (bkz. js/schools.js enterSchool
+  // yorumu) - isimde bir tırnak işareti olsaydı JS string olarak gömülseydi
+  // inline onclick'i bozardı.
+  async deleteStudentBtn(btn) {
+    await this.deleteStudent(Number(btn.dataset.studentId), btn.dataset.studentName);
+  },
+
+  async deleteStudent(id, name) {
+    const ok = await UI.confirm(`"${name}" adlı öğrenciyi ve tüm sonuçlarını kalıcı olarak silmek istediğinize emin misiniz?`, '🗑 Öğrenciyi Sil');
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/teacher/students/${id}${this._schoolQuery()}`, { method: 'DELETE' });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Öğrenci silinemedi.');
+      UI.toast('Öğrenci silindi.', 'success');
+      this._overviewCache = null;
+      this.renderStudents();
+    } catch (err) {
+      UI.toast(err.message, 'error');
+    }
   },
 
   async submitAddStudent() {
@@ -80,15 +133,19 @@ const SchoolView = {
       UI.toast('Ad ve soyad gerekli.', 'warning');
       return;
     }
+    const editingId = this._editingStudentId;
     try {
-      const res = await fetch(`/api/teacher/students${this._schoolQuery()}`, {
-        method: 'POST',
+      const url = editingId ? `/api/teacher/students/${editingId}${this._schoolQuery()}` : `/api/teacher/students${this._schoolQuery()}`;
+      const res = await fetch(url, {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ firstName, lastName, schoolNumber, className }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Öğrenci eklenemedi.');
-      UI.toast(`${firstName} ${lastName} eklendi.`, 'success');
+      if (!res.ok) throw new Error(d.error || (editingId ? 'Öğrenci güncellenemedi.' : 'Öğrenci eklenemedi.'));
+      UI.toast(`${firstName} ${lastName} ${editingId ? 'güncellendi' : 'eklendi'}.`, 'success');
+      App.clearDirty('sv-student');
+      this._editingStudentId = null;
       this._overviewCache = null;
       this.renderStudents();
     } catch (err) {
@@ -101,6 +158,7 @@ const SchoolView = {
       <tr style="text-align:left;color:var(--text-muted)">
         <th style="padding:8px">Ad Soyad</th><th style="padding:8px">Sınıf</th>
         <th style="padding:8px">Son Net</th><th style="padding:8px">Sıra</th><th style="padding:8px">Durum</th>
+        <th style="padding:8px">İşlemler</th>
       </tr>
       ${rows.map(s => `<tr style="border-top:1px solid var(--bg-glass-border);cursor:pointer" onclick="App.navigateTo('student-profile', {studentId: ${s.id}})">
         <td style="padding:8px">${_svEscapeHtml(s.first_name)} ${_svEscapeHtml(s.last_name)}</td>
@@ -108,6 +166,10 @@ const SchoolView = {
         <td style="padding:8px">${s.latestNet ?? '-'}</td>
         <td style="padding:8px">${s.rank ?? '-'}</td>
         <td style="padding:8px">${_svEscapeHtml(s.status || '-')}</td>
+        <td style="padding:8px;white-space:nowrap" onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-sm" title="Düzenle" onclick="SchoolView.editStudent(${s.id})">✏️</button>
+          <button class="btn btn-ghost btn-sm" title="Sil" data-student-id="${s.id}" data-student-name="${_svEscapeHtml(`${s.first_name} ${s.last_name}`).replace(/"/g, '&quot;')}" onclick="SchoolView.deleteStudentBtn(this)">🗑</button>
+        </td>
       </tr>`).join('')}
     </table></div>`;
   },
@@ -208,16 +270,18 @@ const SchoolView = {
     }
   },
 
+  _editingExamId: null,
+
   _addExamFormHtml() {
     const typeOptions = Object.keys(SUBJECT_SETS).map(t => `<option value="${t}">${t}</option>`).join('');
     return `<div id="sv-add-exam-form" style="display:none" class="card mt-2">
       <div class="form-row" style="grid-template-columns:repeat(3,1fr)">
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Deneme Adı</label><input class="form-input" id="sv-exam-name"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tarih</label><input type="date" class="form-input" id="sv-exam-date"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tür</label><select class="form-select" id="sv-exam-type">${typeOptions}</select></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Deneme Adı</label><input class="form-input" id="sv-exam-name" oninput="App.markDirty('sv-exam')"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tarih</label><input type="date" class="form-input" id="sv-exam-date" oninput="App.markDirty('sv-exam')"></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Tür</label><select class="form-select" id="sv-exam-type" onchange="App.markDirty('sv-exam')">${typeOptions}</select></div>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px">
-        <button class="btn btn-primary btn-sm" onclick="SchoolView.submitAddExam()">💾 Kaydet</button>
+        <button class="btn btn-primary btn-sm" id="sv-exam-save-btn" onclick="SchoolView.submitAddExam()">💾 Kaydet</button>
         <button class="btn btn-secondary btn-sm" onclick="SchoolView.toggleAddExamForm(false)">İptal</button>
       </div>
     </div>`;
@@ -226,6 +290,49 @@ const SchoolView = {
   toggleAddExamForm(show) {
     const el = document.getElementById('sv-add-exam-form');
     if (el) el.style.display = show ? 'block' : 'none';
+    if (!show) {
+      this._editingExamId = null;
+      App.clearDirty('sv-exam');
+      const btn = document.getElementById('sv-exam-save-btn');
+      if (btn) btn.textContent = '💾 Kaydet';
+      const nameEl = document.getElementById('sv-exam-name');
+      const dateEl = document.getElementById('sv-exam-date');
+      if (nameEl) nameEl.value = '';
+      if (dateEl) dateEl.value = '';
+    }
+  },
+
+  editExam(id) {
+    const e = (this._examsCache || []).find(x => x.id === id);
+    if (!e) return;
+    this._editingExamId = id;
+    this.toggleAddExamForm(true);
+    document.getElementById('sv-exam-name').value = e.name || '';
+    document.getElementById('sv-exam-date').value = e.date || '';
+    const typeSel = document.getElementById('sv-exam-type');
+    if (typeSel) typeSel.value = e.exam_type || 'LGS';
+    const btn = document.getElementById('sv-exam-save-btn');
+    if (btn) btn.textContent = '💾 Güncelle';
+    App.clearDirty('sv-exam');
+  },
+
+  async deleteExamBtn(btn) {
+    await this.deleteExam(Number(btn.dataset.examId), btn.dataset.examName);
+  },
+
+  async deleteExam(id, name) {
+    const ok = await UI.confirm(`"${name}" denemesini ve tüm sonuçlarını kalıcı olarak silmek istediğinize emin misiniz?`, '🗑 Denemeyi Sil');
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/teacher/exams/${id}${this._schoolQuery()}`, { method: 'DELETE' });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Deneme silinemedi.');
+      UI.toast('Deneme silindi.', 'success');
+      this._overviewCache = null;
+      this.renderExams();
+    } catch (err) {
+      UI.toast(err.message, 'error');
+    }
   },
 
   async submitAddExam() {
@@ -236,15 +343,19 @@ const SchoolView = {
       UI.toast('Deneme adı ve tarihi gerekli.', 'warning');
       return;
     }
+    const editingId = this._editingExamId;
     try {
-      const res = await fetch(`/api/teacher/exams${this._schoolQuery()}`, {
-        method: 'POST',
+      const url = editingId ? `/api/teacher/exams/${editingId}${this._schoolQuery()}` : `/api/teacher/exams${this._schoolQuery()}`;
+      const res = await fetch(url, {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, date, examType }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Deneme oluşturulamadı.');
-      UI.toast(`"${name}" oluşturuldu.`, 'success');
+      if (!res.ok) throw new Error(d.error || (editingId ? 'Deneme güncellenemedi.' : 'Deneme oluşturulamadı.'));
+      UI.toast(`"${name}" ${editingId ? 'güncellendi' : 'oluşturuldu'}.`, 'success');
+      App.clearDirty('sv-exam');
+      this._editingExamId = null;
       this._overviewCache = null;
       this.renderExams();
     } catch (err) {
@@ -258,6 +369,7 @@ const SchoolView = {
     container.innerHTML = `${this._banner()}<p class="text-muted mt-2">Yükleniyor...</p>`;
     try {
       const data = await this._loadOverview();
+      this._examsCache = data.exams;
 
       // admin-panel-prompt.md bölüm 7: kademeye göre gruplu liste.
       const groups = {};
@@ -280,6 +392,10 @@ const SchoolView = {
         <td style="padding:8px">${e.stats ? e.stats.totalNet : '-'}</td>
         <td style="padding:8px">${e.stats ? e.stats.highestNet : '-'}</td>
         <td style="padding:8px">${e.stats ? e.stats.lowestNet : '-'}</td>
+        <td style="padding:8px;white-space:nowrap" onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-sm" title="Düzenle" onclick="SchoolView.editExam(${e.id})">✏️</button>
+          <button class="btn btn-ghost btn-sm" title="Sil" data-exam-id="${e.id}" data-exam-name="${_svEscapeHtml(e.name).replace(/"/g, '&quot;')}" onclick="SchoolView.deleteExamBtn(this)">🗑</button>
+        </td>
       </tr>`;
       const groupsHtml = sortedKeys.map(key => {
         const g = groups[key];
@@ -290,6 +406,7 @@ const SchoolView = {
               <th style="padding:8px">Deneme</th><th style="padding:8px">Tarih</th><th style="padding:8px">Tür</th>
               <th style="padding:8px">Katılımcı</th><th style="padding:8px">Ort. Net</th>
               <th style="padding:8px">En Yüksek</th><th style="padding:8px">En Düşük</th>
+              <th style="padding:8px">İşlemler</th>
             </tr>
             ${g.exams.map(rowHtml).join('')}
           </table></div>`;
@@ -325,9 +442,9 @@ const SchoolView = {
           <span class="text-muted" style="font-size:11px"> (${sub.questions} soru)</span></div>
         <div class="form-row" style="grid-template-columns:repeat(3,1fr)">
           <div class="form-group" style="margin-bottom:0"><label class="form-label">Doğru</label>
-            <input type="number" class="form-input" id="sv-result-${sub.key}-correct" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}')"></div>
+            <input type="number" class="form-input" id="sv-result-${sub.key}-correct" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}');App.markDirty('sv-result')"></div>
           <div class="form-group" style="margin-bottom:0"><label class="form-label">Yanlış</label>
-            <input type="number" class="form-input" id="sv-result-${sub.key}-wrong" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}')"></div>
+            <input type="number" class="form-input" id="sv-result-${sub.key}-wrong" min="0" max="${sub.questions}" value="0" oninput="SchoolView.calcResultNets('${examType}');App.markDirty('sv-result')"></div>
           <div class="form-group" style="margin-bottom:0"><label class="form-label">Net</label>
             <input type="text" class="form-input font-mono" id="sv-result-${sub.key}-net" readonly value="0.00"></div>
         </div>
@@ -385,6 +502,7 @@ const SchoolView = {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Sonuç kaydedilemedi.');
       UI.toast('Sonuç kaydedildi.', 'success');
+      App.clearDirty('sv-result');
       this._overviewCache = null;
       this.renderExamDetail(examId);
     } catch (err) {

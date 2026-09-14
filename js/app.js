@@ -7,12 +7,71 @@ const App = {
   currentStudentId: null,
   deferredPwaPrompt: null,
   currentUser: null,
-  // super_admin "Okullar" sayfasindan bir okula "girdiginde" {id,name} olur
-  // (bkz. js/schools.js manageSchoolUsers / js/adminUsers.js _schoolQuery) -
-  // Kullanicilar sayfasinin hangi okulun hesaplarini yonetecegini belirler.
-  actingSchool: null,
   _currentPageData: {},
   _navHistory: [], // { page, data } yığını - bkz. navigateTo/goBack
+
+  // super_admin/Admin Yardımcısı bir okula "girdiginde" {id,name} olur
+  // (bkz. js/schools.js enterSchool / header'daki Aktif Okul seçici) -
+  // okula özel ekranların (Kullanıcılar/Öğrenciler/Denemeler) hangi okulu
+  // göstereceğini belirler. sessionStorage'da tutulur ki sayfa yenilense
+  // bile kaybolmasın (eskiden salt bellekteydi, her F5'te sıfırlanıyordu) -
+  // ama tarayıcı kapanınca/farklı bir sekmede sıfırlanır (oturuma özel).
+  _ACTING_SCHOOL_KEY: 'lgs_acting_school',
+  _actingSchoolCache: undefined, // undefined = henüz sessionStorage'dan okunmadı
+  get actingSchool() {
+    if (this._actingSchoolCache === undefined) {
+      try {
+        const raw = sessionStorage.getItem(this._ACTING_SCHOOL_KEY);
+        this._actingSchoolCache = raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        this._actingSchoolCache = null;
+      }
+    }
+    return this._actingSchoolCache;
+  },
+  set actingSchool(value) {
+    this._actingSchoolCache = value || null;
+    try {
+      if (value) sessionStorage.setItem(this._ACTING_SCHOOL_KEY, JSON.stringify(value));
+      else sessionStorage.removeItem(this._ACTING_SCHOOL_KEY);
+    } catch (_) { /* gizli sekme/depolama kapalı - sadece bu sekmenin ömrü boyunca bellekte kalır */ }
+    this._syncSchoolSwitcherUI();
+  },
+
+  // Pure platform hesapları (Süper Admin, Admin Yardımcısı - kendi okulu
+  // YOK) bir okul seçmeden okula-özel ekranlara girerse ne göstereceğini
+  // bilemez (bkz. showSchoolRequiredPrompt). Kendi okulu olan hibrit
+  // platform-sahibi admin bunun dışında - school_id verilmezse zaten kendi
+  // okuluna düşer (bkz. server.py _effective_org_id).
+  needsActiveSchool() {
+    return !!(this.currentUser?.actsAsSuperAdmin && !this.currentUser?.organizationId && !this.actingSchool);
+  },
+
+  // Kaydedilmemiş form verisi takibi - okul değiştirmeden/okuldan çıkmadan
+  // önce kullanıcıya sormak için (bkz. setActingSchoolWithGuard). Bir form
+  // kendi anahtarıyla markDirty/clearDirty çağırır (ör. 'sv-student').
+  _dirtyForms: new Set(),
+  markDirty(key) { this._dirtyForms.add(key); },
+  clearDirty(key) { this._dirtyForms.delete(key); },
+
+  // Header'daki Aktif Okul seçicisinden VE Okullar tablosundaki "Okula Gir"
+  // butonundan (js/schools.js) çağrılan TEK ortak yol - ikisi asla
+  // birbirinden sapmasın diye. Kirli form varsa onay ister.
+  async setActingSchoolWithGuard(school) {
+    if (this._dirtyForms.size > 0) {
+      const ok = await UI.confirm(
+        'Kaydedilmemiş değişiklikler var, okul değiştirilsin mi? Kaydedilmemiş veriler kaybolur.',
+        '⚠️ Okul Değiştir'
+      );
+      if (!ok) return false;
+      this._dirtyForms.clear();
+    }
+    this.actingSchool = school;
+    if (school && ['users', 'students', 'exams'].includes(this.currentPage)) {
+      this.navigateTo(this.currentPage, this._currentPageData);
+    }
+    return true;
+  },
 
   // ---- Initialize ----
   async init() {
@@ -30,6 +89,14 @@ const App = {
       }
     } catch (e) {
       this.currentUser = null;
+    }
+
+    // Guvenlik: sessionStorage bu SEKMEYE ozel ama HESABA ozel degil - ayni
+    // sekmede cikis yapip baska (okula-bagli, actsAsSuperAdmin OLMAYAN) bir
+    // hesapla giris yapilirsa onceki hesabin actingSchool'u sessizce miras
+    // kalmasin diye, bu hesap icin anlamsizsa hemen temizlenir.
+    if (!this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+      this.actingSchool = null;
     }
 
     // KRITIK: yerel (IndexedDB) veritabanini bu okulun KENDI ad alanina AC -
@@ -56,6 +123,7 @@ const App = {
     }
 
     this.renderRoleBadge();
+    this.renderSchoolSwitcher();
     // Bildirim Merkezi (Ana Sayfa Geliştirme Önerileri madde 9) - şu an
     // sadece platform (okul yönetimi) yetkisi olan hesaplar için, Dikkat
     // Gerekenler ile aynı veri kümesinden türetiliyor.
@@ -200,6 +268,105 @@ const App = {
     el.textContent = label;
     el.title = title;
     el.style.cssText = 'display:inline-flex;cursor:default;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.3);color:#c4b5fd';
+  },
+
+  // Header'daki kalıcı "Aktif Okul" seçici - eskiden tek giriş noktası
+  // Okullar tablosundaki satır bazlı "Okula Gir" butonuydu (js/schools.js),
+  // artık header'dan da (ve her sayfada) okul değiştirilebilir. actsAsSuperAdmin
+  // olan HER hesapta görünür (saf Süper Admin/Admin Yardımcısı VE kendi
+  // okulu olan hibrit "Platform Sahibi" - üçü de bugün zaten "Okula Gir"
+  // yapabiliyor, bkz. js/schools.js enterSchool).
+  async renderSchoolSwitcher() {
+    const wrap = document.getElementById('school-switcher-wrap');
+    const select = document.getElementById('school-switcher-select');
+    if (!wrap || !select) return;
+    if (!this.currentUser?.actsAsSuperAdmin) {
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+    try {
+      const schools = await fetch('/api/superadmin/organizations').then(r => r.json());
+      this._switcherSchools = Array.isArray(schools) ? schools : [];
+    } catch (_) {
+      this._switcherSchools = [];
+    }
+    const ownOrgId = this.currentUser.organizationId;
+    select.innerHTML = (ownOrgId ? '<option value="">-- Kendi Okulum --</option>' : '<option value="">-- Okul Seçin --</option>')
+      + this._switcherSchools
+          .filter(s => s.id !== ownOrgId)
+          .map(s => `<option value="${s.id}">${this._escapeHtmlAttr(s.name)}</option>`)
+          .join('');
+    this._syncSchoolSwitcherUI();
+  },
+
+  _escapeHtmlAttr(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+  },
+
+  _syncSchoolSwitcherUI() {
+    const select = document.getElementById('school-switcher-select');
+    if (!select) return;
+    select.value = this.actingSchool?.id ? String(this.actingSchool.id) : '';
+  },
+
+  async onSchoolSwitcherChange(selectEl) {
+    const raw = selectEl.value;
+    if (!raw) {
+      await AdminUsers.exitSchoolContext();
+      return;
+    }
+    const school = (this._switcherSchools || []).find(s => String(s.id) === raw);
+    if (!school) return;
+    const applied = await this.setActingSchoolWithGuard({ id: school.id, name: school.name });
+    if (!applied) { this._syncSchoolSwitcherUI(); return; }
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+    });
+    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+    });
+    this.navigateTo('users');
+  },
+
+  // Okula-özel bir ekrana (users/students/exams/...) okul seçmeden giren
+  // saf platform hesabına (bkz. needsActiveSchool) sessizce başka bir
+  // sayfaya yönlendirmek yerine İÇERİĞİ BLOKE EDEN bir seçim istemi
+  // gösterir - kullanıcı olduğu ekranda kalır.
+  showSchoolRequiredPrompt(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const options = (this._switcherSchools || [])
+      .map(s => `<option value="${s.id}">${this._escapeHtmlAttr(s.name)}</option>`).join('');
+    container.innerHTML = `
+      <div class="card" style="max-width:480px;margin:40px auto;text-align:center;padding:32px 24px">
+        <div style="font-size:32px;margin-bottom:8px">🏫</div>
+        <h3 style="margin:0 0 8px">Devam etmek için bir okul seçin</h3>
+        <p class="text-muted" style="font-size:13px;margin-bottom:16px">Bu ekran belirli bir okula bağlıdır - önce hangi okul için işlem yapacağınızı seçin.</p>
+        <select class="form-select" id="school-required-prompt-select" style="margin-bottom:12px">
+          <option value="">-- Okul Seçin --</option>
+          ${options}
+        </select>
+        <button class="btn btn-primary" onclick="App.submitSchoolRequiredPrompt()">Devam Et</button>
+      </div>`;
+  },
+
+  async submitSchoolRequiredPrompt() {
+    const sel = document.getElementById('school-required-prompt-select');
+    const raw = sel?.value;
+    if (!raw) return;
+    const school = (this._switcherSchools || []).find(s => String(s.id) === raw);
+    if (!school) return;
+    await this.setActingSchoolWithGuard({ id: school.id, name: school.name });
+    document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+    });
+    document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
+      item.style.display = ['users', 'students', 'exams'].includes(item.dataset.page) ? '' : 'none';
+    });
+    this.navigateTo(this.currentPage, this._currentPageData);
   },
 
   // Bildirim Merkezi (Ana Sayfa Geliştirme Önerileri madde 9) - Dikkat
@@ -369,32 +536,42 @@ const App = {
         }
         break;
       case 'students':
-        // Süper admin bir okula "girmişken" bu sayfa tarayıcının yerel
-        // (IndexedDB) verisini DEĞİL, o okulun sunucudaki verisini salt
-        // okunur gösterir (bkz. js/schoolView.js) - okul admini için
-        // hiçbir şey değişmedi.
-        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+        // Kendi okulu olmayan (saf) platform hesabı bir okul seçmeden
+        // buraya düşerse yerel IndexedDB'si zaten boş olur - eskiden bu
+        // sessizce boş bir liste gösterirdi, artık net bir seçim istemi
+        // çıkar (bkz. showSchoolRequiredPrompt).
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-students');
+        } else if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+          // Bir okula "girmişken" bu sayfa tarayıcının yerel verisini
+          // DEĞİL, o okulun sunucudaki verisini gösterir (bkz. schoolView.js).
           await SchoolView.renderStudents();
         } else {
           await this.renderStudents();
         }
         break;
       case 'student-profile':
-        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-student-profile');
+        } else if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderStudentProfile(data.studentId, data.examId);
         } else {
           await this.renderStudentProfile(data.studentId);
         }
         break;
       case 'exams':
-        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-exams');
+        } else if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderExams();
         } else {
           await this.renderExams();
         }
         break;
       case 'exam-detail':
-        if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+        if (this.needsActiveSchool()) {
+          this.showSchoolRequiredPrompt('page-exam-detail');
+        } else if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
           await SchoolView.renderExamDetail(data.examId);
         } else {
           await this.renderExamDetail(data.examId);

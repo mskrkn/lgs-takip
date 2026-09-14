@@ -4386,6 +4386,70 @@ def api_platform_add_student():
     return jsonify({"ok": True, "id": new_id})
 
 
+def _get_owned_platform_admin_row(db, table, row_id, org_id):
+    """Duzenleme/silme icin sahiplik + kaynak kontrolu - SADECE bu okulun
+    kendi tarayicisindan gelen ('browser_sync') degil, platform admin
+    tarafindan eklenen ('platform_admin') satirlar bu uctan degistirilebilir.
+    Aksi halde okulun kendi senkronu (api_admin_sync, sadece browser_sync
+    satirlarini siler/yeniden yazar) bir sonraki push'ta bu degisikligi
+    sessizce ezer - kullaniciya kalici gorunen ama aslinda kalici olmayan
+    bir duzenleme yaptirmamak icin bu kisitlama bilincli."""
+    return db.execute(
+        f"SELECT id FROM {table} WHERE id=? AND organization_id=? AND source='platform_admin'",
+        (row_id, org_id),
+    ).fetchone()
+
+
+@app.route("/api/teacher/students/<int:student_id>", methods=["PUT"])
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_platform_update_student(student_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not _get_owned_platform_admin_row(db, "students", student_id, org_id):
+        return jsonify({"error": "Öğrenci bulunamadı ya da bu ekrandan düzenlenemez "
+                                  "(okulun kendi eklediği bir kayıt olabilir)."}), 404
+
+    data = request.get_json(silent=True) or {}
+    first_name = (data.get("firstName") or "").strip()
+    last_name = (data.get("lastName") or "").strip()
+    school_number = (data.get("schoolNumber") or "").strip() or None
+    class_name = (data.get("className") or "").strip() or None
+    if not first_name or not last_name:
+        return jsonify({"error": "Ad ve soyad gerekli."}), 400
+
+    db.execute(
+        "UPDATE students SET first_name=?, last_name=?, school_number=?, class_name=? "
+        "WHERE id=? AND organization_id=?",
+        (first_name, last_name, school_number, class_name, student_id, org_id),
+    )
+    db.commit()
+    log_audit(db, "STUDENT_UPDATED_BY_PLATFORM", resource_type="student", resource_id=student_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/teacher/students/<int:student_id>", methods=["DELETE"])
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_platform_delete_student(student_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not _get_owned_platform_admin_row(db, "students", student_id, org_id):
+        return jsonify({"error": "Öğrenci bulunamadı ya da bu ekrandan silinemez "
+                                  "(okulun kendi eklediği bir kayıt olabilir)."}), 404
+
+    # results.student_id icin FK/CASCADE tanimli degil (bkz. proje notu) -
+    # sessizce yetim kalmasin diye elle temizleniyor. parent_students zaten
+    # ON DELETE CASCADE.
+    db.execute("DELETE FROM results WHERE student_id=?", (student_id,))
+    db.execute("DELETE FROM students WHERE id=? AND organization_id=?", (student_id, org_id))
+    db.commit()
+    log_audit(db, "STUDENT_DELETED_BY_PLATFORM", resource_type="student", resource_id=student_id)
+    return jsonify({"ok": True})
+
+
 # ============================================================
 # e-Okul "Sınıf Listesi" PDF'inden toplu öğrenci içe aktarma
 # ============================================================
@@ -4673,6 +4737,52 @@ def api_platform_add_exam():
     db.commit()
     log_audit(db, "EXAM_CREATED_BY_PLATFORM", resource_type="exam", resource_id=new_id)
     return jsonify({"ok": True, "id": new_id})
+
+
+@app.route("/api/teacher/exams/<int:exam_id>", methods=["PUT"])
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_platform_update_exam(exam_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not _get_owned_platform_admin_row(db, "exams", exam_id, org_id):
+        return jsonify({"error": "Deneme bulunamadı ya da bu ekrandan düzenlenemez "
+                                  "(okulun kendi eklediği bir kayıt olabilir)."}), 404
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    date = (data.get("date") or "").strip()
+    exam_type = (data.get("examType") or "").strip() or "LGS"
+    if not name or not date:
+        return jsonify({"error": "Deneme adı ve tarihi gerekli."}), 400
+
+    exam_payload = {**data, "id": exam_id}
+    db.execute(
+        "UPDATE exams SET name=?, date=?, exam_type=?, data_json=? WHERE id=? AND organization_id=?",
+        (name, date, exam_type, json.dumps(exam_payload), exam_id, org_id),
+    )
+    db.commit()
+    log_audit(db, "EXAM_UPDATED_BY_PLATFORM", resource_type="exam", resource_id=exam_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/teacher/exams/<int:exam_id>", methods=["DELETE"])
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_platform_delete_exam(exam_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not _get_owned_platform_admin_row(db, "exams", exam_id, org_id):
+        return jsonify({"error": "Deneme bulunamadı ya da bu ekrandan silinemez "
+                                  "(okulun kendi eklediği bir kayıt olabilir)."}), 404
+
+    db.execute("DELETE FROM results WHERE exam_id=?", (exam_id,))
+    db.execute("DELETE FROM exams WHERE id=? AND organization_id=?", (exam_id, org_id))
+    db.commit()
+    log_audit(db, "EXAM_DELETED_BY_PLATFORM", resource_type="exam", resource_id=exam_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/teacher/results", methods=["POST"])
