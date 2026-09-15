@@ -41,6 +41,9 @@
         <div class="nav-item" data-page="exams">
           <span class="nav-icon">📝</span><span>Denemeler</span>
         </div>
+        <div class="nav-item" data-page="omr">
+          <span class="nav-icon">📷</span><span>Optik Okuma</span>
+        </div>
         <div class="nav-item" data-page="message">
           <span class="nav-icon">✉️</span><span>Mesaj Gönder</span>
         </div>
@@ -277,6 +280,20 @@
           </div>
         </section>
 
+        <!-- ============ OPTİK OKUMA (Kamera OMR) ============ -->
+        <section class="page-section" id="page-omr">
+          <div class="card">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">📷</span> Hızlı Test Tanımla</h3></div>
+            <p class="text-muted" style="font-size:13px">Kırtasiyeden aldığınız hazır konu kavrama testinin cevap anahtarını burada tanımlayın, ardından öğrencilere özel optik cevap kağıtlarını yazdırın. Doldurulan kağıtları telefon kamerasıyla tarama özelliği yakında eklenecek.</p>
+            <div id="omr-define-root"></div>
+          </div>
+
+          <div class="card mt-2">
+            <div class="card-header"><h3 class="card-title"><span class="card-icon">🗂️</span> Tanımlı Testler</h3></div>
+            <div id="omr-exam-list"><p class="text-muted">Yükleniyor...</p></div>
+          </div>
+        </section>
+
         <!-- ============ MESAJ GÖNDER ============ -->
         <section class="page-section" id="page-message">
           <div class="card">
@@ -414,6 +431,8 @@
   </div>
 
   <script src="js/subjectSets.js"></script>
+  <script src="js/teacher/omrDefine.js"></script>
+  <script src="js/teacher/omrScan.js"></script>
   <script src="js/teacher/ogretmen.js"></script>
 </body>
 </html>
