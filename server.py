@@ -116,6 +116,9 @@ QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
 # Bolum 4: Drive'dan cekilen soru gorselleri burada onbekleklenir - ayni
 # gorsele ikinci istekte artik Drive'a GIDILMEZ (bkz. api_drive_havuzu_image).
 DRIVE_HAVUZU_CACHE_DIR = os.path.join(UPLOADS_DIR, "drive_havuzu_cache")
+# Kamera OMR: ogretmenin telefonla cektigi ham form fotograflari - Faz 3'teki
+# goruntu isleme pipeline'i bunlari isleyecek, o zamana kadar sadece saklanir.
+OMR_SCANS_DIR = os.path.join(UPLOADS_DIR, "omr_scans")
 PORT = int(os.environ.get("PORT", 8080))
 _SERVER_STARTED_AT = datetime.now()
 
@@ -5215,6 +5218,56 @@ def api_teacher_omr_generate_papers(exam_def_id):
         mimetype="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="optik-form-{exam_def_id}.pdf"'},
     )
+
+
+_OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
+
+
+@app.route("/api/teacher/omr/scans", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_upload_scan():
+    """Faz 2 (kamera yakalama) icin kabul ucu - Faz 3'teki gercek OpenCV
+    pipeline'i devreye girene kadar goruntu SADECE saklanir, satir dogrudan
+    'needs_review' olarak isaretlenir (henuz otomatik okuma yok, ogretmen
+    manuel gozden gecirecek). Mobil taraftaki offline kuyruk, baglanti
+    gelince bu ucu tekrar tekrar deneyerek bosaltilir (bkz.
+    js/teacher/omrScan.js)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    exam_def_id = request.form.get("examDefinitionId", type=int)
+    if not exam_def_id:
+        return jsonify({"error": "Test tanımı belirtilmedi."}), 400
+    exam_def = db.execute(
+        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    image = request.files.get("image")
+    if not image or not image.filename:
+        return jsonify({"error": "Görüntü eksik."}), 400
+    ext = os.path.splitext(secure_filename(image.filename))[1].lower()
+    if ext not in _OMR_SCAN_ALLOWED_EXT:
+        ext = ".jpg"
+
+    os.makedirs(OMR_SCANS_DIR, exist_ok=True)
+    filename = f"{secrets.token_hex(16)}{ext}"
+    image_path = os.path.join(OMR_SCANS_DIR, filename)
+    image.save(image_path)
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO omr_scans (exam_definition_id, organization_id, match_status, image_path, "
+        "status, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (exam_def_id, org_id, "pending", filename, "needs_review", session["user_id"], now, now),
+    )
+    db.commit()
+    log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
+    return jsonify({"ok": True, "id": cur.lastrowid, "status": "needs_review"}), 201
 
 
 # ============================================================
