@@ -3,15 +3,17 @@ deneme_sonuclari.csv
 *.csv
 
 # Yardımcı/tek seferlik Python betikleri (örnek/gerçek öğrenci verisi gömülü
-# olabilir). server.py, pdf_question_extractor.py ve soru_havuzu_drive.py
-# bunun DIŞINDA - üçü de uygulamanın gerçek backend'inin parçası, sürüm
-# kontrolünde olmalı.
+# olabilir). server.py, pdf_question_extractor.py, soru_havuzu_drive.py ve
+# omr_form.py bunun DIŞINDA - dördü de uygulamanın gerçek backend'inin
+# parçası, sürüm kontrolünde olmalı.
 *.py
 !server.py
 !pdf_question_extractor.py
 !diagnose_pdf_extraction.py
 !soru_havuzu_drive.py
 !soru_havuzu_merge.py
+!omr_form.py
+!omr_pipeline.py
 __pycache__/
 
 # Soru Havuzu: yüklenen kaynak PDF'ler ve kırpılan soru görüntüleri -

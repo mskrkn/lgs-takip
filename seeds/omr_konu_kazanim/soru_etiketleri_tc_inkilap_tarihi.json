@@ -1,0 +1,205 @@
+{
+  "ders": "T.C. İnkılap Tarihi ve Atatürkçülük",
+  "dersKisaltma": "İTA",
+  "siniflar": {
+    "8": {
+      "sinif": 8,
+      "konular": [
+        {
+          "konu_id": "8.K01",
+          "konu_adi": "1. ÜNİTE: BİR KAHRAMAN DOĞUYOR",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.1.1",
+              "kazanim_adi": "Avrupa'daki gelişmelerin yansımaları bağlamında Osmanlı Devleti'nin yirminci yüzyılın başlarındaki siyasi ve sosyal durumunu kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.1.2",
+              "kazanim_adi": "Mustafa Kemal'in çocukluk ve öğrenim hayatından hareketle onun kişilik özelliklerinin oluşumu hakkında çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "İTA.8.1.3",
+              "kazanim_adi": "Gençlik döneminde Mustafa Kemal'in fikir hayatını etkileyen önemli kişileri ve olayları kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.1.4",
+              "kazanim_adi": "Mustafa Kemal'in askerlik hayatı ile ilgili olayları ve olguları onun kişilik özellikleri ile ilişkilendirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K02",
+          "konu_adi": "2. ÜNİTE: MİLLÎ UYANIŞ: BAĞIMSIZLIK YOLUNDA ATILAN ADIMLAR",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.2.1",
+              "kazanim_adi": "Birinci Dünya Savaşı'nın sebeplerini ve savaşın başlamasına yol açan gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.2",
+              "kazanim_adi": "Birinci Dünya Savaşı'nda Osmanlı Devleti'nin durumu hakkında çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.3",
+              "kazanim_adi": "Mondros Ateşkes Antlaşması'nın imzalanması ve uygulanması karşısında Osmanlı yönetiminin, Mustafa Kemal'in ve halkın tutumunu analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.4",
+              "kazanim_adi": "Kuvâ-yı Millîye'nin oluşum sürecini ve sonrasında meydana gelen gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.5",
+              "kazanim_adi": "Millî Mücadele'nin hazırlık döneminde Mustafa Kemal'in yaptığı çalışmaları analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.6",
+              "kazanim_adi": "Misakımilli'nin kabulünü ve Büyük Millet Meclisinin açılışını vatanın bütünlüğü esası ile \"ulusal egemenlik\" ve \"tam bağımsızlık\" ilkeleri ile ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.7",
+              "kazanim_adi": "Büyük Millet Meclisine karşı ayaklanmalar ile ayaklanmaların bastırılması için alınan tedbirleri analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.2.8",
+              "kazanim_adi": "Mustafa Kemal'in ve Türk milletinin Sevr Antlaşması'na karşı tepkilerini değerlendirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K03",
+          "konu_adi": "3. ÜNİTE: MİLLÎ BİR DESTAN: YA İSTİKLAL YA ÖLÜM!",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.3.1",
+              "kazanim_adi": "Millî Mücadele Dönemi'nde Doğu Cephesi ve Güney Cephesi'nde meydana gelen gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.2",
+              "kazanim_adi": "Millî Mücadele Dönemi'nde Batı Cephesi'nde meydana gelen gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.3",
+              "kazanim_adi": "Millî Mücadele'nin zor bir döneminde Maarif Kongresi yapan Atatürk'ün, millî ve çağdaş eğitime verdiği önemi kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.4",
+              "kazanim_adi": "Türk milletinin millî birlik, beraberlik ve dayanışmasının bir örneği olarak Tekalif-i Millîye Emirleri doğrultusunda yapılan uygulamaları analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.5",
+              "kazanim_adi": "Sakarya Meydan Savaşı'nın kazanılmasında ve Büyük Taarruz'un başarılı olmasında Mustafa Kemal'in rolüne ilişkin çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.6",
+              "kazanim_adi": "Lozan Antlaşması'nın sağladığı kazanımları analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.3.7",
+              "kazanim_adi": "Millî Mücadele Dönemi'nin siyasi, sosyal ve kültürel olaylarının sanat ve edebiyat ürünlerine yansımalarına kanıtlar gösterir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K04",
+          "konu_adi": "4.ÜNİTE: ATATÜRKÇÜLÜK VE ÇAĞDAŞLAŞAN TÜRKİYE",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.4.1",
+              "kazanim_adi": "Çağdaşlaşan Türkiye'nin temeli olan Atatürk ilkelerini açıklar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.2",
+              "kazanim_adi": "Siyasi alanda meydana gelen gelişmeleri kavrar. iTA.8.4.3. Hukuk alanında meydana gelen gelişmelerin toplumsal hayata yansımalarını kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.4",
+              "kazanim_adi": "Eğitim ve kültür alanında yapılan inkılapları ve gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.5",
+              "kazanim_adi": "Toplumsal alanda yapılan inkılapları ve meydana gelen gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.6",
+              "kazanim_adi": "Ekonomi alanında meydana gelen gelişmeleri kavrar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.7",
+              "kazanim_adi": "Atatürk Dönemi'nde sağlık alanında yapılan çalışmaları devletin temel görevleri ile ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.8",
+              "kazanim_adi": "Cumhuriyet'in sağladığı kazanımları ve Atatürk'ün Türk milleti için gösterdiği hedeﬂeri analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.4.9",
+              "kazanim_adi": "Atatürk ilke ve inkılaplarını oluşturan temel esasları kavrar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K05",
+          "konu_adi": "5. ÜNİTE: DEMOKRATİKLEŞME ÇABALARI",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.5.1",
+              "kazanim_adi": "Atatürk Dönemi'ndeki demokratikleşme yolunda atılan adımları açıklar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.5.2",
+              "kazanim_adi": "Mustafa Kemal'e suikast girişimini analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.5.3",
+              "kazanim_adi": "Cumhuriyetin ilk yıllarında Türkiye Cumhuriyetine yönelik tehditleri analiz eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K06",
+          "konu_adi": "6. ÜNİTE: ATATÜRK DÖNEMİ TÜRK DIŞ POLİTİKASI",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.6.1",
+              "kazanim_adi": "Atatürk Dönemi Türk dış politikasının temel ilkelerini ve amaçlarını açıklar."
+            },
+            {
+              "kazanim_kodu": "İTA.8.6.2",
+              "kazanim_adi": "Atatürk Dönemi Türk dış politikasında yaşanan gelişmeleri analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.6.3",
+              "kazanim_adi": "Atatürk'ün Hatay'ı ülkemize katmak konusunda yaptıklarına ve bu uğurda gösterdiği özveriye kanıtlar gösterir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K07",
+          "konu_adi": "7. ÜNİTE: ATATÜRK'ÜN ÖLÜMÜ VE SONRASI",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "İTA.8.7.1",
+              "kazanim_adi": "Atatürk'ün ölümüne ilişkin yansıma ve değerlendirmelerden hareketle onun fikir ve eserlerinin evrensel değerine ilişkin çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "İTA.8.7.2",
+              "kazanim_adi": "Atatürk'ün Türk Milleti'ne bıraktığı eserlerinden örnekler verir."
+            },
+            {
+              "kazanim_kodu": "İTA.8.7.3",
+              "kazanim_adi": "Atatürk'ün İkinci Dünya Savaşı öncesi tespitleri ve girişimleri Türkiye'nin savaşta izlediği denge siyaseti ile ilişkilendirilir."
+            },
+            {
+              "kazanim_kodu": "İTA.8.7.4",
+              "kazanim_adi": "İkinci Dünya Savaşı'ndaki gelişmelerin ve bu savaşın sonuçlarının Türkiye'ye etkilerini analiz eder."
+            },
+            {
+              "kazanim_kodu": "İTA.8.7.5",
+              "kazanim_adi": "Türkiye'de çok partili siyasi hayata geçişi hızlandıran gelişmeleri, demokrasinin gerekleri açısından analiz eder."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -98,6 +98,22 @@ except ImportError:
     gemini_errors = None
     GEMINI_SDK_AVAILABLE = False
 
+# Kamera OMR modulunun form (PDF+QR) ureteci - Gemini gibi opsiyonel: kurulu
+# degilse sunucunun geri kalani calismaya devam eder, sadece
+# /api/teacher/omr/* uclari acik bir hata doner (bkz. asagidaki route'lar).
+try:
+    import omr_form
+    OMR_FORM_AVAILABLE = True
+except ImportError:
+    omr_form = None
+    OMR_FORM_AVAILABLE = False
+
+# Kamera OMR goruntu isleme pipeline'i - opencv-python-headless/numpy zaten
+# ZORUNLU bagimlilik (Soru Havuzu PDF kirpma icin de kullaniliyor), bu yuzden
+# omr_form'un aksine burada opsiyonel-import YOK, pdf_question_extractor gibi
+# dogrudan/zorunlu import edilir.
+import omr_pipeline
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
@@ -106,6 +122,9 @@ QUESTION_IMAGES_DIR = os.path.join(UPLOADS_DIR, "questions")
 # Bolum 4: Drive'dan cekilen soru gorselleri burada onbekleklenir - ayni
 # gorsele ikinci istekte artik Drive'a GIDILMEZ (bkz. api_drive_havuzu_image).
 DRIVE_HAVUZU_CACHE_DIR = os.path.join(UPLOADS_DIR, "drive_havuzu_cache")
+# Kamera OMR: ogretmenin telefonla cektigi ham form fotograflari - Faz 3'teki
+# goruntu isleme pipeline'i bunlari isleyecek, o zamana kadar sadece saklanir.
+OMR_SCANS_DIR = os.path.join(UPLOADS_DIR, "omr_scans")
 PORT = int(os.environ.get("PORT", 8080))
 _SERVER_STARTED_AT = datetime.now()
 
@@ -444,6 +463,9 @@ def _backfill_parent_students(conn):
 SUBJECT_SEED = [
     ("turkce", "Türkçe"), ("inkilap", "T.C. İnkılap Tarihi"), ("din", "Din Kültürü"),
     ("ingilizce", "İngilizce"), ("matematik", "Matematik"), ("fen", "Fen Bilimleri"),
+    # 5-7. sinif Sosyal Bilgiler - "tyt_sosyal" (lise, Sosyal Bilimler) ile
+    # KARISTIRILMAMALI, ayri bir ders (bkz. Optik Okuma konu/kazanim JSON'lari).
+    ("sosyal_bilgiler", "Sosyal Bilgiler"),
     ("tyt_turkce", "Türkçe"), ("tyt_sosyal", "Sosyal Bilimler"),
     ("tyt_matematik", "Temel Matematik"), ("tyt_fen", "Fen Bilimleri"),
     ("ayt_matematik", "Matematik"), ("ayt_fizik", "Fizik"), ("ayt_kimya", "Kimya"),
@@ -601,7 +623,7 @@ ROLE_PERMISSIONS_SEED = {
                     "analytics.school", "assignments.view"],
     "TEACHER": [
         "students.view", "students.view_academic_data",
-        "classes.view", "exams.view", "results.view", "analytics.view",
+        "classes.view", "exams.view", "results.view", "results.create", "analytics.view",
         "questions.view", "questions.create", "questions.update",
         "assignments.view", "assignments.create", "assignments.update",
         "assignments.cancel", "assignments.view_results",
@@ -966,6 +988,81 @@ def _create_optical_templates_table(conn):
     conn.commit()
 
 
+def _create_omr_tables(conn):
+    """Kamera ile Optik Okuma (OMR) modulu - edupusula-optik-okuma-prompt.md.
+    Mevcut 'Optik Okuyucu' (js/importOptical.js, optical_templates tablosu)
+    fiziksel tarayici cihazlarinin TXT ciktisini ayristirir; bu ise
+    ogretmenin telefon kamerasiyla cektigi kagit formu isler - ayri, yeni
+    bir veri modeli. id'ler optical_templates'teki gibi sunucuda
+    AUTOINCREMENT uretilir (students/exams/results'taki gibi istemciden
+    gelen id cakismasi riski burada yapisal olarak yok)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS omr_exam_definitions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+            grade_level TEXT,
+            topic TEXT,
+            title TEXT NOT NULL,
+            question_count INTEGER NOT NULL CHECK(question_count IN (15, 20)),
+            answer_key_json TEXT NOT NULL,
+            curriculum_range_json TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS omr_papers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exam_definition_id INTEGER NOT NULL REFERENCES omr_exam_definitions(id) ON DELETE CASCADE,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+            paper_token TEXT UNIQUE NOT NULL,
+            class_name TEXT,
+            printed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS omr_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER REFERENCES omr_papers(id) ON DELETE SET NULL,
+            exam_definition_id INTEGER NOT NULL REFERENCES omr_exam_definitions(id) ON DELETE CASCADE,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+            match_status TEXT NOT NULL DEFAULT 'pending',
+            image_path TEXT NOT NULL,
+            per_question_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','processing','needs_review','approved','rejected')),
+            reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_omr_papers_token ON omr_papers(paper_token);
+        CREATE INDEX IF NOT EXISTS idx_omr_papers_exam ON omr_papers(exam_definition_id);
+        CREATE INDEX IF NOT EXISTS idx_omr_scans_exam ON omr_scans(exam_definition_id);
+        """
+    )
+    # Faz 4: onaylanan taramalarin sonucunu mevcut results/exams altyapisina
+    # yazabilmek icin her omr_exam_definitions satirinin kendi 'exams' satirini
+    # (exam_type='optik_kamera') tutmasi gerekiyor - CREATE TABLE IF NOT EXISTS
+    # zaten var olan (Faz 1'de olusturulmus) tabloya yeni sutun eklemez, bu
+    # yuzden ayri bir ALTER TABLE migrasyonu gerekiyor (bkz. benzer desen
+    # organizations.teacher_invite_code icin yukarida).
+    omr_exam_def_cols = [r[1] for r in conn.execute("PRAGMA table_info(omr_exam_definitions)").fetchall()]
+    if "exam_id" not in omr_exam_def_cols:
+        conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN exam_id INTEGER REFERENCES exams(id)")
+    # Konu/Kazanim artik serbest metin degil, seeds/omr_konu_kazanim/*.json'dan
+    # secilen sabit bir kod+ad cifti (bkz. api_teacher_omr_curriculum_topics) -
+    # 'topic' sutunu geriye donuk uyumluluk icin konu ADINI tutmaya devam eder.
+    if "kazanim_kodu" not in omr_exam_def_cols:
+        conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_kodu TEXT")
+    if "kazanim_adi" not in omr_exam_def_cols:
+        conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_adi TEXT")
+    conn.commit()
+
+
 # ============================================================
 # Soru Havuzu (EduPusula Adaptif Öğrenme Motoru - Aşama 1)
 # ============================================================
@@ -1234,11 +1331,16 @@ def _create_question_bank_tables(conn):
     if units_cols and "grade_level_id" not in units_cols:
         conn.execute("ALTER TABLE units ADD COLUMN grade_level_id INTEGER REFERENCES grade_levels(id) ON DELETE SET NULL")
 
-    # 5-12 (ortaokul + lise) varsayilan kademe listesi - admin panelinden
+    # 5-8 (SADECE ortaokul) varsayilan kademe listesi - 2026-09-15'te
+    # kullanici istegiyle liseye (9-12) daraltildi, admin panelinden
     # sonradan duzenlenebilir/genisletilebilir, burasi sadece ilk kurulum.
+    # NOT: bu sadece SIFIR kurulumlarda calisir - zaten kurulmus (staging/
+    # prod) veritabanlarinda 9-12 satirlari varsa asagidaki okuma
+    # sorgularindaki filtre bunlari gizler (satirlar SILINMEZ, geri
+    # donusturulebilir).
     if not conn.execute("SELECT 1 FROM grade_levels LIMIT 1").fetchone():
         now_gl = datetime.now().isoformat()
-        for grade_name in ("5", "6", "7", "8", "9", "10", "11", "12"):
+        for grade_name in ("5", "6", "7", "8"):
             conn.execute("INSERT OR IGNORE INTO grade_levels (name, created_at) VALUES (?,?)", (grade_name, now_gl))
 
     # Var olan kurulumlarda booklet_code sütunu eklenmeden önce oluşturulmuş
@@ -2058,6 +2160,7 @@ def run_v2_migration(conn):
     _create_question_bank_tables(conn)
     _create_invite_tables(conn)
     _create_optical_templates_table(conn)
+    _create_omr_tables(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -4963,6 +5066,650 @@ def api_admin_delete_optical_template(template_id):
     db.commit()
     log_audit(db, "OPTICAL_TEMPLATE_DELETED", resource_type="optical_template", resource_id=template_id)
     return jsonify({"ok": True})
+
+
+# ============================================================
+# API: Öğretmen - Optik Okuma (Kamera OMR) - Faz 1: test tanımlama +
+# basılı form üretimi. Kamera/CV pipeline sonraki fazlarda buraya bağlanır
+# (bkz. edupusula-optik-okuma-prompt.md). js/importOptical.js'deki mevcut
+# "Optik Okuyucu" ile İLGİSİZ - o fiziksel tarayıcı cihazlarının TXT
+# çıktısını okur, bu ise telefon kamerasıyla çekilen kağıdı.
+# ============================================================
+
+def _require_omr_form():
+    if not OMR_FORM_AVAILABLE:
+        return jsonify({"error": "Optik form üretici sunucuda kurulu değil "
+                                  "(reportlab/qrcode eksik). Lütfen sunucu "
+                                  "yöneticisine bildirin."}), 503
+    return None
+
+
+@app.route("/api/teacher/omr/meta")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_meta():
+    db = get_db()
+    # Site sadece ortaokulu (5-8) hedefliyor (2026-09-15, kullanici istegi) -
+    # lise/TYT/AYT dersleri (subjects.code 'tyt_'/'ayt_' ile baslar) ve 9-12.
+    # sinif SATIRLARI SILINMEDI, sadece bu ve benzeri listeleme uclarindan
+    # gizlendi (bkz. api_question_bank_grade_levels'taki ayni desen).
+    subjects = db.execute(
+        "SELECT id, name, code FROM subjects "
+        "WHERE code NOT LIKE 'tyt_%' AND code NOT LIKE 'ayt_%' ORDER BY name"
+    ).fetchall()
+    grade_levels = db.execute(
+        "SELECT id, name FROM grade_levels WHERE CAST(name AS INTEGER) <= 8 "
+        "ORDER BY CAST(name AS INTEGER)"
+    ).fetchall()
+    return jsonify({
+        "subjects": [dict(r) for r in subjects],
+        "gradeLevels": [dict(r) for r in grade_levels],
+    })
+
+
+# Optik Okuma "Konu/Kazanım" secimi - Soru Havuzu'nun curriculum_nodes DB
+# agacindan BAGIMSIZ, kullanicinin verdigi statik JSON dosyalarindan okunur
+# (bkz. seeds/omr_konu_kazanim/). subjects.code -> dosya adi eslemesi.
+_OMR_CURRICULUM_FILES = {
+    "matematik": "soru_etiketleri_matematik.json",
+    "fen": "soru_etiketleri_fen_bilimleri.json",
+    "sosyal_bilgiler": "soru_etiketleri_sosyal_bilgiler.json",
+    "inkilap": "soru_etiketleri_tc_inkilap_tarihi.json",
+}
+_OMR_CURRICULUM_CACHE = {}
+
+
+def _load_omr_curriculum(subject_code):
+    if subject_code not in _OMR_CURRICULUM_FILES:
+        return None
+    if subject_code in _OMR_CURRICULUM_CACHE:
+        return _OMR_CURRICULUM_CACHE[subject_code]
+    path = os.path.join(BASE_DIR, "seeds", "omr_konu_kazanim", _OMR_CURRICULUM_FILES[subject_code])
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    _OMR_CURRICULUM_CACHE[subject_code] = data
+    return data
+
+
+@app.route("/api/teacher/omr/curriculum-topics")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_curriculum_topics():
+    """Ders+sinifa gore konu listesini (her konunun kendi kazanimlariyla
+    birlikte) doner - ogretmen konu secince kazanim secenekleri ayri bir
+    istek atmadan (bkz. js/teacher/omrDefine.js) client-side filtrelenir."""
+    db = get_db()
+    subject_id = request.args.get("subjectId", type=int)
+    grade_level = request.args.get("gradeLevel")
+    if not subject_id or not grade_level:
+        return jsonify({"error": "Ders ve sınıf seviyesi gerekli."}), 400
+    subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+    if not subject_row:
+        return jsonify({"error": "Geçersiz ders."}), 400
+    data = _load_omr_curriculum(subject_row["code"])
+    if not data:
+        return jsonify({"konular": []})
+    grade_data = (data.get("siniflar") or {}).get(str(grade_level))
+    return jsonify({"konular": (grade_data or {}).get("konular") or []})
+
+
+@app.route("/api/teacher/omr/exams", methods=["GET"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_list_exams():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    rows = db.execute(
+        "SELECT e.id, e.title, e.topic, e.kazanim_adi, e.grade_level, e.question_count, e.created_at, "
+        "s.name AS subject_name FROM omr_exam_definitions e "
+        "LEFT JOIN subjects s ON s.id = e.subject_id "
+        "WHERE e.organization_id = ? ORDER BY e.created_at DESC",
+        (org_id,),
+    ).fetchall()
+    return jsonify({"exams": [dict(r) for r in rows]})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>", methods=["GET"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_get_exam(exam_def_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    row = db.execute(
+        "SELECT * FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    result = dict(row)
+    result["answerKey"] = json.loads(result.pop("answer_key_json") or "{}")
+    result["curriculumRange"] = json.loads(result.pop("curriculum_range_json") or "null")
+    return jsonify(result)
+
+
+@app.route("/api/teacher/omr/exams", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_create_exam():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    question_count = data.get("questionCount")
+    answer_key = data.get("answerKey")
+    subject_id = data.get("subjectId")
+    grade_level = (data.get("gradeLevel") or "").strip() or None
+    topic = (data.get("topic") or "").strip() or None
+    kazanim_kodu = (data.get("kazanimKodu") or "").strip() or None
+    kazanim_adi = (data.get("kazanimAdi") or "").strip() or None
+    curriculum_range = data.get("curriculumRange")
+
+    if not title:
+        return jsonify({"error": "Test adı gerekli."}), 400
+    if question_count not in (15, 20):
+        return jsonify({"error": "Soru sayısı 15 ya da 20 olmalı."}), 400
+    if not isinstance(answer_key, dict) or not answer_key:
+        return jsonify({"error": "Cevap anahtarı gerekli."}), 400
+    for q_no in range(1, question_count + 1):
+        ans = answer_key.get(str(q_no))
+        if ans not in ("A", "B", "C", "D"):
+            return jsonify({"error": f"{q_no}. sorunun cevabı eksik ya da geçersiz."}), 400
+    if subject_id is not None:
+        subject_row = db.execute("SELECT id FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+        if not subject_row:
+            return jsonify({"error": "Geçersiz ders."}), 400
+    if curriculum_range is not None and not isinstance(curriculum_range, list):
+        return jsonify({"error": "Geçersiz kazanım aralığı."}), 400
+
+    now = datetime.now().isoformat()
+
+    # Onaylanan taramalarin sonucunu mevcut Raporlar/analiz ekranlarinda
+    # gosterebilmek icin (bkz. Faz 4) her OMR test tanimi kendi 'exams'
+    # satirina baglanir - boylece api_teacher_omr_approve_scan sonucu
+    # DOGRUDAN mevcut results tablosuna, sanki sıradan bir deneme gibi
+    # yazabilir.
+    exam_id = _platform_admin_next_id(db, "exams", org_id)
+    db.execute(
+        "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) VALUES (?,?,?,?,?,?,?)",
+        # data_json='{}' (NULL DEGIL): _build_student_report gibi mevcut
+        # raporlama kodu exams.data_json'in HER ZAMAN gecerli JSON oldugunu
+        # varsayip dogrudan json.loads() cagiriyor - NULL birakilsaydi bu,
+        # o ogrencinin herhangi bir raporunu (hatta sunucu baslarken
+        # calisan sync_derived_tables'i) TypeError ile cokertirdi (gercek
+        # bir testte dogrulandi).
+        (exam_id, org_id, title, now[:10], "optik_kamera", "{}", "omr_scan"),
+    )
+
+    cur = db.execute(
+        "INSERT INTO omr_exam_definitions (organization_id, subject_id, grade_level, topic, title, "
+        "question_count, answer_key_json, curriculum_range_json, created_by, created_at, exam_id, "
+        "kazanim_kodu, kazanim_adi) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (org_id, subject_id, grade_level, topic, title, question_count,
+         json.dumps(answer_key, ensure_ascii=False),
+         json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None,
+         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi),
+    )
+    db.commit()
+    log_audit(db, "OMR_EXAM_DEFINITION_CREATED", resource_type="omr_exam_definition", resource_id=cur.lastrowid)
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/papers", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_generate_papers(exam_def_id):
+    unavailable = _require_omr_form()
+    if unavailable:
+        return unavailable
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    exam_def = db.execute(
+        "SELECT id, title FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    student_ids = data.get("studentIds")
+    if not isinstance(student_ids, list) or not student_ids:
+        return jsonify({"error": "En az bir öğrenci seçilmeli."}), 400
+
+    # Ogretmenin SADECE kendi erisebildigi ogrenciler icin form uretebilmesi
+    # gerekir (bkz. get_allowed_student_ids) - aksi halde baska bir sinifin/
+    # okulun ogrencisine kagit atanabilirdi.
+    allowed_ids = get_allowed_student_ids(db)
+    if allowed_ids is not None:
+        student_ids = [sid for sid in student_ids if sid in allowed_ids]
+    if not student_ids:
+        return jsonify({"error": "Seçilen öğrencilere erişiminiz yok."}), 403
+
+    placeholders = ",".join("?" * len(student_ids))
+    students = db.execute(
+        f"SELECT id, first_name, last_name, class_name FROM students "
+        f"WHERE id IN ({placeholders}) AND organization_id = ?",
+        (*student_ids, org_id),
+    ).fetchall()
+    if not students:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    now = datetime.now().isoformat()
+    papers_for_pdf = []
+    for s in students:
+        token = secrets.token_urlsafe(12)
+        db.execute(
+            "INSERT INTO omr_papers (exam_definition_id, organization_id, student_id, paper_token, "
+            "class_name, printed_at) VALUES (?,?,?,?,?,?)",
+            (exam_def_id, org_id, s["id"], token, s["class_name"], now),
+        )
+        papers_for_pdf.append({
+            "paper_token": token,
+            "student_name": f"{s['first_name'] or ''} {s['last_name'] or ''}".strip(),
+            "class_name": s["class_name"] or "",
+        })
+    db.commit()
+    log_audit(db, "OMR_PAPERS_GENERATED", resource_type="omr_exam_definition", resource_id=exam_def_id)
+
+    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"])
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="optik-form-{exam_def_id}.pdf"'},
+    )
+
+
+_OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def _grade_omr_questions(questions, answer_key):
+    """omr_pipeline'in ham okumasini (her soru icin isaretlenen sik + durum)
+    cevap anahtariyla karsilastirip dogru/yanlis/bos/cift-isaret/belirsiz
+    hesaplar. answer_key: {'1':'A', '2':'C', ...}."""
+    graded = []
+    correct = wrong = blank = flagged = 0
+    for q in questions:
+        q_no = q["question"]
+        key_ans = answer_key.get(str(q_no))
+        if q["status"] == "blank":
+            outcome = "blank"
+            blank += 1
+        elif q["status"] in ("multi", "ambiguous"):
+            outcome = q["status"]
+            flagged += 1
+        elif q["answer"] == key_ans:
+            outcome = "correct"
+            correct += 1
+        else:
+            outcome = "wrong"
+            wrong += 1
+        graded.append({**q, "keyAnswer": key_ans, "outcome": outcome})
+    return graded, {"correct": correct, "wrong": wrong, "blank": blank, "flagged": flagged}
+
+
+@app.route("/api/teacher/omr/scans", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_upload_scan():
+    """Kamera ile cekilen ham form fotografini kabul edip gercek OMR
+    pipeline'iyla (omr_pipeline.py) isler: perspektif duzeltme, QR/4-haneli-no
+    ile kimlik cozumu, bubble okuma, cevap anahtariyla notlandirma. Sonuc
+    HER ZAMAN 'needs_review' olarak kaydedilir - ogretmen onayi (Faz 4)
+    olmadan hicbir sonuc kalici sayilmaz. Mobil taraftaki offline kuyruk,
+    baglanti gelince bu ucu tekrar tekrar deneyerek bosaltilir (bkz.
+    js/teacher/omrScan.js)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    exam_def_id = request.form.get("examDefinitionId", type=int)
+    if not exam_def_id:
+        return jsonify({"error": "Test tanımı belirtilmedi."}), 400
+    exam_def = db.execute(
+        "SELECT id, question_count, answer_key_json FROM omr_exam_definitions "
+        "WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    image = request.files.get("image")
+    if not image or not image.filename:
+        return jsonify({"error": "Görüntü eksik."}), 400
+    ext = os.path.splitext(secure_filename(image.filename))[1].lower()
+    if ext not in _OMR_SCAN_ALLOWED_EXT:
+        ext = ".jpg"
+
+    os.makedirs(OMR_SCANS_DIR, exist_ok=True)
+    filename = f"{secrets.token_hex(16)}{ext}"
+    image_path = os.path.join(OMR_SCANS_DIR, filename)
+    image_bytes = image.read()
+    with open(image_path, "wb") as f:
+        f.write(image_bytes)
+
+    match_status = "unmatched"
+    student_id = None
+    paper_id = None
+    per_question_payload = None
+    warnings = []
+
+    try:
+        result = omr_pipeline.process_scan_image(image_bytes, exam_def["question_count"])
+    except omr_pipeline.OmrReadError as exc:
+        warnings.append(str(exc))
+        result = None
+    except Exception:
+        traceback.print_exc()
+        warnings.append("Görüntü işlenirken beklenmeyen bir hata oluştu.")
+        result = None
+
+    if result:
+        warnings.extend(result["warnings"])
+        answer_key = json.loads(exam_def["answer_key_json"] or "{}")
+        graded_questions, summary = _grade_omr_questions(result["questions"], answer_key)
+
+        if result["match_status"] == "matched_qr":
+            paper = db.execute(
+                "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
+                "AND exam_definition_id = ? AND organization_id = ?",
+                (result["paper_token"], exam_def_id, org_id),
+            ).fetchone()
+            if paper:
+                paper_id, student_id, match_status = paper["id"], paper["student_id"], "matched_qr"
+            else:
+                warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
+        elif result["match_status"] == "matched_id_digits":
+            norm_no = _normalize_school_no_py(result["id_digits"])
+            candidates = db.execute(
+                "SELECT id, school_number FROM students WHERE organization_id = ?", (org_id,)
+            ).fetchall()
+            # okul no normalize edilerek (bastaki sifirlar/ondalik farki
+            # gormezden gelinerek) karsilastirilir - mevcut Optik Okuyucu
+            # ile ayni mantik (bkz. _normalize_school_no_py).
+            matches = [c["id"] for c in candidates
+                       if norm_no and _normalize_school_no_py(c["school_number"]) == norm_no]
+            if len(matches) == 1:
+                student_id, match_status = matches[0], "matched_id_digits"
+            elif len(matches) > 1:
+                warnings.append("4 haneli numara birden fazla öğrenciyle eşleşti - manuel seçim gerekiyor.")
+            else:
+                warnings.append("4 haneli numara okulda kayıtlı bir öğrenciyle eşleşmedi.")
+
+        per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
+                                           ensure_ascii=False)
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO omr_scans (paper_id, exam_definition_id, organization_id, student_id, match_status, "
+        "image_path, per_question_json, status, created_by, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (paper_id, exam_def_id, org_id, student_id, match_status, filename, per_question_payload,
+         "needs_review", session["user_id"], now, now),
+    )
+    db.commit()
+    log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
+    return jsonify({
+        "ok": True, "id": cur.lastrowid, "status": "needs_review",
+        "matchStatus": match_status, "studentId": student_id, "warnings": warnings,
+    }), 201
+
+
+# ============================================================
+# API: Öğretmen - Optik Okuma (Faz 4: inceleme/onay)
+# ============================================================
+
+def _get_owned_omr_scan(db, scan_id, org_id):
+    return db.execute(
+        "SELECT * FROM omr_scans WHERE id = ? AND organization_id = ?", (scan_id, org_id)
+    ).fetchone()
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/scans")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_list_scans(exam_def_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    rows = db.execute(
+        "SELECT sc.id, sc.match_status, sc.status, sc.student_id, sc.created_at, "
+        "st.first_name, st.last_name, st.school_number, st.class_name "
+        "FROM omr_scans sc LEFT JOIN students st ON st.id = sc.student_id "
+        "WHERE sc.exam_definition_id = ? AND sc.organization_id = ? ORDER BY sc.created_at DESC",
+        (exam_def_id, org_id),
+    ).fetchall()
+    printed_count = db.execute(
+        "SELECT COUNT(*) c FROM omr_papers WHERE exam_definition_id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()["c"]
+    return jsonify({"scans": [dict(r) for r in rows], "printedCount": printed_count})
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_get_scan(scan_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    exam_def = db.execute(
+        "SELECT title, question_count, answer_key_json FROM omr_exam_definitions WHERE id = ?",
+        (scan["exam_definition_id"],),
+    ).fetchone()
+    student = None
+    if scan["student_id"]:
+        srow = db.execute(
+            "SELECT id, first_name, last_name, school_number, class_name FROM students WHERE id = ?",
+            (scan["student_id"],),
+        ).fetchone()
+        student = dict(srow) if srow else None
+    result = dict(scan)
+    result["perQuestion"] = json.loads(result.pop("per_question_json") or "null")
+    result["examTitle"] = exam_def["title"] if exam_def else None
+    result["student"] = student
+    return jsonify(result)
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/image")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_scan_image(scan_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    return send_from_directory(OMR_SCANS_DIR, scan["image_path"])
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/assign", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_assign_scan(scan_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    if scan["status"] != "needs_review":
+        return jsonify({"error": "Bu tarama zaten onaylanmış/reddedilmiş."}), 409
+
+    data = request.get_json(silent=True) or {}
+    student_id = data.get("studentId")
+    student = db.execute(
+        "SELECT id FROM students WHERE id = ? AND organization_id = ?", (student_id, org_id)
+    ).fetchone()
+    if not student:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    db.execute(
+        "UPDATE omr_scans SET student_id = ?, match_status = 'manual', updated_at = ? WHERE id = ?",
+        (student_id, datetime.now().isoformat(), scan_id),
+    )
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/corrections", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_correct_scan(scan_id):
+    """Supheli (cift-isaret/belirsiz) ya da yanlis okunmus tek tek sorulari
+    ogretmenin elle duzeltmesi icin - bkz. spesifikasyon bolum 4.8."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    if scan["status"] != "needs_review":
+        return jsonify({"error": "Bu tarama zaten onaylanmış/reddedilmiş."}), 409
+    if not scan["per_question_json"]:
+        return jsonify({"error": "Bu tarama için okunmuş soru verisi yok."}), 400
+
+    data = request.get_json(silent=True) or {}
+    corrections = data.get("corrections")
+    if not isinstance(corrections, dict):
+        return jsonify({"error": "Geçersiz düzeltme verisi."}), 400
+
+    exam_def = db.execute(
+        "SELECT answer_key_json FROM omr_exam_definitions WHERE id = ?",
+        (scan["exam_definition_id"],),
+    ).fetchone()
+    answer_key = json.loads(exam_def["answer_key_json"] or "{}")
+
+    payload = json.loads(scan["per_question_json"])
+    by_number = {str(q["question"]): q for q in payload["questions"]}
+    for q_no, ans in corrections.items():
+        if ans not in ("A", "B", "C", "D", None):
+            return jsonify({"error": f"{q_no}. soru için geçersiz cevap."}), 400
+        q = by_number.get(str(q_no))
+        if not q:
+            continue
+        q["answer"] = ans
+        q["status"] = "single" if ans else "blank"
+        q["outcome"] = "blank" if not ans else ("correct" if ans == answer_key.get(str(q_no)) else "wrong")
+
+    correct = sum(1 for q in payload["questions"] if q["outcome"] == "correct")
+    wrong = sum(1 for q in payload["questions"] if q["outcome"] == "wrong")
+    blank = sum(1 for q in payload["questions"] if q["outcome"] == "blank")
+    flagged = sum(1 for q in payload["questions"] if q["outcome"] in ("multi", "ambiguous"))
+    payload["summary"] = {"correct": correct, "wrong": wrong, "blank": blank, "flagged": flagged}
+
+    db.execute(
+        "UPDATE omr_scans SET per_question_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(payload, ensure_ascii=False), datetime.now().isoformat(), scan_id),
+    )
+    db.commit()
+    return jsonify({"ok": True, "summary": payload["summary"]})
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/reject", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_reject_scan(scan_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    if scan["status"] != "needs_review":
+        return jsonify({"error": "Bu tarama zaten onaylanmış/reddedilmiş."}), 409
+    db.execute(
+        "UPDATE omr_scans SET status = 'rejected', reviewed_by = ?, updated_at = ? WHERE id = ?",
+        (session["user_id"], datetime.now().isoformat(), scan_id),
+    )
+    db.commit()
+    log_audit(db, "OMR_SCAN_REJECTED", resource_type="omr_scan", resource_id=scan_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/approve", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_approve_scan(scan_id):
+    """Ogretmenin ONAYLA demesiyle: ozet dogru/yanlis/bos/net mevcut results
+    tablosuna (sanki siradan bir deneme sonucuymus gibi) yazilir - boylece
+    mevcut Raporlar/analiz ekranlari bunu otomatik gosterir. per_question_json
+    (soru-bazli detay) omr_scans'te kalici olarak saklanmaya devam eder."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    if scan["status"] != "needs_review":
+        return jsonify({"error": "Bu tarama zaten onaylanmış/reddedilmiş."}), 409
+    if not scan["student_id"]:
+        return jsonify({"error": "Onaylamadan önce bir öğrenci atayın."}), 400
+    if not scan["per_question_json"]:
+        return jsonify({"error": "Bu tarama için okunmuş soru verisi yok."}), 400
+
+    exam_def = db.execute(
+        "SELECT exam_id, subject_id FROM omr_exam_definitions WHERE id = ?",
+        (scan["exam_definition_id"],),
+    ).fetchone()
+    if not exam_def or not exam_def["exam_id"]:
+        return jsonify({"error": "Bu teste bağlı bir deneme kaydı bulunamadı."}), 500
+
+    subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (exam_def["subject_id"],)).fetchone()
+    subject_key = subject_row["code"] if subject_row else "optik"
+
+    payload = json.loads(scan["per_question_json"])
+    summary = payload["summary"]
+    correct, wrong, blank = summary["correct"], summary["wrong"], summary["blank"] + summary["flagged"]
+    net = max(0, round(correct - wrong / 3, 2))
+
+    exam_id = exam_def["exam_id"]
+    existing = db.execute(
+        "SELECT id, source FROM results WHERE student_id = ? AND exam_id = ?",
+        (scan["student_id"], exam_id),
+    ).fetchone()
+    if existing and existing["source"] == "browser_sync":
+        return jsonify({"error": "Bu öğrenci/deneme için okulun kendi verisinden zaten bir sonuç var."}), 409
+
+    subjects_payload = {subject_key: {"correct": correct, "wrong": wrong, "blank": blank, "net": net}}
+    result_payload = {"studentId": scan["student_id"], "examId": exam_id, "subjects": subjects_payload}
+    if existing:
+        result_id = existing["id"]
+        result_payload["id"] = result_id
+        db.execute("UPDATE results SET data_json = ? WHERE id = ?",
+                   (json.dumps(result_payload, ensure_ascii=False), result_id))
+    else:
+        result_id = _platform_admin_next_id(db, "results", org_id)
+        result_payload["id"] = result_id
+        db.execute(
+            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) "
+            "VALUES (?,?,?,?,?,'omr_scan')",
+            (result_id, org_id, scan["student_id"], exam_id, json.dumps(result_payload, ensure_ascii=False)),
+        )
+
+    db.execute(
+        "UPDATE omr_scans SET status = 'approved', reviewed_by = ?, updated_at = ? WHERE id = ?",
+        (session["user_id"], datetime.now().isoformat(), scan_id),
+    )
+    db.commit()
+    log_audit(db, "OMR_SCAN_APPROVED", resource_type="omr_scan", resource_id=scan_id)
+    return jsonify({"ok": True, "resultId": result_id, "net": net})
 
 
 # ============================================================
@@ -8972,7 +9719,15 @@ def api_question_bank_bulk_tag():
 @login_required(role="admin", permission="questions.view")
 def api_question_bank_grade_levels():
     db = get_db()
-    rows = db.execute("SELECT id, name FROM grade_levels ORDER BY CAST(name AS INTEGER)").fetchall()
+    # Site sadece ortaokulu (5-8) hedefliyor (2026-09-15, kullanici istegi) -
+    # 9-12 satirlari SILINMEDI (geriye donusturulebilir), sadece bu listeleme
+    # ucundan gizleniyor. SQLite'ta CAST(metin AS INTEGER) sayisal olmayan
+    # bir deger icin 0 doner, bu yuzden elle eklenmis ozel (sayisal olmayan)
+    # isimler <=8 kosuluna zaten takilmadan gecer.
+    rows = db.execute(
+        "SELECT id, name FROM grade_levels WHERE CAST(name AS INTEGER) <= 8 "
+        "ORDER BY CAST(name AS INTEGER)"
+    ).fetchall()
     return jsonify({"gradeLevels": [dict(r) for r in rows]})
 
 
@@ -9129,7 +9884,7 @@ def api_question_bank_create_learning_outcome():
 # ============================================================
 
 @app.route("/api/admin/question-bank/curriculum")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "teacher", "super_admin"), permission="questions.view")
 def api_question_bank_curriculum():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)

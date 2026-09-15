@@ -65,6 +65,7 @@
         analytics: ['Analizler', 'Sınıf Karşılaştırma & Konu Analizi'],
         students: ['Öğrenciler', 'Sıralı Öğrenci Listesi & Detaylı İnceleme'],
         exams: ['Denemeler', 'Deneme Sonuçları'],
+        omr: ['Optik Okuma', 'Kırtasiye Testi Tanımla & Form Yazdır'],
         message: ['Mesaj Gönder', 'Öğrenciye Özel Mesaj'],
         assignments: ['Ödevler', 'Ödev Oluştur & Sonuçları Gör'],
         topics: ['Konular', 'Yakında'],
@@ -86,6 +87,7 @@
         item.addEventListener('click', () => {
           showPage(item.dataset.page);
           if (item.dataset.page === 'assignments') renderAssignmentsPage();
+          if (item.dataset.page === 'omr') renderOmrDefinePage();
         });
       });
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
@@ -131,7 +133,12 @@
       setupNav();
 
       const me = await fetch('/api/me').then(r => r.json());
-      if (!me.authenticated || me.role !== 'teacher') {
+      // Eskiden SADECE role==='teacher' kabul edilirdi - admin/super_admin
+      // buraya hic giremiyordu (Optik Okuma dahil butun Ogretmen Paneli).
+      // Backend uclari (/api/teacher/overview vb.) zaten admin/super_admin'i
+      // destekliyordu (bkz. api_teacher_overview'daki role ayrimi) - sadece
+      // bu on-yuz kapisi gereksiz yere dardi.
+      if (!me.authenticated || !['teacher', 'admin', 'super_admin'].includes(me.role)) {
         window.location.href = '/login.html';
         return;
       }
