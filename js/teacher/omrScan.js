@@ -237,13 +237,35 @@ function _omrAnalyzeFrame(ctx, w, h) {
     [frameLeft, frameTop + frameH - cornerSize],
     [frameLeft + frameW - cornerSize, frameTop + frameH - cornerSize],
   ].map(([x, y]) => [Math.round(x), Math.round(y)]);
+
+  // KRITIK: sadece "4 kosede koyu piksel var mi" kontrolu YETERSIZ - gercek
+  // kullanimda kamera klavye/masa gibi genel olarak koyu/dokulu bir sahneye
+  // baktiginda da yanlislikla tetikleniyordu (gercek bir olayla dogrulandi -
+  // 26 yuklemenin cogu kagit degil klavye fotografiydi). Beyaz
+  // kağıdın AYIRT EDICI ozelligi "koyu kose + PARLAK ORTA" kontrastidir, salt
+  // koyu bir sahnede boyle bir kontrast olmaz - bu yuzden once merkezin
+  // (kagidin govdesi) yeterince parlak/beyaz oldugu dogrulanir, kose
+  // koyulugu da mutlak bir esik yerine bu merkeze GORECELI olcülür.
+  const centerSize = Math.round(Math.min(frameW, frameH) * 0.25);
+  const centerX = Math.round(frameLeft + frameW / 2 - centerSize / 2);
+  const centerY = Math.round(frameTop + frameH / 2 - centerSize / 2);
+  let centerSum = 0, centerTotal = 0;
+  for (let y = centerY; y < centerY + centerSize && y < h; y++) {
+    for (let x = centerX; x < centerX + centerSize && x < w; x++) {
+      centerSum += gray[y * w + x];
+      centerTotal++;
+    }
+  }
+  const centerBrightness = centerTotal > 0 ? centerSum / centerTotal : 0;
+
   let darkCorners = 0;
+  const darkThreshold = Math.min(110, centerBrightness - 45);
   for (const [cx, cy] of corners) {
     let darkPixels = 0, total = 0;
     for (let y = cy; y < cy + cornerSize && y < h; y++) {
       for (let x = cx; x < cx + cornerSize && x < w; x++) {
         total++;
-        if (gray[y * w + x] < 90) darkPixels++;
+        if (gray[y * w + x] < darkThreshold) darkPixels++;
       }
     }
     if (total > 0 && darkPixels / total > 0.15) darkCorners++;
@@ -252,7 +274,8 @@ function _omrAnalyzeFrame(ctx, w, h) {
   if (brightness < 60) return { ready: false, hint: 'Işığı artırın' };
   if (brightness > 235) return { ready: false, hint: 'Işığı azaltın / parlamayı önleyin' };
   if (sharpness < 8) return { ready: false, hint: 'Telefonu sabit tutun' };
-  if (darkCorners < 3) return { ready: false, hint: 'Kağıdın 4 köşesini çerçeveye alın' };
+  if (centerBrightness < 140) return { ready: false, hint: 'Kağıdı çerçeveye ortalayın' };
+  if (darkCorners < 4) return { ready: false, hint: 'Kağıdın 4 köşesini çerçeveye alın' };
   return { ready: true, hint: 'Hazır - otomatik çekiliyor...' };
 }
 

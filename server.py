@@ -108,6 +108,12 @@ except ImportError:
     omr_form = None
     OMR_FORM_AVAILABLE = False
 
+# Kamera OMR goruntu isleme pipeline'i - opencv-python-headless/numpy zaten
+# ZORUNLU bagimlilik (Soru Havuzu PDF kirpma icin de kullaniliyor), bu yuzden
+# omr_form'un aksine burada opsiyonel-import YOK, pdf_question_extractor gibi
+# dogrudan/zorunlu import edilir.
+import omr_pipeline
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
@@ -5223,14 +5229,40 @@ def api_teacher_omr_generate_papers(exam_def_id):
 _OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
 
+def _grade_omr_questions(questions, answer_key):
+    """omr_pipeline'in ham okumasini (her soru icin isaretlenen sik + durum)
+    cevap anahtariyla karsilastirip dogru/yanlis/bos/cift-isaret/belirsiz
+    hesaplar. answer_key: {'1':'A', '2':'C', ...}."""
+    graded = []
+    correct = wrong = blank = flagged = 0
+    for q in questions:
+        q_no = q["question"]
+        key_ans = answer_key.get(str(q_no))
+        if q["status"] == "blank":
+            outcome = "blank"
+            blank += 1
+        elif q["status"] in ("multi", "ambiguous"):
+            outcome = q["status"]
+            flagged += 1
+        elif q["answer"] == key_ans:
+            outcome = "correct"
+            correct += 1
+        else:
+            outcome = "wrong"
+            wrong += 1
+        graded.append({**q, "keyAnswer": key_ans, "outcome": outcome})
+    return graded, {"correct": correct, "wrong": wrong, "blank": blank, "flagged": flagged}
+
+
 @app.route("/api/teacher/omr/scans", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_upload_scan():
-    """Faz 2 (kamera yakalama) icin kabul ucu - Faz 3'teki gercek OpenCV
-    pipeline'i devreye girene kadar goruntu SADECE saklanir, satir dogrudan
-    'needs_review' olarak isaretlenir (henuz otomatik okuma yok, ogretmen
-    manuel gozden gecirecek). Mobil taraftaki offline kuyruk, baglanti
-    gelince bu ucu tekrar tekrar deneyerek bosaltilir (bkz.
+    """Kamera ile cekilen ham form fotografini kabul edip gercek OMR
+    pipeline'iyla (omr_pipeline.py) isler: perspektif duzeltme, QR/4-haneli-no
+    ile kimlik cozumu, bubble okuma, cevap anahtariyla notlandirma. Sonuc
+    HER ZAMAN 'needs_review' olarak kaydedilir - ogretmen onayi (Faz 4)
+    olmadan hicbir sonuc kalici sayilmaz. Mobil taraftaki offline kuyruk,
+    baglanti gelince bu ucu tekrar tekrar deneyerek bosaltilir (bkz.
     js/teacher/omrScan.js)."""
     db = get_db()
     org_id = _effective_org_id(db)
@@ -5241,7 +5273,8 @@ def api_teacher_omr_upload_scan():
     if not exam_def_id:
         return jsonify({"error": "Test tanımı belirtilmedi."}), 400
     exam_def = db.execute(
-        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        "SELECT id, question_count, answer_key_json FROM omr_exam_definitions "
+        "WHERE id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()
     if not exam_def:
@@ -5257,17 +5290,75 @@ def api_teacher_omr_upload_scan():
     os.makedirs(OMR_SCANS_DIR, exist_ok=True)
     filename = f"{secrets.token_hex(16)}{ext}"
     image_path = os.path.join(OMR_SCANS_DIR, filename)
-    image.save(image_path)
+    image_bytes = image.read()
+    with open(image_path, "wb") as f:
+        f.write(image_bytes)
+
+    match_status = "unmatched"
+    student_id = None
+    paper_id = None
+    per_question_payload = None
+    warnings = []
+
+    try:
+        result = omr_pipeline.process_scan_image(image_bytes, exam_def["question_count"])
+    except omr_pipeline.OmrReadError as exc:
+        warnings.append(str(exc))
+        result = None
+    except Exception:
+        traceback.print_exc()
+        warnings.append("Görüntü işlenirken beklenmeyen bir hata oluştu.")
+        result = None
+
+    if result:
+        warnings.extend(result["warnings"])
+        answer_key = json.loads(exam_def["answer_key_json"] or "{}")
+        graded_questions, summary = _grade_omr_questions(result["questions"], answer_key)
+
+        if result["match_status"] == "matched_qr":
+            paper = db.execute(
+                "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
+                "AND exam_definition_id = ? AND organization_id = ?",
+                (result["paper_token"], exam_def_id, org_id),
+            ).fetchone()
+            if paper:
+                paper_id, student_id, match_status = paper["id"], paper["student_id"], "matched_qr"
+            else:
+                warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
+        elif result["match_status"] == "matched_id_digits":
+            norm_no = _normalize_school_no_py(result["id_digits"])
+            candidates = db.execute(
+                "SELECT id, school_number FROM students WHERE organization_id = ?", (org_id,)
+            ).fetchall()
+            # okul no normalize edilerek (bastaki sifirlar/ondalik farki
+            # gormezden gelinerek) karsilastirilir - mevcut Optik Okuyucu
+            # ile ayni mantik (bkz. _normalize_school_no_py).
+            matches = [c["id"] for c in candidates
+                       if norm_no and _normalize_school_no_py(c["school_number"]) == norm_no]
+            if len(matches) == 1:
+                student_id, match_status = matches[0], "matched_id_digits"
+            elif len(matches) > 1:
+                warnings.append("4 haneli numara birden fazla öğrenciyle eşleşti - manuel seçim gerekiyor.")
+            else:
+                warnings.append("4 haneli numara okulda kayıtlı bir öğrenciyle eşleşmedi.")
+
+        per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
+                                           ensure_ascii=False)
 
     now = datetime.now().isoformat()
     cur = db.execute(
-        "INSERT INTO omr_scans (exam_definition_id, organization_id, match_status, image_path, "
-        "status, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        (exam_def_id, org_id, "pending", filename, "needs_review", session["user_id"], now, now),
+        "INSERT INTO omr_scans (paper_id, exam_definition_id, organization_id, student_id, match_status, "
+        "image_path, per_question_json, status, created_by, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (paper_id, exam_def_id, org_id, student_id, match_status, filename, per_question_payload,
+         "needs_review", session["user_id"], now, now),
     )
     db.commit()
     log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
-    return jsonify({"ok": True, "id": cur.lastrowid, "status": "needs_review"}), 201
+    return jsonify({
+        "ok": True, "id": cur.lastrowid, "status": "needs_review",
+        "matchStatus": match_status, "studentId": student_id, "warnings": warnings,
+    }), 201
 
 
 # ============================================================

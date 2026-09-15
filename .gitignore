@@ -13,6 +13,7 @@ deneme_sonuclari.csv
 !soru_havuzu_drive.py
 !soru_havuzu_merge.py
 !omr_form.py
+!omr_pipeline.py
 __pycache__/
 
 # Soru Havuzu: yüklenen kaynak PDF'ler ve kırpılan soru görüntüleri -
