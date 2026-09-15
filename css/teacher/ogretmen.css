@@ -392,3 +392,64 @@
       .hero-info h2, .student-name-main { color: #000 !important; }
       table.simple-table th, table.simple-table td, table.ranked-table th, table.ranked-table td { color: #000 !important; border-color: #cbd5e1 !important; }
     }
+
+/* ============================================================
+   Optik Okuma - Cevap Anahtarı optik taslağı
+   Basılı forma (bkz. omr_form.py) görsel olarak benzeyen, tıklanabilir
+   bubble sheet mockup'ı - öğretmen doğru şıkkı gerçek kağıttaki gibi
+   işaretler.
+   ============================================================ */
+.omr-sheet {
+  background: var(--bg-glass);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--border-radius, 14px);
+  padding: 16px;
+  overflow-x: auto;
+}
+.omr-sheet-cols {
+  display: flex;
+  gap: 32px;
+  min-width: max-content;
+}
+.omr-sheet-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.omr-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.omr-sheet-qnum {
+  min-width: 22px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: right;
+}
+.omr-bubble {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2.5px solid var(--text-muted);
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .12s ease;
+  flex-shrink: 0;
+}
+.omr-bubble:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary-light);
+}
+.omr-bubble-filled {
+  background: var(--accent-gradient);
+  border-color: var(--accent-primary);
+  color: #fff;
+}

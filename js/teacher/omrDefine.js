@@ -9,8 +9,8 @@
 
 let _omrMeta = null;
 let _omrOverview = null;
-let _omrCurriculumCache = {};
-let _omrPendingRanges = [];
+let _omrCurriculumTopics = [];   // secili ders+sinifin konu+kazanim listesi (bkz. _omrLoadCurriculumTopics)
+let _omrAnswerKey = {};          // { "1": "A", "2": "C", ... } - optik taslak uzerinde tiklanarak doldurulur
 
 function _omrEsc(str) {
   return String(str === null || str === undefined ? '' : str)
@@ -31,7 +31,8 @@ async function renderOmrDefinePage() {
     ]);
     _omrMeta = meta;
     _omrOverview = overview;
-    _omrPendingRanges = [];
+    _omrCurriculumTopics = [];
+    _omrAnswerKey = {};
     formRoot.innerHTML = _omrBuildFormHtml();
     _omrWireForm();
     _omrRenderExamList(examsResp.exams || []);
@@ -61,7 +62,15 @@ function _omrBuildFormHtml() {
       </div>
       <div>
         <label class="form-label">Konu</label>
-        <input type="text" id="omr-f-topic" class="form-control" placeholder="Örn. Kesirler">
+        <select id="omr-f-topic" class="form-control" disabled>
+          <option value="">Önce ders ve sınıf seçin...</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label">Kazanım</label>
+        <select id="omr-f-kazanim" class="form-control" disabled>
+          <option value="">Önce konu seçin...</option>
+        </select>
       </div>
       <div>
         <label class="form-label">Test Adı</label>
@@ -77,16 +86,8 @@ function _omrBuildFormHtml() {
     </div>
 
     <div class="mt-2">
-      <label class="form-label">Cevap Anahtarı</label>
-      <div id="omr-answer-key-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:8px;margin-top:6px"></div>
-    </div>
-
-    <div class="mt-2">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <label class="form-label" style="margin:0">Kazanım Aralığı (opsiyonel)</label>
-        <button type="button" class="btn btn-sm" id="omr-add-range-btn">+ Aralık Ekle</button>
-      </div>
-      <div id="omr-range-list" style="margin-top:8px"></div>
+      <label class="form-label">Cevap Anahtarı — doğru şıkkı optik taslak üzerinde işaretleyin</label>
+      <div id="omr-answer-key-sheet" class="omr-sheet mt-1"></div>
     </div>
 
     <div class="mt-2" style="display:flex;align-items:center;gap:12px">
@@ -97,95 +98,104 @@ function _omrBuildFormHtml() {
 }
 
 function _omrWireForm() {
-  document.getElementById('omr-f-count').addEventListener('change', _omrRenderAnswerKeyInputs);
-  _omrRenderAnswerKeyInputs();
+  document.getElementById('omr-f-count').addEventListener('change', () => {
+    _omrAnswerKey = {};
+    _omrRenderAnswerKeySheet();
+  });
+  _omrRenderAnswerKeySheet();
 
-  document.getElementById('omr-add-range-btn').addEventListener('click', _omrAddRangeRow);
+  document.getElementById('omr-f-subject').addEventListener('change', _omrLoadCurriculumTopics);
+  document.getElementById('omr-f-grade').addEventListener('change', _omrLoadCurriculumTopics);
+  document.getElementById('omr-f-topic').addEventListener('change', _omrPopulateKazanimSelect);
   document.getElementById('omr-save-exam-btn').addEventListener('click', _omrSaveExam);
 }
 
-function _omrRenderAnswerKeyInputs() {
+// ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
+// Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin
+// daireler, 2 sutun x 10 satir) sahip bir HTML taslak - ogretmen dogru
+// sikki gercek kagitta oldugu gibi tiklayarak isaretler.
+function _omrRenderAnswerKeySheet() {
   const count = parseInt(document.getElementById('omr-f-count').value, 10) || 20;
-  const grid = document.getElementById('omr-answer-key-grid');
-  let html = '';
+  const sheet = document.getElementById('omr-answer-key-sheet');
+  const col1 = [], col2 = [];
   for (let q = 1; q <= count; q++) {
-    html += `
-      <div style="display:flex;align-items:center;gap:4px">
-        <span style="font-size:12px;color:var(--text-muted,#888);min-width:18px">${q}.</span>
-        <select class="form-control omr-ak-input" data-q="${q}" style="padding:4px">
-          <option value="">-</option>
-          <option value="A">A</option>
-          <option value="B">B</option>
-          <option value="C">C</option>
-          <option value="D">D</option>
-        </select>
-      </div>`;
+    (q <= 10 ? col1 : col2).push(_omrBuildSheetRow(q));
   }
-  grid.innerHTML = html;
+  sheet.innerHTML = `
+    <div class="omr-sheet-cols">
+      <div class="omr-sheet-col">${col1.join('')}</div>
+      <div class="omr-sheet-col">${col2.join('')}</div>
+    </div>
+  `;
+  sheet.querySelectorAll('.omr-bubble').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.q, choice = btn.dataset.choice;
+      _omrAnswerKey[q] = _omrAnswerKey[q] === choice ? null : choice;
+      _omrRenderAnswerKeySheet();
+    });
+  });
 }
 
-async function _omrAddRangeRow() {
-  const subjectId = document.getElementById('omr-f-subject').value;
-  const gradeLevel = document.getElementById('omr-f-grade').value;
-  if (!subjectId) {
-    alert('Kazanım aralığı eklemek için önce bir ders seçin.');
-    return;
-  }
-  const cacheKey = `${subjectId}|${gradeLevel}`;
-  if (!_omrCurriculumCache[cacheKey]) {
-    const params = new URLSearchParams({ subject_id: subjectId });
-    if (gradeLevel) params.set('grade_level', gradeLevel);
-    const resp = await fetch(`/api/admin/question-bank/curriculum?${params}`).then(r => r.json());
-    _omrCurriculumCache[cacheKey] = resp.curriculum || [];
-  }
-  const kazanimOptions = [];
-  const walk = (nodes, path) => {
-    for (const n of nodes || []) {
-      const label = path ? `${path} > ${n.name}` : n.name;
-      if (n.level === 'kazanim') kazanimOptions.push({ id: n.id, label });
-      walk(n.children, label);
-    }
-  };
-  walk(_omrCurriculumCache[cacheKey], '');
-
-  const rowId = `omr-range-${Date.now()}`;
-  _omrPendingRanges.push(rowId);
-  const optionsHtml = kazanimOptions.map(k => `<option value="${k.id}">${_omrEsc(k.label)}</option>`).join('');
-  const row = document.createElement('div');
-  row.id = rowId;
-  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
-  row.innerHTML = `
-    <input type="number" min="1" class="form-control omr-range-from" placeholder="Baş." style="width:70px">
-    <span>-</span>
-    <input type="number" min="1" class="form-control omr-range-to" placeholder="Bit." style="width:70px">
-    <select class="form-control omr-range-node" style="flex:1">
-      <option value="">Kazanım seçin...</option>${optionsHtml}
-    </select>
-    <button type="button" class="btn btn-sm" onclick="document.getElementById('${rowId}').remove()">✕</button>
-  `;
-  document.getElementById('omr-range-list').appendChild(row);
+function _omrBuildSheetRow(q) {
+  const choices = ['A', 'B', 'C', 'D'];
+  const bubbles = choices.map(c => {
+    const filled = _omrAnswerKey[String(q)] === c;
+    return `<button type="button" class="omr-bubble${filled ? ' omr-bubble-filled' : ''}" data-q="${q}" data-choice="${c}">${c}</button>`;
+  }).join('');
+  return `<div class="omr-sheet-row"><span class="omr-sheet-qnum">${q}</span>${bubbles}</div>`;
 }
 
 function _omrCollectAnswerKey() {
   const key = {};
-  document.querySelectorAll('.omr-ak-input').forEach(sel => {
-    if (sel.value) key[sel.dataset.q] = sel.value;
-  });
+  Object.keys(_omrAnswerKey).forEach(q => { if (_omrAnswerKey[q]) key[q] = _omrAnswerKey[q]; });
   return key;
 }
 
-function _omrCollectRanges() {
-  const ranges = [];
-  document.querySelectorAll('#omr-range-list > div').forEach(row => {
-    const from = parseInt(row.querySelector('.omr-range-from').value, 10);
-    const to = parseInt(row.querySelector('.omr-range-to').value, 10);
-    const nodeSelect = row.querySelector('.omr-range-node');
-    const nodeId = nodeSelect.value;
-    if (from && to && nodeId) {
-      ranges.push({ from, to, nodeId: parseInt(nodeId, 10), label: nodeSelect.selectedOptions[0].textContent });
+// ---- Konu/Kazanım (seeds/omr_konu_kazanim/*.json'dan, bkz. server.py
+// api_teacher_omr_curriculum_topics) ----
+async function _omrLoadCurriculumTopics() {
+  const subjectId = document.getElementById('omr-f-subject').value;
+  const gradeLevel = document.getElementById('omr-f-grade').value;
+  const topicSelect = document.getElementById('omr-f-topic');
+  const kazanimSelect = document.getElementById('omr-f-kazanim');
+  _omrCurriculumTopics = [];
+  kazanimSelect.innerHTML = '<option value="">Önce konu seçin...</option>';
+  kazanimSelect.disabled = true;
+
+  if (!subjectId || !gradeLevel) {
+    topicSelect.innerHTML = '<option value="">Önce ders ve sınıf seçin...</option>';
+    topicSelect.disabled = true;
+    return;
+  }
+  topicSelect.innerHTML = '<option value="">Yükleniyor...</option>';
+  topicSelect.disabled = true;
+  try {
+    const resp = await fetch(`/api/teacher/omr/curriculum-topics?subjectId=${subjectId}&gradeLevel=${gradeLevel}`).then(r => r.json());
+    _omrCurriculumTopics = resp.konular || [];
+    if (!_omrCurriculumTopics.length) {
+      topicSelect.innerHTML = '<option value="">Bu ders/sınıf için konu bulunamadı</option>';
+      return;
     }
-  });
-  return ranges;
+    topicSelect.innerHTML = '<option value="">Konu seçin...</option>' +
+      _omrCurriculumTopics.map((t, i) => `<option value="${i}">${_omrEsc(t.konu_adi)}</option>`).join('');
+    topicSelect.disabled = false;
+  } catch (err) {
+    topicSelect.innerHTML = '<option value="">Yüklenemedi</option>';
+  }
+}
+
+function _omrPopulateKazanimSelect() {
+  const idx = document.getElementById('omr-f-topic').value;
+  const kazanimSelect = document.getElementById('omr-f-kazanim');
+  if (idx === '' || !_omrCurriculumTopics[idx]) {
+    kazanimSelect.innerHTML = '<option value="">Önce konu seçin...</option>';
+    kazanimSelect.disabled = true;
+    return;
+  }
+  const kazanimlar = _omrCurriculumTopics[idx].kazanimlar || [];
+  kazanimSelect.innerHTML = '<option value="">Kazanım seçin (opsiyonel)...</option>' +
+    kazanimlar.map((k, i) => `<option value="${i}">${_omrEsc(k.kazanim_adi)}</option>`).join('');
+  kazanimSelect.disabled = false;
 }
 
 async function _omrSaveExam() {
@@ -195,19 +205,23 @@ async function _omrSaveExam() {
   const answerKey = _omrCollectAnswerKey();
   const subjectIdRaw = document.getElementById('omr-f-subject').value;
   const gradeLevel = document.getElementById('omr-f-grade').value || null;
-  const topic = document.getElementById('omr-f-topic').value.trim() || null;
-  const curriculumRange = _omrCollectRanges();
+  const topicIdx = document.getElementById('omr-f-topic').value;
+  const kazanimIdx = document.getElementById('omr-f-kazanim').value;
+  const topicObj = topicIdx !== '' ? _omrCurriculumTopics[topicIdx] : null;
+  const kazanimObj = (topicObj && kazanimIdx !== '') ? topicObj.kazanimlar[kazanimIdx] : null;
 
   if (!title) { statusEl.textContent = '❌ Test adı gerekli.'; return; }
   if (Object.keys(answerKey).length !== questionCount) {
-    statusEl.textContent = '❌ Tüm soruların cevabını girin.';
+    statusEl.textContent = '❌ Optik taslak üzerinde tüm soruların doğru cevabını işaretleyin.';
     return;
   }
 
   const payload = {
-    title, questionCount, answerKey, gradeLevel, topic,
+    title, questionCount, answerKey, gradeLevel,
+    topic: topicObj ? topicObj.konu_adi : null,
+    kazanimKodu: kazanimObj ? kazanimObj.kazanim_kodu : null,
+    kazanimAdi: kazanimObj ? kazanimObj.kazanim_adi : null,
     subjectId: subjectIdRaw ? parseInt(subjectIdRaw, 10) : null,
-    curriculumRange: curriculumRange.length ? curriculumRange : null,
   };
 
   statusEl.textContent = 'Kaydediliyor...';
@@ -219,6 +233,9 @@ async function _omrSaveExam() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
     statusEl.textContent = '✅ Kaydedildi.';
+    _omrAnswerKey = {};
+    _omrRenderAnswerKeySheet();
+    document.getElementById('omr-f-title').value = '';
     const examsResp = await fetch('/api/teacher/omr/exams').then(r => r.json());
     _omrRenderExamList(examsResp.exams || []);
   } catch (err) {

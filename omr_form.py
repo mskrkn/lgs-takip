@@ -53,20 +53,29 @@ FIDUCIAL_MARGIN_MM = 5.0
 
 QR_BOX_MM = (8.0, 12.0, 28.0, 32.0)  # (x0, y0, x1, y1) sol-ust orijinli
 
-ID_DIGIT_COUNT = 4
-ID_DIGIT_ROWS = 10  # 0-9
-ID_BLOCK_ORIGIN_MM = (10.0, 40.0)
-ID_DIGIT_COL_SPACING_MM = 6.0
-ID_DIGIT_ROW_SPACING_MM = 2.4
-ID_BUBBLE_D_MM = 3.0
+# Okul No bloğu: kullanıcı isteğiyle (2026-09-15) SATIR=hane, SÜTUN=rakam
+# (0-9 üstte tek bir başlık satırı, altında 5 hane satırı) düzenine
+# çevrildi - eskiden 4 hane x dikey 0-9 idi. Daha büyük dairelerle daha
+# rahat okunuyor, yatayda kullanılmayan alanı da değerlendiriyor.
+ID_DIGIT_COUNT = 5   # hane sayisi (satir)
+ID_DIGIT_ROWS = 10   # rakam degeri 0-9 (sutun) - isim ozgun pipeline uyumu icin korunuyor
+ID_BLOCK_ORIGIN_MM = (20.0, 40.0)  # ilk (deger=0) sutunun x'i, baslik satirinin y'si
+ID_DIGIT_COL_SPACING_MM = 6.5
+ID_DIGIT_ROW_SPACING_MM = 6.5
+ID_BUBBLE_D_MM = 4.5
 
-ANSWER_GRID_TOP_MM = 70.0
-ANSWER_GRID_BOTTOM_MM = 140.0
+# Cevap balonlari kullanici isteğiyle buyutuldu (3.5mm -> 4.2mm); alt
+# fiducial'lerle carpismamak icin ANSWER_GRID_BOTTOM_MM daraltildi, ID
+# bloğunun artik daha az dikey yer kaplamasindan kazanilan alan
+# ANSWER_GRID_TOP_MM'i yukari cekerek geri kazanildi (okuma alanini
+# olabildiğince etkin kullanma isteğiyle uyumlu).
+ANSWER_GRID_TOP_MM = 78.0
+ANSWER_GRID_BOTTOM_MM = 136.0
 ANSWER_ROWS_PER_COL = 10
 ANSWER_ROW_H_MM = (ANSWER_GRID_BOTTOM_MM - ANSWER_GRID_TOP_MM) / ANSWER_ROWS_PER_COL
-ANSWER_COL_X_MM = {1: 8.0, 2: 55.0}  # sutun 1: soru 1-10, sutun 2: soru 11-20
-ANSWER_CHOICE_OFFSETS_MM = (8.0, 13.0, 18.0, 23.0)  # A,B,C,D - sutun basindan
-ANSWER_BUBBLE_D_MM = 3.5
+ANSWER_COL_X_MM = {1: 6.0, 2: 55.0}  # sutun 1: soru 1-10, sutun 2: soru 11-20
+ANSWER_CHOICE_OFFSETS_MM = (9.0, 15.5, 22.0, 28.5)  # A,B,C,D - sutun basindan
+ANSWER_BUBBLE_D_MM = 4.2
 
 
 def fiducial_centers_mm():
@@ -81,10 +90,14 @@ def fiducial_centers_mm():
 
 
 def id_bubble_center_mm(digit_col, digit_row):
-    """digit_col: 0-3 (soldan saga hane), digit_row: 0-9 (rakam degeri)."""
+    """digit_col: 0-4 (soldan saga hane sirasi/SATIR), digit_row: 0-9
+    (o hanenin rakam degeri/SUTUN) - isimler eski (dikey) tasarimdan
+    kalma ama omr_pipeline.py bu fonksiyonu semantik olarak degil sadece
+    (index, deger) ciftinden piksel uretmek icin cagirdigindan degismesine
+    gerek yok."""
     x0, y0 = ID_BLOCK_ORIGIN_MM
-    x = x0 + digit_col * ID_DIGIT_COL_SPACING_MM
-    y = y0 + (digit_row + 1) * ID_DIGIT_ROW_SPACING_MM
+    x = x0 + digit_row * ID_DIGIT_COL_SPACING_MM
+    y = y0 + (digit_col + 1) * ID_DIGIT_ROW_SPACING_MM  # +1: baslik satirini atla
     return (x, y)
 
 
@@ -140,43 +153,48 @@ def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, paper, exam_title):
 
     # Kimlik metni (sadece gorsel dogrulama - eslestirme mantigina dahil degil)
     text_x, text_y = pt(qr_x1 + 4, 16)
-    c.setFont("EduPusulaSans-Bold", 8)
-    c.drawString(text_x, text_y, (exam_title or "")[:40])
-    c.setFont("EduPusulaSans", 7)
-    c.drawString(text_x, text_y - 10, (paper.get("student_name") or "")[:40])
-    c.drawString(text_x, text_y - 19, f"Sinif: {paper.get('class_name') or '-'}")
+    c.setFont("EduPusulaSans-Bold", 10)
+    c.drawString(text_x, text_y, (exam_title or "")[:38])
+    c.setFont("EduPusulaSans-Bold", 9)
+    c.drawString(text_x, text_y - 11, (paper.get("student_name") or "")[:38])
+    c.setFont("EduPusulaSans", 8)
+    c.drawString(text_x, text_y - 21, f"Sınıf: {paper.get('class_name') or '-'}")
 
-    # 4 haneli okul no bubble blogu
-    c.setFont("EduPusulaSans", 6)
-    label_x, label_y = pt(ID_BLOCK_ORIGIN_MM[0] - 6, ID_BLOCK_ORIGIN_MM[1] + 2)
-    c.drawString(label_x, label_y, "No")
+    # Okul No bloğu: BAŞLIK satırı "0 1 2 ... 9" + altında 5 hane satırı
+    # (kullanıcı isteğiyle satır=hane/sütun=rakam düzenine çevrildi, bkz.
+    # id_bubble_center_mm docstring'i).
+    label_x, label_y = pt(ID_BLOCK_ORIGIN_MM[0] - 12, ID_BLOCK_ORIGIN_MM[1])
+    c.setFont("EduPusulaSans-Bold", 8)
+    c.drawString(label_x, label_y - 2, "No")
+    c.setFont("EduPusulaSans-Bold", 7)
+    for value in range(ID_DIGIT_ROWS):
+        hx, hy = pt(ID_BLOCK_ORIGIN_MM[0] + value * ID_DIGIT_COL_SPACING_MM, ID_BLOCK_ORIGIN_MM[1])
+        c.drawCentredString(hx, hy - 2, str(value))
     for digit_col in range(ID_DIGIT_COUNT):
         for digit_row in range(ID_DIGIT_ROWS):
             cx_mm, cy_mm = id_bubble_center_mm(digit_col, digit_row)
             cx, cy = pt(cx_mm, cy_mm)
             r = ID_BUBBLE_D_MM / 2 * mm
-            c.setLineWidth(0.5)
+            c.setLineWidth(1.0)
             c.circle(cx, cy, r, stroke=1, fill=0)
-            c.setFont("EduPusulaSans", 5)
-            c.drawCentredString(cx, cy - 1.6, str(digit_row))
 
-    # Cevap grid'i (20 soru x 4 sik)
+    # Cevap grid'i (20 soru x 4 sik) - buyuk, kalin hatli daireler
     for q in range(1, QUESTION_COUNT_MAX + 1):
         col = 1 if q <= 10 else 2
         row = (q - 1) % 10
-        num_x_mm = ANSWER_COL_X_MM[col] - 5
+        num_x_mm = ANSWER_COL_X_MM[col] - 4.5
         num_y_mm = ANSWER_GRID_TOP_MM + row * ANSWER_ROW_H_MM + ANSWER_ROW_H_MM / 2
         nx, ny = pt(num_x_mm, num_y_mm)
-        c.setFont("EduPusulaSans", 7)
-        c.drawCentredString(nx, ny - 2.5, str(q))
+        c.setFont("EduPusulaSans-Bold", 9)
+        c.drawCentredString(nx, ny - 3, str(q))
         for choice_idx, choice_label in enumerate(CHOICES):
             cx_mm, cy_mm = question_bubble_center_mm(q, choice_idx)
             cx, cy = pt(cx_mm, cy_mm)
             r = ANSWER_BUBBLE_D_MM / 2 * mm
-            c.setLineWidth(0.6)
+            c.setLineWidth(1.1)
             c.circle(cx, cy, r, stroke=1, fill=0)
-            c.setFont("EduPusulaSans", 5)
-            c.drawCentredString(cx, cy - 1.6, choice_label)
+            c.setFont("EduPusulaSans-Bold", 7)
+            c.drawCentredString(cx, cy - 2.4, choice_label)
 
 
 def generate_omr_pdf(papers, exam_title):

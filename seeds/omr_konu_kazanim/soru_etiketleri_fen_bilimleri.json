@@ -1,0 +1,1244 @@
+{
+  "ders": "Fen Bilimleri",
+  "dersKisaltma": "FB",
+  "siniflar": {
+    "5": {
+      "sinif": 5,
+      "konular": [
+        {
+          "konu_id": "5.K01",
+          "konu_adi": "Gökyüzündeki Komşumuz: Güneş",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.1.1.1",
+              "kazanim_adi": "Güneş'in yapısı ve dönme hareketi ile ilgili bilgileri toplayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K02",
+          "konu_adi": "Gökyüzündeki Komşumuz: Ay",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.1.2.1",
+              "kazanim_adi": "Ay'ın özellikleri, dönme ve dolanma hareketleri ile ilgili bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.1.2.2",
+              "kazanim_adi": "Ay'ın evrelerini temsil eden bilimsel model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K03",
+          "konu_adi": "Dünya'mız ve Gökyüzündeki Komşularımız",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.1.3.1",
+              "kazanim_adi": "Güneş, Dünya ve Ay'ın birbirlerine göre hareketlerini ve hacimsel büyüklüklerini temsil eden bilimsel model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K04",
+          "konu_adi": "Kuvvet ve Kuvvetin Ölçülmesi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.2.1.1",
+              "kazanim_adi": "Kuvveti büyüklüğü ile tanımlayabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.2.1.2",
+              "kazanim_adi": "Basit araç gereçler kullanarak bir dinamometre modeli tasarlayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K05",
+          "konu_adi": "Kütle ve Ağırlık İlişkisi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.2.2.1",
+              "kazanim_adi": "Kütleye etki eden yer çekimi kuvvetini ağırlık olarak tanımlayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K06",
+          "konu_adi": "Sürtünme Kuvveti",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.2.3.1",
+              "kazanim_adi": "Sürtünme kuvvetinin çeşitli ortamlardaki etkilerine yönelik tümevarımsal akıl yürütebilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.2.3.2",
+              "kazanim_adi": "Günlük yaşamda sürtünmeyi artırma veya azaltmaya yönelik bilimsel bir model tasarlayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K07",
+          "konu_adi": "Hücre ve Organelleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.3.1.1",
+              "kazanim_adi": "Bitki ve hayvan hücrelerini temel kısımları ve özellikleri açısından karşılaştırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.3.1.2",
+              "kazanim_adi": "Hücre-doku-organ-sistem-organizma kavramlarını yapılandırabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K08",
+          "konu_adi": "Destek ve Hareket Sistemi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.3.2.1",
+              "kazanim_adi": "Destek ve hareket sistemine ait yapıları sınıflandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.3.2.2",
+              "kazanim_adi": "Destek ve hareket sisteminin sağlığı için yapılması gerekenler konusunda bilgi toplayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K09",
+          "konu_adi": "Işığın Yayılması",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.4.1.1",
+              "kazanim_adi": "Bir kaynaktan çıkan ışığın her yönde doğrusal bir yol izlediğini gözlem yoluyla açıklayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K10",
+          "konu_adi": "Madde ve Işık",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.4.2.1",
+              "kazanim_adi": "Maddeleri ışığı geçirme durumlarına göre sınıflandırabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K11",
+          "konu_adi": "Tam Gölgenin Oluşumu",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.4.3.1",
+              "kazanim_adi": "Tam gölgeye yönelik bilimsel gözlem yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K12",
+          "konu_adi": "Maddenin Tanecikli Yapısı",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.5.1.1",
+              "kazanim_adi": "Maddeleri tanecikli, boşluklu ve hareketli yapısına göre sınıflandırabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K13",
+          "konu_adi": "Isı ve Sıcaklık",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.5.2.1",
+              "kazanim_adi": "Isı ve sıcaklık kavramlarını karşılaştırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.5.2.2",
+              "kazanim_adi": "Sıcaklığı farklı olan sıvıların karıştırılması sonucu ısı alışverişi olduğuna yönelik bilimsel çıkarım yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K14",
+          "konu_adi": "Maddenin Hâl Değişimi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.5.3.1",
+              "kazanim_adi": "Maddenin ısı etkisiyle hâl değiştirebileceğini bilimsel gözleme dayalı tahmin edebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K15",
+          "konu_adi": "Madde ve Isı",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.5.4.1",
+              "kazanim_adi": "Maddeleri ısı iletimi bakımından sınıflandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.5.4.2",
+              "kazanim_adi": "Isı yalıtımını gösteren model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K16",
+          "konu_adi": "Devre Elemanlarının Sembollerle Gösterimi ve Devre Şemaları",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.6.1.1",
+              "kazanim_adi": "Bir elektrik devresindeki elemanları sembollerinin olup olmamasına göre sınıflandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.6.1.2",
+              "kazanim_adi": "Şemasını çizdiği elektrik devresine uygun deney yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K17",
+          "konu_adi": "Basit Bir Elektrik Devresinde Ampul Parlaklığını Etkileyen Değişkenler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.6.2.1",
+              "kazanim_adi": "Bir elektrik devresindeki ampul parlaklığını etkileyen değişkenlerin neler olduğuna ilişkin hipotez oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K18",
+          "konu_adi": "Basit Bir Elektrik Devresinde Ampul Parlaklığını Etkileyen Değişkenler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.5.7.1.1",
+              "kazanim_adi": "Evsel atıklarda geri dönüştürülebilen ve dönüştürülemeyen maddeleri sınıflandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.7.1.2",
+              "kazanim_adi": "Kaynakların etkili kullanımı konusunda geri dönüşümün önemli olduğuna yönelik bilimsel çıkarımda bulunabilme"
+            },
+            {
+              "kazanim_kodu": "FB.5.7.1.3",
+              "kazanim_adi": "Yakın çevresinde atık yönetiminin uygulanabilirliğine ilişkin deneyimlerini yansıtabilme"
+            }
+          ]
+        }
+      ]
+    },
+    "6": {
+      "sinif": 6,
+      "konular": [
+        {
+          "konu_id": "6.K01",
+          "konu_adi": "Güneş Sistemi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.1.1.1",
+              "kazanim_adi": "Güneş sistemindeki gezegenleri niteliklerine göre sınıflandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.1.1.2",
+              "kazanim_adi": "Güneş sistemi ile ilgili bilimsel model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K02",
+          "konu_adi": "Güneş Sistemi Güneş ve Ay Tutulmaları",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.1.2.1",
+              "kazanim_adi": "Güneş ve Ay tutulması ile ilgili bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.1.2.2",
+              "kazanim_adi": "Güneş ve Ay tutulması ile ilgili bilimsel model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K03",
+          "konu_adi": "Bileşke Kuvvet",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.2.1.1",
+              "kazanim_adi": "Bir cisme etki eden aynı doğrultudaki kuvvetler arasındaki ilişkileri açıklayarak bileşke kuvveti yapılandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.2.1.2",
+              "kazanim_adi": "Dengelenmiş ve dengelenmemiş kuvvetlerin etkisi altındaki bir cismin hareketine yönelik deney yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K04",
+          "konu_adi": "Sabit Süratli ve Sabit Hızlı Hareket",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.2.2.1",
+              "kazanim_adi": "Sürat ve hız kavramlarını karşılaştırabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K05",
+          "konu_adi": "Sabit Süratli ve Sabit Hızlı Hareket Bitki ve Hayvanlarda Üreme, Büyüme ve Gelişme",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.3.1.1",
+              "kazanim_adi": "Eşeyli ve eşeysiz üremeyi karşılaştırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.1.2",
+              "kazanim_adi": "Bitkilerde üreme, büyüme ve gelişme hakkında bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.1.3",
+              "kazanim_adi": "Tohumun çimlenmesine etki eden faktörlere ilişkin hipotez oluşturabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.1.4",
+              "kazanim_adi": "Hayvanlarda üreme, büyüme ve gelişme hakkında bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.1.5",
+              "kazanim_adi": "İnsanda üremeyi sağlayan yapı ve organlar arasındaki ilişkileri çözümleyebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K06",
+          "konu_adi": "Denetleyici ve Düzenleyici Sistemler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.3.2.1",
+              "kazanim_adi": "Sinir sisteminin görevlerini model üzerinde gözlemleyebilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.2.2",
+              "kazanim_adi": "İç salgı bezlerinin vücut için önemini yapılandırabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.2.3",
+              "kazanim_adi": "Çocukluktan ergenliğe geçişte oluşan bedensel ve ruhsal değişimleri genelleyebilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.3.2.4",
+              "kazanim_adi": "Denetleyici ve düzenleyici sistemlerin sağlığı için yapılması gerekenlerle ilgili bilgi toplayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K07",
+          "konu_adi": "Işığın Yansıması",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.4.1.1",
+              "kazanim_adi": "Işığın farklı yüzeylerdeki yansıma olaylarına ilişkin bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.4.1.2",
+              "kazanim_adi": "Işığın yansımasında gelen ışın, yansıyan ışın ve yüzeyin normali arasındaki ilişkiyi kanıt kullanarak açıklayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K08",
+          "konu_adi": "Aynalar",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.4.2.1",
+              "kazanim_adi": "Günlük hayattaki ayna çeşitlerine ilişkin bilimsel çıkarım yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K09",
+          "konu_adi": "Işığın Soğurulması",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.4.3.1",
+              "kazanim_adi": "Işığın madde ile etkileşimi sonucunda soğurulabileceğini gözlemleyebilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.4.3.2",
+              "kazanim_adi": "Beyaz ışığın tüm ışık renklerinin bileşiminden oluştuğuna ilişkin bilimsel çıkarım yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.4.3.3",
+              "kazanim_adi": "Cisimlerin siyah, beyaz ve renkli görünmesinin nedenini gözlem verileriyle açıklayabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.4.3.4",
+              "kazanim_adi": "Güneş enerjisinin günlük hayat ve teknolojideki yenilikçi uygulamalarına ilişkin eleştirel düşünebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K10",
+          "konu_adi": "Genleşme ve Büzülme",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.5.1.1",
+              "kazanim_adi": "Isı etkisiyle maddelerin genleşip büzüleceğine yönelik bilimsel gözleme dayalı tahmin edebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K11",
+          "konu_adi": "Maddenin Hâl Değişim Noktaları",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.5.2.1",
+              "kazanim_adi": "Maddelerin erime, donma ve kaynama noktasını gösteren deney yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K12",
+          "konu_adi": "Yoğunluk",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.5.3.1",
+              "kazanim_adi": "Yoğunluğa ilişkin hesaplamalar yaparak bilimsel veriye dayalı tahmin edebilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.5.3.2",
+              "kazanim_adi": "Deneyler sonucunda çeşitli maddelerin yoğunluklarına ilişkin tümdengelimsel akıl yürütebilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.5.3.3",
+              "kazanim_adi": "Suyun katı ve sıvı hâllerine ait yoğunlukları karşılaştırarak bu durumun canlılar için önemi hakkında bilimsel çıkarımlar yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.5.3.4",
+              "kazanim_adi": "Yoğunluk ile ilgili bilimsel model oluşturabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K13",
+          "konu_adi": "Elektriğin İletimi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.6.1.1",
+              "kazanim_adi": "Maddelerin elektriği iletme durumlarını gösteren deney yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K14",
+          "konu_adi": "Elektriksel Direnç ve Bağlı Olduğu Faktörler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.6.2.1",
+              "kazanim_adi": "Elektrik devresindeki ampulün parlaklığının bağlı olduğu değişkenleribelirlemeye yönelik deney yapabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.6.2.2",
+              "kazanim_adi": "Ayarlanabilir direncin ampulün parlaklığına etkilerine yönelik bilimsel çıkarım yapabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K15",
+          "konu_adi": "Elektriksel Direnç ve Bağlı Olduğu Faktörler Biyoçeşitlilik",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.7.1.1",
+              "kazanim_adi": "Biyoçeşitliliğin doğal yaşam için önemini sorgulayabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.7.1.2",
+              "kazanim_adi": "Biyoçeşitliliği tehdit eden faktörleri araştırma verilerine dayalı tahmin edebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "6.K16",
+          "konu_adi": "İnsan ve Çevre Etkileşimi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "FB.6.7.2.1",
+              "kazanim_adi": "Isınma amaçlı yakıt kullanımının insan ve çevre üzerine etkilerini tartışabilme"
+            },
+            {
+              "kazanim_kodu": "FB.6.7.2.2",
+              "kazanim_adi": "Yakın çevresindeki veya ülkemizdeki bir çevre problemine ilişkin çözüm üretebilme"
+            }
+          ]
+        }
+      ]
+    },
+    "7": {
+      "sinif": 7,
+      "konular": [
+        {
+          "konu_id": "7.K01",
+          "konu_adi": "Uzay Araştırmaları",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.1.1.1",
+              "kazanim_adi": "Uzay teknolojilerini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.1.1.2",
+              "kazanim_adi": "Uzay kirliliğinin nedenlerini ifade ederek bu kirliliğin yol açabileceği olası sonuçları tahmin eder."
+            },
+            {
+              "kazanim_kodu": "F.7.1.1.3",
+              "kazanim_adi": "Teknoloji ile uzay araştırmaları arasındaki ilişkiyi açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.1.1.4",
+              "kazanim_adi": "Teleskobun yapısını ve ne işe yaradığını açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.1.1.5",
+              "kazanim_adi": "Teleskobun gök bilimin gelişimindeki önemine yönelik çıkarımda bulunur."
+            },
+            {
+              "kazanim_kodu": "F.7.1.1.6",
+              "kazanim_adi": "Basit bir teleskop modeli hazırlayarak sunar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K02",
+          "konu_adi": "Güneş Sistemi Ötesi: Gök Cisimleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.1.2.1",
+              "kazanim_adi": "Yıldız oluşum sürecinin farkına varır."
+            },
+            {
+              "kazanim_kodu": "F.7.1.2.2",
+              "kazanim_adi": "Yıldız kavramını açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.1.2.3",
+              "kazanim_adi": "Galaksilerin yapısını açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.1.2.4",
+              "kazanim_adi": "Evren kavramını açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K03",
+          "konu_adi": "Hücre",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.2.1.1",
+              "kazanim_adi": "Hayvan ve bitki hücrelerini, temel kısımları ve görevleri açısından karşılaştırır."
+            },
+            {
+              "kazanim_kodu": "F.7.2.1.2",
+              "kazanim_adi": "Geçmişten günümüze, hücrenin yapısı ile ilgili görüşleri teknolojik gelişmelerle ilişkilendirerek tartışır."
+            },
+            {
+              "kazanim_kodu": "F.7.2.1.3",
+              "kazanim_adi": "Hücre-doku-organ-sistem-organizma ilişkisini açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K04",
+          "konu_adi": "Mitoz",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.2.2.1",
+              "kazanim_adi": "Mitozun canlılar için önemini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.2.2.2",
+              "kazanim_adi": "Mitozun birbirini takip eden farklı evrelerden oluştuğunu açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K05",
+          "konu_adi": "Mayoz",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.2.3.1",
+              "kazanim_adi": "Mayozun canlılar için önemini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.2.3.2",
+              "kazanim_adi": "Üreme ana hücrelerinde mayozun nasıl gerçekleştiğini model üzerinde gösterir."
+            },
+            {
+              "kazanim_kodu": "F.7.2.3.3",
+              "kazanim_adi": "Mayoz ve mitoz arasındaki farkları karşılaştırır."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K06",
+          "konu_adi": "Kütle ve Ağırlık İlişkisi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.3.1.1",
+              "kazanim_adi": "Kütleye etki eden yer çekimi kuvvetini ağırlık olarak adlandırır."
+            },
+            {
+              "kazanim_kodu": "F.7.3.1.2",
+              "kazanim_adi": "Kütle ve ağırlık kavramlarını karşılaştırır."
+            },
+            {
+              "kazanim_kodu": "F.7.3.1.3",
+              "kazanim_adi": "Yer çekimini kütle çekimi olarak gök cisimleri temelinde açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K07",
+          "konu_adi": "Kuvvet, İş ve Enerji İlişkisi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.3.2.1",
+              "kazanim_adi": "Fiziksel anlamda yapılan işin, uygulanan kuvvet ve alınan yolla ilişkili olduğunu açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.3.2.2",
+              "kazanim_adi": "Enerjiyi iş kavramı ile ilişkilendirerek, kinetik ve potansiyel enerji olarak sınıflandırır."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K08",
+          "konu_adi": "Enerji Dönüşümleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.3.3.1",
+              "kazanim_adi": "Kinetik ve potansiyel enerji türlerinin birbirine dönüşümünden hareketle enerjinin korunduğu sonucunu çıkarır."
+            },
+            {
+              "kazanim_kodu": "F.7.3.3.2",
+              "kazanim_adi": "Sürtünme kuvvetinin kinetik enerji üzerindeki etkisini örneklerle açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.3.3.3",
+              "kazanim_adi": "Hava veya su direncinin etkisini azaltmaya yönelik bir araç tasarlar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K09",
+          "konu_adi": "Maddenin Tanecikli Yapısı",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.4.1.1",
+              "kazanim_adi": "Atomun yapısını ve yapısındaki temel parçacıklarını söyler."
+            },
+            {
+              "kazanim_kodu": "F.7.4.1.2",
+              "kazanim_adi": "Geçmişten günümüze atom kavramı ile ilgili düşüncelerin nasıl değiştiğini sorgular."
+            },
+            {
+              "kazanim_kodu": "F.7.4.1.3",
+              "kazanim_adi": "Aynı veya farklı atomların bir araya gelerek molekül oluşturacağını ifade eder."
+            },
+            {
+              "kazanim_kodu": "F.7.4.1.4",
+              "kazanim_adi": "Çeşitli molekül modelleri oluşturarak sunar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K10",
+          "konu_adi": "Saf Maddeler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.4.2.1",
+              "kazanim_adi": "Saf maddeleri, element ve bileşik olarak sınıflandırarak örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.7.4.2.2",
+              "kazanim_adi": "Periyodik sistemdeki ilk 18 elementin ve yaygın elementlerin (altın, gümüş, bakır, çinko, kurşun, civa, platin, demir ve iyot) isimlerini, sembollerini ve bazı kullanım alanlarını ifade eder."
+            },
+            {
+              "kazanim_kodu": "F.7.4.2.3",
+              "kazanim_adi": "Yaygın bileşiklerin formüllerini, isimlerini ve bazı kullanım alanlarını ifade eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K11",
+          "konu_adi": "Karışımlar",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.4.3.1",
+              "kazanim_adi": "Karışımları, homojen ve heterojen olarak sınıflandırarak örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.7.4.3.2",
+              "kazanim_adi": "Günlük yaşamda karşılaştığı çözücü ve çözünenleri kullanarak çözelti hazırlar."
+            },
+            {
+              "kazanim_kodu": "F.7.4.3.3",
+              "kazanim_adi": "Çözünme hızına etki eden faktörleri deney yaparak belirler."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K12",
+          "konu_adi": "Karışımların Ayrılması",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.4.4.1",
+              "kazanim_adi": "Karışımların ayrılması için kullanılabilecek yöntemlerden uygun olanı seçerek uygular."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K13",
+          "konu_adi": "Evsel Atıklar ve Geri Dönüşüm",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.4.5.1",
+              "kazanim_adi": "Evsel atıklarda geri dönüştürülebilen ve dönüştürülemeyen maddeleri ayırt eder."
+            },
+            {
+              "kazanim_kodu": "F.7.4.5.2",
+              "kazanim_adi": "Evsel katı ve sıvı atıkların geri dönüşümüne ilişkin proje tasarlar."
+            },
+            {
+              "kazanim_kodu": "F.7.4.5.3",
+              "kazanim_adi": "Geri dönüşümü, kaynakların etkili kullanımı açısından sorgular."
+            },
+            {
+              "kazanim_kodu": "F.7.4.5.4",
+              "kazanim_adi": "Yakın çevresinde atık kontrolüne özen gösterir."
+            },
+            {
+              "kazanim_kodu": "F.7.4.5.5",
+              "kazanim_adi": "Yeniden kullanılabilecek eşyalarını, ihtiyacı olanlara iletmeye yönelik proje geliştirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K14",
+          "konu_adi": "Işığın Soğurulması",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.5.1.1",
+              "kazanim_adi": "Işığın madde ile etkileşimi sonucunda madde tarafından soğurulabileceğini keşfeder."
+            },
+            {
+              "kazanim_kodu": "F.7.5.1.2",
+              "kazanim_adi": "Beyaz ışığın tüm ışık renklerinin bileşiminden oluştuğu sonucunu çıkarır."
+            },
+            {
+              "kazanim_kodu": "F.7.5.1.3",
+              "kazanim_adi": "Gözlemleri sonucunda cisimlerin, siyah, beyaz ve renkli görünmesinin nedenini, ışığın yansıması ve soğurulmasıyla ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "F.7.5.1.4",
+              "kazanim_adi": "Güneş enerjisinin günlük yaşam ve teknolojideki yenilikçi uygulamalarına örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.7.5.1.5",
+              "kazanim_adi": "Güneş enerjisinden gelecekte nasıl yararlanılacağına ilişkin ürettiği fikirleri tartışır."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K15",
+          "konu_adi": "Aynalar",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.5.2.1",
+              "kazanim_adi": "Ayna çeşitlerini gözlemleyerek kullanım alanlarına örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.7.5.2.2",
+              "kazanim_adi": "Düz, çukur ve tümsek aynalarda oluşan görüntüleri karşılaştırır."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K16",
+          "konu_adi": "Işığın Kırılması ve Mercekler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.5.3.1",
+              "kazanim_adi": "Ortam değiştiren ışığın izlediği yolu gözlemleyerek kırılma olayının sebebini ortam değişikliği ile ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "F.7.5.3.2",
+              "kazanim_adi": "Işığın kırılmasını, ince ve kalın kenarlı mercekler kullanarak deneyle gözlemler."
+            },
+            {
+              "kazanim_kodu": "F.7.5.3.3",
+              "kazanim_adi": "İnce ve kalın kenarlı merceklerin odak noktalarını deneyerek belirler."
+            },
+            {
+              "kazanim_kodu": "F.7.5.3.4",
+              "kazanim_adi": "Merceklerin günlük yaşam ve teknolojideki kullanım alanlarına örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.7.5.3.5",
+              "kazanim_adi": "Ayna veya mercekleri kullanarak bir görüntüleme aracı tasarlar."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K17",
+          "konu_adi": "İnsanda Üreme, Büyüme ve Gelişme",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.6.1.1",
+              "kazanim_adi": "İnsanda üremeyi sağlayan yapı ve organları şema üzerinde göstererek açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.6.1.2",
+              "kazanim_adi": "Sperm, yumurta, zigot, embriyo, fetüs ve bebek arasındaki ilişkiyi açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.6.1.3",
+              "kazanim_adi": "Embriyonun sağlıklı gelişebilmesi için alınması gereken tedbirleri, araştırma verilerine dayalı olarak tartışır."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K18",
+          "konu_adi": "Bitki ve Hayvanlarda Üreme, Büyüme ve Gelişme",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.6.2.1",
+              "kazanim_adi": "Bitki ve hayvanlardaki üreme çeşitlerini karşılaştırır."
+            },
+            {
+              "kazanim_kodu": "F.7.6.2.2",
+              "kazanim_adi": "Bitki ve hayvanlardaki büyüme ve gelişme süreçlerini örnekler vererek açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.6.2.3",
+              "kazanim_adi": "Bitki ve hayvanlarda büyüme ve gelişmeye etki eden temel faktörleri açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.6.2.4",
+              "kazanim_adi": "Bir bitki veya hayvanın bakımını üstlenir ve gelişim sürecini rapor eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K19",
+          "konu_adi": "Ampullerin Bağlanma Şekilleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.7.7.1.1",
+              "kazanim_adi": "Seri ve paralel bağlı ampullerden oluşan bir devre şeması çizer."
+            },
+            {
+              "kazanim_kodu": "F.7.7.1.2",
+              "kazanim_adi": "Ampullerin seri ve paralel bağlandığı durumlardaki parlaklıklarını devre üzerinde gözlemleyerek çıkarımda bulunur."
+            },
+            {
+              "kazanim_kodu": "F.7.7.1.3",
+              "kazanim_adi": "Elektrik akımını tanımlar."
+            },
+            {
+              "kazanim_kodu": "F.7.7.1.4",
+              "kazanim_adi": "Elektrik enerjisinin devrelere akım yoluyla aktarıldığını açıklar."
+            },
+            {
+              "kazanim_kodu": "F.7.7.1.5",
+              "kazanim_adi": "Bir devre elemanının uçları arasındaki gerilim ile üzerinden geçen akımı ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "F.7.7.1.6",
+              "kazanim_adi": "Özgün bir aydınlatma aracı tasarlar."
+            }
+          ]
+        }
+      ]
+    },
+    "8": {
+      "sinif": 8,
+      "konular": [
+        {
+          "konu_id": "8.K01",
+          "konu_adi": "Mevsimlerin Oluşumu",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.1.1.1",
+              "kazanim_adi": "Mevsimlerin oluşumuna yönelik tahminlerde bulunur."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K02",
+          "konu_adi": "İklim ve Hava Hareketleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.1.2.1",
+              "kazanim_adi": "İklim ve hava olayları arasındaki farkı açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.1.2.2",
+              "kazanim_adi": "İklim biliminin (klimatoloji) bir bilim dalı olduğunu ve bu alanda çalışan uzmanlara iklim bilimci (klimatolog) adı verildiğini söyler."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K03",
+          "konu_adi": "DNA ve Genetik Kod",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.2.1.1",
+              "kazanim_adi": "Nükleotid, gen, DNA ve kromozom kavramlarını açıklayarak bu kavramlar arasında ilişki kurar."
+            },
+            {
+              "kazanim_kodu": "F.8.2.1.2",
+              "kazanim_adi": "DNA'nın yapısını model üzerinde gösterir."
+            },
+            {
+              "kazanim_kodu": "F.8.2.1.3",
+              "kazanim_adi": "DNA'nın kendini nasıl eşlediğini ifade eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K04",
+          "konu_adi": "Kalıtım",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.2.2.1",
+              "kazanim_adi": "Kalıtım ile ilgili kavramları tanımlar."
+            },
+            {
+              "kazanim_kodu": "F.8.2.2.2",
+              "kazanim_adi": "Tek karakter çaprazlamaları ile ilgili problemler çözerek sonuçlar hakkında yorum yapar."
+            },
+            {
+              "kazanim_kodu": "F.8.2.2.3",
+              "kazanim_adi": "Akraba evliliklerinin genetik sonuçlarını tartışır."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K05",
+          "konu_adi": "Mutasyon ve Modifikasyon",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.2.3.1",
+              "kazanim_adi": "Örneklerden yola çıkarak mutasyonu açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.2.3.2",
+              "kazanim_adi": "Örneklerden yola çıkarak modifikasyonu açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.2.3.3",
+              "kazanim_adi": "Mutasyonla modifikasyon arasındaki farklar ile ilgili çıkarımda bulunur."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K06",
+          "konu_adi": "Adaptasyon (Çevreye Uyum)",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.2.4.1",
+              "kazanim_adi": "Canlıların yaşadıkları çevreye uyumlarını gözlem yaparak açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K07",
+          "konu_adi": "Biyoteknoloji",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.2.5.1",
+              "kazanim_adi": "Genetik mühendisliğini ve biyoteknolojiyi ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "F.8.2.5.2",
+              "kazanim_adi": "Biyoteknolojik uygulamalar kapsamında oluşturulan ikilemlerle bu uygulamaların insanlık için yararlı ve zararlı yönlerini tartışır."
+            },
+            {
+              "kazanim_kodu": "F.8.2.5.3",
+              "kazanim_adi": "Gelecekteki genetik mühendisliği ve biyoteknoloji uygulamalarının neler olabileceği hakkında tahminde bulunur."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K08",
+          "konu_adi": "Basınç",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.3.1.1",
+              "kazanim_adi": "Katı basıncını etkileyen değişkenleri deneyerek keşfeder."
+            },
+            {
+              "kazanim_kodu": "F.8.3.1.2",
+              "kazanim_adi": "Sıvı basıncını etkileyen değişkenleri tahmin eder ve tahminlerini test eder."
+            },
+            {
+              "kazanim_kodu": "F.8.3.1.3",
+              "kazanim_adi": "Katı, sıvı ve gazların basınç özelliklerinin günlük yaşam ve teknolojideki uygulamalarına örnekler verir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K09",
+          "konu_adi": "Periyodik Sistem",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.1.1",
+              "kazanim_adi": "Periyodik sistemde, grup ve periyotların nasıl oluşturulduğunu açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.4.1.2",
+              "kazanim_adi": "Elementleri periyodik tablo üzerinde metal, yarımetal ve ametal olarak sınıflandırır."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K10",
+          "konu_adi": "Fiziksel ve Kimyasal Değişimler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.2.1",
+              "kazanim_adi": "Fiziksel ve kimyasal değişim arasındaki farkları, çeşitli olayları gözlemleyerek açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K11",
+          "konu_adi": "Kimyasal Tepkimeler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.3.1",
+              "kazanim_adi": "Bileşiklerin kimyasal tepkime sonucunda oluştuğunu bilir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K12",
+          "konu_adi": "Asitler ve Bazlar",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.4.1",
+              "kazanim_adi": "Asit ve bazların genel özelliklerini ifade eder."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.2",
+              "kazanim_adi": "Asit ve bazlara günlük yaşamdan örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.3",
+              "kazanim_adi": "Günlük hayatta ulaşılabilecek malzemeleri asit-baz ayracı olarak kullanır."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.4",
+              "kazanim_adi": "Maddelerin asitlik ve bazlık durumlarına ilişkin pH değerlerini kullanarak çıkarımda bulunur."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.5",
+              "kazanim_adi": "Asit ve bazların çeşitli maddeler üzerindeki etkilerini gözlemler."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.6",
+              "kazanim_adi": "Asit ve bazların temizlik malzemesi olarak kullanılması esnasında oluşabilecek tehlikelerle ilgili gerekli tedbirleri alır."
+            },
+            {
+              "kazanim_kodu": "F.8.4.4.7",
+              "kazanim_adi": "Asit yağmurlarının önlenmesine yönelik çözüm önerileri sunar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K13",
+          "konu_adi": "Maddenin Isı ile Etkileşimi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.5.1",
+              "kazanim_adi": "Isınmanın maddenin cinsine, kütlesine ve/veya sıcaklık değişimine bağlı olduğunu deney yaparak keşfeder."
+            },
+            {
+              "kazanim_kodu": "F.8.4.5.2",
+              "kazanim_adi": "Hâl değiştirmek için gerekli ısının maddenin cinsi ve kütlesiyle ilişkili olduğunu deney yaparak keşfeder."
+            },
+            {
+              "kazanim_kodu": "F.8.4.5.3",
+              "kazanim_adi": "Maddelerin hâl değişimi ve ısınma grafiğini çizerek yorumlar."
+            },
+            {
+              "kazanim_kodu": "F.8.4.5.4",
+              "kazanim_adi": "Günlük yaşamda meydana gelen hâl değişimleri ile ısı alışverişini ilişkilendirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K14",
+          "konu_adi": "8.4.5. Maddenin Isı ile Etkileşimi 8.4.6.Türkiye'de Kimya Endüstrisi",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.4.6.1",
+              "kazanim_adi": "Geçmişten günümüze Türkiye'deki kimya endüstrisinin gelişimini araştırır."
+            },
+            {
+              "kazanim_kodu": "F.8.4.6.2",
+              "kazanim_adi": "Kimya endüstrisinde meslek dallarını araştırır ve gelecekteki yeni meslek alanları hakkında öneriler sunar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K15",
+          "konu_adi": "Basit Makineler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.5.1.1",
+              "kazanim_adi": "Basit makinelerin sağladığı avantajları örnekler üzerinden açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.5.1.2",
+              "kazanim_adi": "Basit makinelerden yararlanarak günlük yaşamda iş kolaylığı sağlayacak bir düzenek tasarlar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K16",
+          "konu_adi": "Besin Zinciri ve Enerji Akışı",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.6.1.1",
+              "kazanim_adi": "Besin zincirindeki üretici, tüketici, ayrıştırıcılara örnekler verir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K17",
+          "konu_adi": "Enerji Dönüşümleri",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.6.2.1",
+              "kazanim_adi": "Bitkilerde besin üretiminde fotosentezin önemini fark eder."
+            },
+            {
+              "kazanim_kodu": "F.8.6.2.2",
+              "kazanim_adi": "Fotosentez hızını etkileyen faktörler ile ilgili çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "F.8.6.2.3",
+              "kazanim_adi": "Canlılarda solunumun önemini belirtir."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K18",
+          "konu_adi": "Madde Döngüleri ve Çevre Sorunları",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.6.3.1",
+              "kazanim_adi": "Madde döngülerini şema üzerinde göstererek açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.6.3.2",
+              "kazanim_adi": "Madde döngülerinin yaşam açısından önemini sorgular."
+            },
+            {
+              "kazanim_kodu": "F.8.6.3.3",
+              "kazanim_adi": "Küresel iklim değişikliklerinin nedenlerini ve olası sonuçlarını tartışır."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K19",
+          "konu_adi": "Sürdürülebilir Kalkınma",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.6.4.1",
+              "kazanim_adi": "Kaynakların kullanımında tasarruflu davranmaya özen gösterir."
+            },
+            {
+              "kazanim_kodu": "F.8.6.4.2",
+              "kazanim_adi": "Kaynakların tasarruflu kullanımına yönelik proje tasarlar."
+            },
+            {
+              "kazanim_kodu": "F.8.6.4.3",
+              "kazanim_adi": "Geri dönüşüm için katı atıkların ayrıştırılmasının önemini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.6.4.4",
+              "kazanim_adi": "Geri dönüşümün ülke ekonomisine katkısına ilişkin araştırma verilerini kullanarak çözüm önerileri sunar."
+            },
+            {
+              "kazanim_kodu": "F.8.6.4.5",
+              "kazanim_adi": "Kaynakların tasarruflu kullanılmaması durumunda gelecekte karşılaşılabilecek problemleri belirterek çözüm önerileri sunar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K20",
+          "konu_adi": "Elektrik Yükleri ve Elektriklenme",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.7.1.1",
+              "kazanim_adi": "Elektriklenmeyi, bazı doğa olayları ve teknolojideki uygulama örnekleri ile açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.7.1.2",
+              "kazanim_adi": "Elektrik yüklerini sınıflandırarak aynı ve farklı cins elektrik yüklerinin birbirlerine etkisini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.7.1.3",
+              "kazanim_adi": "Deneyler yaparak elektriklenme çeşitlerini fark eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K21",
+          "konu_adi": "Elektrik Yüklü Cisimler",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.7.2.1",
+              "kazanim_adi": "Cisimleri, sahip oldukları elektrik yükleri bakımından sınıflandırır."
+            },
+            {
+              "kazanim_kodu": "F.8.7.2.2",
+              "kazanim_adi": "Topraklamayı açıklar."
+            }
+          ]
+        },
+        {
+          "konu_id": "8.K22",
+          "konu_adi": "Elektrik Enerjisinin Dönüşümü",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "F.8.7.3.1",
+              "kazanim_adi": "Elektrik enerjisinin ısı, ışık ve hareket enerjisine dönüştüğü uygulamalara örnekler verir."
+            },
+            {
+              "kazanim_kodu": "F.8.7.3.2",
+              "kazanim_adi": "Elektirik enerjisinin ısı, ışık veya hareket enerjisine dönüşümü temel alan bir model tasarlar."
+            },
+            {
+              "kazanim_kodu": "F.8.7.3.3",
+              "kazanim_adi": "Güç santrallerinde elektrik enerjisinin nasıl üretildiğini açıklar."
+            },
+            {
+              "kazanim_kodu": "F.8.7.3.4",
+              "kazanim_adi": "Güç santrallerinin avantaj ve dezavantajları konusunda fikirler üretir."
+            },
+            {
+              "kazanim_kodu": "F.8.7.3.5",
+              "kazanim_adi": "Elektrik enerjisinin bilinçli ve tasarruflu kullanılmasının aile ve ülke ekonomisi bakımından önemini tartışır."
+            },
+            {
+              "kazanim_kodu": "F.8.7.3.6",
+              "kazanim_adi": "Evlerde elektriği tasarruflu kullanmaya özen gösterir."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
