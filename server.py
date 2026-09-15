@@ -98,6 +98,16 @@ except ImportError:
     gemini_errors = None
     GEMINI_SDK_AVAILABLE = False
 
+# Kamera OMR modulunun form (PDF+QR) ureteci - Gemini gibi opsiyonel: kurulu
+# degilse sunucunun geri kalani calismaya devam eder, sadece
+# /api/teacher/omr/* uclari acik bir hata doner (bkz. asagidaki route'lar).
+try:
+    import omr_form
+    OMR_FORM_AVAILABLE = True
+except ImportError:
+    omr_form = None
+    OMR_FORM_AVAILABLE = False
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "yetki_veritabani.db")
 SECRET_PATH = os.path.join(BASE_DIR, ".flask_secret_key")
@@ -961,6 +971,65 @@ def _create_optical_templates_table(conn):
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        """
+    )
+    conn.commit()
+
+
+def _create_omr_tables(conn):
+    """Kamera ile Optik Okuma (OMR) modulu - edupusula-optik-okuma-prompt.md.
+    Mevcut 'Optik Okuyucu' (js/importOptical.js, optical_templates tablosu)
+    fiziksel tarayici cihazlarinin TXT ciktisini ayristirir; bu ise
+    ogretmenin telefon kamerasiyla cektigi kagit formu isler - ayri, yeni
+    bir veri modeli. id'ler optical_templates'teki gibi sunucuda
+    AUTOINCREMENT uretilir (students/exams/results'taki gibi istemciden
+    gelen id cakismasi riski burada yapisal olarak yok)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS omr_exam_definitions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+            grade_level TEXT,
+            topic TEXT,
+            title TEXT NOT NULL,
+            question_count INTEGER NOT NULL CHECK(question_count IN (15, 20)),
+            answer_key_json TEXT NOT NULL,
+            curriculum_range_json TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS omr_papers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exam_definition_id INTEGER NOT NULL REFERENCES omr_exam_definitions(id) ON DELETE CASCADE,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+            paper_token TEXT UNIQUE NOT NULL,
+            class_name TEXT,
+            printed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS omr_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER REFERENCES omr_papers(id) ON DELETE SET NULL,
+            exam_definition_id INTEGER NOT NULL REFERENCES omr_exam_definitions(id) ON DELETE CASCADE,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+            match_status TEXT NOT NULL DEFAULT 'pending',
+            image_path TEXT NOT NULL,
+            per_question_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','processing','needs_review','approved','rejected')),
+            reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_omr_papers_token ON omr_papers(paper_token);
+        CREATE INDEX IF NOT EXISTS idx_omr_papers_exam ON omr_papers(exam_definition_id);
+        CREATE INDEX IF NOT EXISTS idx_omr_scans_exam ON omr_scans(exam_definition_id);
         """
     )
     conn.commit()
@@ -2058,6 +2127,7 @@ def run_v2_migration(conn):
     _create_question_bank_tables(conn)
     _create_invite_tables(conn)
     _create_optical_templates_table(conn)
+    _create_omr_tables(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -4963,6 +5033,188 @@ def api_admin_delete_optical_template(template_id):
     db.commit()
     log_audit(db, "OPTICAL_TEMPLATE_DELETED", resource_type="optical_template", resource_id=template_id)
     return jsonify({"ok": True})
+
+
+# ============================================================
+# API: Öğretmen - Optik Okuma (Kamera OMR) - Faz 1: test tanımlama +
+# basılı form üretimi. Kamera/CV pipeline sonraki fazlarda buraya bağlanır
+# (bkz. edupusula-optik-okuma-prompt.md). js/importOptical.js'deki mevcut
+# "Optik Okuyucu" ile İLGİSİZ - o fiziksel tarayıcı cihazlarının TXT
+# çıktısını okur, bu ise telefon kamerasıyla çekilen kağıdı.
+# ============================================================
+
+def _require_omr_form():
+    if not OMR_FORM_AVAILABLE:
+        return jsonify({"error": "Optik form üretici sunucuda kurulu değil "
+                                  "(reportlab/qrcode eksik). Lütfen sunucu "
+                                  "yöneticisine bildirin."}), 503
+    return None
+
+
+@app.route("/api/teacher/omr/meta")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_meta():
+    db = get_db()
+    subjects = db.execute("SELECT id, name, code FROM subjects ORDER BY name").fetchall()
+    grade_levels = db.execute(
+        "SELECT id, name FROM grade_levels ORDER BY CAST(name AS INTEGER)"
+    ).fetchall()
+    return jsonify({
+        "subjects": [dict(r) for r in subjects],
+        "gradeLevels": [dict(r) for r in grade_levels],
+    })
+
+
+@app.route("/api/teacher/omr/exams", methods=["GET"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_list_exams():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    rows = db.execute(
+        "SELECT e.id, e.title, e.topic, e.grade_level, e.question_count, e.created_at, "
+        "s.name AS subject_name FROM omr_exam_definitions e "
+        "LEFT JOIN subjects s ON s.id = e.subject_id "
+        "WHERE e.organization_id = ? ORDER BY e.created_at DESC",
+        (org_id,),
+    ).fetchall()
+    return jsonify({"exams": [dict(r) for r in rows]})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>", methods=["GET"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_get_exam(exam_def_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    row = db.execute(
+        "SELECT * FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    result = dict(row)
+    result["answerKey"] = json.loads(result.pop("answer_key_json") or "{}")
+    result["curriculumRange"] = json.loads(result.pop("curriculum_range_json") or "null")
+    return jsonify(result)
+
+
+@app.route("/api/teacher/omr/exams", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_create_exam():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    question_count = data.get("questionCount")
+    answer_key = data.get("answerKey")
+    subject_id = data.get("subjectId")
+    grade_level = (data.get("gradeLevel") or "").strip() or None
+    topic = (data.get("topic") or "").strip() or None
+    curriculum_range = data.get("curriculumRange")
+
+    if not title:
+        return jsonify({"error": "Test adı gerekli."}), 400
+    if question_count not in (15, 20):
+        return jsonify({"error": "Soru sayısı 15 ya da 20 olmalı."}), 400
+    if not isinstance(answer_key, dict) or not answer_key:
+        return jsonify({"error": "Cevap anahtarı gerekli."}), 400
+    for q_no in range(1, question_count + 1):
+        ans = answer_key.get(str(q_no))
+        if ans not in ("A", "B", "C", "D"):
+            return jsonify({"error": f"{q_no}. sorunun cevabı eksik ya da geçersiz."}), 400
+    if subject_id is not None:
+        subject_row = db.execute("SELECT id FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+        if not subject_row:
+            return jsonify({"error": "Geçersiz ders."}), 400
+    if curriculum_range is not None and not isinstance(curriculum_range, list):
+        return jsonify({"error": "Geçersiz kazanım aralığı."}), 400
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO omr_exam_definitions (organization_id, subject_id, grade_level, topic, title, "
+        "question_count, answer_key_json, curriculum_range_json, created_by, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (org_id, subject_id, grade_level, topic, title, question_count,
+         json.dumps(answer_key, ensure_ascii=False),
+         json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None,
+         session["user_id"], now),
+    )
+    db.commit()
+    log_audit(db, "OMR_EXAM_DEFINITION_CREATED", resource_type="omr_exam_definition", resource_id=cur.lastrowid)
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/papers", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_generate_papers(exam_def_id):
+    unavailable = _require_omr_form()
+    if unavailable:
+        return unavailable
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    exam_def = db.execute(
+        "SELECT id, title FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    data = request.get_json(silent=True) or {}
+    student_ids = data.get("studentIds")
+    if not isinstance(student_ids, list) or not student_ids:
+        return jsonify({"error": "En az bir öğrenci seçilmeli."}), 400
+
+    # Ogretmenin SADECE kendi erisebildigi ogrenciler icin form uretebilmesi
+    # gerekir (bkz. get_allowed_student_ids) - aksi halde baska bir sinifin/
+    # okulun ogrencisine kagit atanabilirdi.
+    allowed_ids = get_allowed_student_ids(db)
+    if allowed_ids is not None:
+        student_ids = [sid for sid in student_ids if sid in allowed_ids]
+    if not student_ids:
+        return jsonify({"error": "Seçilen öğrencilere erişiminiz yok."}), 403
+
+    placeholders = ",".join("?" * len(student_ids))
+    students = db.execute(
+        f"SELECT id, first_name, last_name, class_name FROM students "
+        f"WHERE id IN ({placeholders}) AND organization_id = ?",
+        (*student_ids, org_id),
+    ).fetchall()
+    if not students:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+
+    now = datetime.now().isoformat()
+    papers_for_pdf = []
+    for s in students:
+        token = secrets.token_urlsafe(12)
+        db.execute(
+            "INSERT INTO omr_papers (exam_definition_id, organization_id, student_id, paper_token, "
+            "class_name, printed_at) VALUES (?,?,?,?,?,?)",
+            (exam_def_id, org_id, s["id"], token, s["class_name"], now),
+        )
+        papers_for_pdf.append({
+            "paper_token": token,
+            "student_name": f"{s['first_name'] or ''} {s['last_name'] or ''}".strip(),
+            "class_name": s["class_name"] or "",
+        })
+    db.commit()
+    log_audit(db, "OMR_PAPERS_GENERATED", resource_type="omr_exam_definition", resource_id=exam_def_id)
+
+    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"])
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="optik-form-{exam_def_id}.pdf"'},
+    )
 
 
 # ============================================================
@@ -9129,7 +9381,7 @@ def api_question_bank_create_learning_outcome():
 # ============================================================
 
 @app.route("/api/admin/question-bank/curriculum")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "teacher", "super_admin"), permission="questions.view")
 def api_question_bank_curriculum():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
