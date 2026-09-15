@@ -1331,11 +1331,16 @@ def _create_question_bank_tables(conn):
     if units_cols and "grade_level_id" not in units_cols:
         conn.execute("ALTER TABLE units ADD COLUMN grade_level_id INTEGER REFERENCES grade_levels(id) ON DELETE SET NULL")
 
-    # 5-12 (ortaokul + lise) varsayilan kademe listesi - admin panelinden
+    # 5-8 (SADECE ortaokul) varsayilan kademe listesi - 2026-09-15'te
+    # kullanici istegiyle liseye (9-12) daraltildi, admin panelinden
     # sonradan duzenlenebilir/genisletilebilir, burasi sadece ilk kurulum.
+    # NOT: bu sadece SIFIR kurulumlarda calisir - zaten kurulmus (staging/
+    # prod) veritabanlarinda 9-12 satirlari varsa asagidaki okuma
+    # sorgularindaki filtre bunlari gizler (satirlar SILINMEZ, geri
+    # donusturulebilir).
     if not conn.execute("SELECT 1 FROM grade_levels LIMIT 1").fetchone():
         now_gl = datetime.now().isoformat()
-        for grade_name in ("5", "6", "7", "8", "9", "10", "11", "12"):
+        for grade_name in ("5", "6", "7", "8"):
             conn.execute("INSERT OR IGNORE INTO grade_levels (name, created_at) VALUES (?,?)", (grade_name, now_gl))
 
     # Var olan kurulumlarda booklet_code sütunu eklenmeden önce oluşturulmuş
@@ -5083,9 +5088,17 @@ def _require_omr_form():
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_meta():
     db = get_db()
-    subjects = db.execute("SELECT id, name, code FROM subjects ORDER BY name").fetchall()
+    # Site sadece ortaokulu (5-8) hedefliyor (2026-09-15, kullanici istegi) -
+    # lise/TYT/AYT dersleri (subjects.code 'tyt_'/'ayt_' ile baslar) ve 9-12.
+    # sinif SATIRLARI SILINMEDI, sadece bu ve benzeri listeleme uclarindan
+    # gizlendi (bkz. api_question_bank_grade_levels'taki ayni desen).
+    subjects = db.execute(
+        "SELECT id, name, code FROM subjects "
+        "WHERE code NOT LIKE 'tyt_%' AND code NOT LIKE 'ayt_%' ORDER BY name"
+    ).fetchall()
     grade_levels = db.execute(
-        "SELECT id, name FROM grade_levels ORDER BY CAST(name AS INTEGER)"
+        "SELECT id, name FROM grade_levels WHERE CAST(name AS INTEGER) <= 8 "
+        "ORDER BY CAST(name AS INTEGER)"
     ).fetchall()
     return jsonify({
         "subjects": [dict(r) for r in subjects],
@@ -9706,7 +9719,15 @@ def api_question_bank_bulk_tag():
 @login_required(role="admin", permission="questions.view")
 def api_question_bank_grade_levels():
     db = get_db()
-    rows = db.execute("SELECT id, name FROM grade_levels ORDER BY CAST(name AS INTEGER)").fetchall()
+    # Site sadece ortaokulu (5-8) hedefliyor (2026-09-15, kullanici istegi) -
+    # 9-12 satirlari SILINMEDI (geriye donusturulebilir), sadece bu listeleme
+    # ucundan gizleniyor. SQLite'ta CAST(metin AS INTEGER) sayisal olmayan
+    # bir deger icin 0 doner, bu yuzden elle eklenmis ozel (sayisal olmayan)
+    # isimler <=8 kosuluna zaten takilmadan gecer.
+    rows = db.execute(
+        "SELECT id, name FROM grade_levels WHERE CAST(name AS INTEGER) <= 8 "
+        "ORDER BY CAST(name AS INTEGER)"
+    ).fetchall()
     return jsonify({"gradeLevels": [dict(r) for r in rows]})
 
 
