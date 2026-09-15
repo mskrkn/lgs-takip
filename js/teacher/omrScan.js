@@ -133,6 +133,22 @@ function _omrOpenScanView(examDefId, examTitle) {
 
   _omrScanState = { examDefId, examTitle, uploaded: 0, queued: 0, ready: false, readySince: 0 };
 
+  // Tarayicilar getUserMedia'yi SADECE "guvenli baglam"da (HTTPS ya da
+  // localhost/127.0.0.1) sunar - ozellikle telefon tarayicilarinda LAN IP'si
+  // uzerinden (http://192.168.x.x gibi) hicbir izin penceresi bile CIKMADAN
+  // navigator.mediaDevices tamamen tanimsiz kalir. Bu durumda dogrudan
+  // .getUserMedia cagirmak senkron bir TypeError firlatip ekranin sessizce
+  // siyah kalmasina yol acardi - bunun yerine acik bir Turkce aciklama
+  // gosteriyoruz (gercek bir olayla dogrulandi: Android Chrome + LAN IP).
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    document.getElementById('omr-scan-hint').textContent =
+      '⚠️ Kamera bu bağlantıda kullanılamıyor. Tarayıcılar kamerayı sadece ' +
+      'HTTPS üzerinden (ya da bilgisayarda "localhost" ile) açmaya izin verir. ' +
+      'Telefondan LAN IP (http://192.168...) ile test ediyorsanız, staging ' +
+      'ortamının HTTPS adresini kullanın.';
+    return;
+  }
+
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
     .then(stream => {
       _omrScanState.stream = stream;
