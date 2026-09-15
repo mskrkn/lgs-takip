@@ -614,7 +614,7 @@ ROLE_PERMISSIONS_SEED = {
                     "analytics.school", "assignments.view"],
     "TEACHER": [
         "students.view", "students.view_academic_data",
-        "classes.view", "exams.view", "results.view", "analytics.view",
+        "classes.view", "exams.view", "results.view", "results.create", "analytics.view",
         "questions.view", "questions.create", "questions.update",
         "assignments.view", "assignments.create", "assignments.update",
         "assignments.cancel", "assignments.view_results",
