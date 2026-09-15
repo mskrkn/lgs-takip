@@ -1,0 +1,306 @@
+{
+  "ders": "Sosyal Bilgiler",
+  "dersKisaltma": "SB",
+  "siniflar": {
+    "5": {
+      "sinif": 5,
+      "konular": [
+        {
+          "konu_id": "5.K01",
+          "konu_adi": "BİRLİKTE YAŞAMAK",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.1.1",
+              "kazanim_adi": "Dâhil olduğu gruplar ve bu gruplardaki rolleri arasındaki ilişkileri çözümleyebilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.1.2",
+              "kazanim_adi": "Kültürel özelliklere saygı duymanın birlikte yaşamaya etkisini yorumlayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.1.3",
+              "kazanim_adi": "Toplumsal birliği sürdürmeye yönelik yardımlaşma ve dayanışma faaliyetlerine katkı sağlayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K02",
+          "konu_adi": "EVİMİZ DÜNYA",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.1.3",
+              "kazanim_adi": "Toplumsal birliği sürdürmeye yönelik yardımlaşma ve dayanışma faaliyetlerine katkı sağlayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.2.1",
+              "kazanim_adi": "Yaşadığı ilin göreceli konum özelliklerini belirleyebilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.2.2",
+              "kazanim_adi": "Yaşadığı ilde doğal ve beşerî çevredeki değişimi neden ve sonuçlarıyla yorumlayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.2.3",
+              "kazanim_adi": "Yaşadığı ilde meydana gelebilecek afetlerin etkilerini azaltmaya yönelik farkındalık etkinlikleri düzenleyebilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.2.4",
+              "kazanim_adi": "Ülkemize komşu devletler hakkında bilgi toplayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K03",
+          "konu_adi": "ORTAK MİRASIMIZ",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.3.1",
+              "kazanim_adi": "Yaşadığı ildeki ortak miras ögelerine ilişkin oluşturduğu ürünü paylaşabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.3.2",
+              "kazanim_adi": "Anadolu'da ilk yerleşimleri kuran toplumların sosyal hayatlarına yönelik bakış açısı geliştirebilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.3.3",
+              "kazanim_adi": "Mezopotamya ve Anadolu medeniyetlerinin ortak mirasa katkılarını karşılaştırabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K04",
+          "konu_adi": "YAŞAYAN DEMOKRASİMİZ",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.3.3",
+              "kazanim_adi": "Mezopotamya ve Anadolu medeniyetlerinin ortak mirasa katkılarını karşılaştırabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.4.1",
+              "kazanim_adi": "Demokrasi ve cumhuriyet kavramları arasındaki ilişkiyi çözümleyebilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.4.2",
+              "kazanim_adi": "Toplum düzenine etkisi bakımından etkin vatandaş olmanın önemine yönelik"
+            },
+            {
+              "kazanim_kodu": "SB.5.4.3",
+              "kazanim_adi": "Temel insan hak ve sorumluluklarının önemini sorgulayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.4.4",
+              "kazanim_adi": "Bir ihtiyaç hâlinde veya sorun karşısında başvuru yapılabilecek kurumlar hakkında bilgi toplayabilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K05",
+          "konu_adi": "HAYATIMIZDAKİ EKONOMİ",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.4.4",
+              "kazanim_adi": "Bir ihtiyaç hâlinde veya sorun karşısında başvuru yapılabilecek kurumlar hakkında bilgi toplayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.5.1",
+              "kazanim_adi": "Kaynakları verimli kullanmanın doğa ve insanlar üzerindeki etkisini yorumlayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.5.2",
+              "kazanim_adi": "İhtiyaç ve isteklerini karşılamak için gerekli bütçeyi planlayabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.5.3",
+              "kazanim_adi": "Yaşadığı ildeki ekonomik faaliyetleri özetleyebilme"
+            }
+          ]
+        },
+        {
+          "konu_id": "5.K06",
+          "konu_adi": "TEKNOLOJİ VE SOSYAL BİLİMLER",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.5.6.1.T",
+              "kazanim_adi": "eknolojik gelişmelerin toplum hayatına etkilerini tartışabilme"
+            },
+            {
+              "kazanim_kodu": "SB.5.6.2",
+              "kazanim_adi": "Teknolojik ürünlerin bilinçli kullanımının önemine ilişkin ürün oluşturabilme"
+            }
+          ]
+        }
+      ]
+    },
+    "6": {
+      "sinif": 6,
+      "konular": []
+    },
+    "7": {
+      "sinif": 7,
+      "konular": [
+        {
+          "konu_id": "7.K01",
+          "konu_adi": "BİREY VE TOPLUM",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.1.1",
+              "kazanim_adi": "İletişimi etkileyen tutum ve davranışları analiz ederek kendi tutum ve davranışlarını sorgular."
+            },
+            {
+              "kazanim_kodu": "SB.7.1.2",
+              "kazanim_adi": "Bireysel ve toplumsal ilişkilerde olumlu iletişim yollarını kullanır."
+            },
+            {
+              "kazanim_kodu": "SB.7.1.3",
+              "kazanim_adi": "Medyanın sosyal değişim ve etkileşimdeki rolünü tartışır."
+            },
+            {
+              "kazanim_kodu": "SB.7.1.4",
+              "kazanim_adi": "İletişim araçlarından yararlanırken haklarını kullanır ve sorumluluklarını yerine getirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K02",
+          "konu_adi": "KÜLTÜR VE MİRAS",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.2.1",
+              "kazanim_adi": "Osmanlı Devleti'nin siyasi güç olarak ortaya çıkış sürecini ve bu süreci etkileyen faktörleri açıklar."
+            },
+            {
+              "kazanim_kodu": "SB.7.2.2",
+              "kazanim_adi": "Osmanlı Devleti'nin fetih siyasetini örnekler üzerinden analiz eder."
+            },
+            {
+              "kazanim_kodu": "SB.7.2.3",
+              "kazanim_adi": "Avrupa'daki gelişmelerle bağlantılı olarak Osmanlı Devleti'ni değişime zorlayan süreçleri kavrar."
+            },
+            {
+              "kazanim_kodu": "SB.7.2.4",
+              "kazanim_adi": "Osmanlı Devleti'nde ıslahat hareketleri sonucu ortaya çıkan kurumlardan hareketle toplumsal ve ekonomik değişim hakkında çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "SB.7.2.5",
+              "kazanim_adi": "Osmanlı kültür, sanat ve estetik anlayışına örnekler verir."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K03",
+          "konu_adi": "İNSANLAR, YERLER VE ÇEVRELER",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.3.1",
+              "kazanim_adi": "Örnek incelemeler yoluyla geçmişten günümüze, yerleşmeyi etkileyen faktörler hakkında çıkarımlarda bulunur."
+            },
+            {
+              "kazanim_kodu": "SB.7.3.2",
+              "kazanim_adi": "Türkiye'de nüfusun dağılışını etkileyen faktörlerden hareketle Türkiye'nin demografk özelliklerini yorumlar."
+            },
+            {
+              "kazanim_kodu": "SB.7.3.3",
+              "kazanim_adi": "Örnek incelemeler yoluyla göçün neden ve sonuçlarını tartışır."
+            },
+            {
+              "kazanim_kodu": "SB.7.3.4",
+              "kazanim_adi": "Temel haklardan yerleşme ve seyahat özgürlüğünün kısıtlanması halinde ortaya çıkacak olumsuz durumlara örnekler gösterir."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K04",
+          "konu_adi": "BİLİM, TEKNOLOJİ VE TOPLUM",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.4.1",
+              "kazanim_adi": "Bilginin korunması, yaygınlaştırılması ve aktarılmasında değişim ve sürekliliği inceler."
+            },
+            {
+              "kazanim_kodu": "SB.7.4.2",
+              "kazanim_adi": "Türk-İslam medeniyetinde yetişen bilginlerin bilimsel gelişme sürecine katkılarını tartışır."
+            },
+            {
+              "kazanim_kodu": "SB.7.4.3",
+              "kazanim_adi": "XV-XX. yüzyıllar arasında Avrupa'da yaşanan gelişmelerin günümüz bilimsel birikiminin oluşmasına etkisini analiz eder."
+            },
+            {
+              "kazanim_kodu": "SB.7.4.4",
+              "kazanim_adi": "Özgür düşüncenin bilimsel gelişmelere katkısını değerlendirir."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K05",
+          "konu_adi": "ÜRETİM, DAĞITIM VE TÜKETİM",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.5.1",
+              "kazanim_adi": "Üretimde ve yönetimde toprağın önemini geçmişten ve günümüzden örneklerle açıklar."
+            },
+            {
+              "kazanim_kodu": "SB.7.5.3",
+              "kazanim_adi": "Kurumların ve sivil toplum kuruluşlarının çalışmalarına ve sosyal yaşamdaki rollerine örnekler verir."
+            },
+            {
+              "kazanim_kodu": "SB.7.5.4",
+              "kazanim_adi": "Tarih boyunca Türklerde meslek edindirme ve meslek etiği kazandırmada rol oynayan kurumları tanır."
+            },
+            {
+              "kazanim_kodu": "SB.7.5.5",
+              "kazanim_adi": "Dünyadaki gelişmelere bağlı olarak ortaya çıkan yeni meslekleri dikkate alarak mesleki"
+            },
+            {
+              "kazanim_kodu": "SB.7.5.6",
+              "kazanim_adi": "Dijital teknolojilerin üretim, dağıtım ve tüketim ağında meydana getirdiği değişimleri analiz eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K06",
+          "konu_adi": "ETKİN VATANDAŞLIK",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.6.1",
+              "kazanim_adi": "Demokrasinin ortaya çıkışını, gelişim evrelerini ve günümüzde ifade ettiği anlamları açıklar."
+            },
+            {
+              "kazanim_kodu": "SB.7.6.2",
+              "kazanim_adi": "Atatürk'ün Türk demokrasisinin gelişimine katkılarını açıklar."
+            },
+            {
+              "kazanim_kodu": "SB.7.6.3",
+              "kazanim_adi": "Türkiye Cumhuriyeti Devleti'nin temel niteliklerini toplumsal hayattaki uygulamalarla ilişkilendirir."
+            },
+            {
+              "kazanim_kodu": "SB.7.6.4",
+              "kazanim_adi": "Demokrasinin uygulanma süreçlerinde karşılaşılan sorunları analiz eder."
+            }
+          ]
+        },
+        {
+          "konu_id": "7.K07",
+          "konu_adi": "KÜRESEL BAĞLANTILAR",
+          "kazanimlar": [
+            {
+              "kazanim_kodu": "SB.7.7.1",
+              "kazanim_adi": "Türkiye'nin üyesi olduğu uluslararası kuruluşlara örnekler verir."
+            },
+            {
+              "kazanim_kodu": "SB.7.7.2",
+              "kazanim_adi": "Türkiye'nin ilişkide olduğu ekonomik bölge ve kuruluşları tanır."
+            },
+            {
+              "kazanim_kodu": "SB.7.7.3",
+              "kazanim_adi": "Çeşitli kültürlere yönelik kalıp yargıları sorgular."
+            },
+            {
+              "kazanim_kodu": "SB.7.7.4",
+              "kazanim_adi": "Arkadaşlarıyla birlikte küresel sorunların çözümüne yönelik fİkir önerileri geliştirir."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

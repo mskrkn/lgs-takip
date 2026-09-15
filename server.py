@@ -463,6 +463,9 @@ def _backfill_parent_students(conn):
 SUBJECT_SEED = [
     ("turkce", "Türkçe"), ("inkilap", "T.C. İnkılap Tarihi"), ("din", "Din Kültürü"),
     ("ingilizce", "İngilizce"), ("matematik", "Matematik"), ("fen", "Fen Bilimleri"),
+    # 5-7. sinif Sosyal Bilgiler - "tyt_sosyal" (lise, Sosyal Bilimler) ile
+    # KARISTIRILMAMALI, ayri bir ders (bkz. Optik Okuma konu/kazanim JSON'lari).
+    ("sosyal_bilgiler", "Sosyal Bilgiler"),
     ("tyt_turkce", "Türkçe"), ("tyt_sosyal", "Sosyal Bilimler"),
     ("tyt_matematik", "Temel Matematik"), ("tyt_fen", "Fen Bilimleri"),
     ("ayt_matematik", "Matematik"), ("ayt_fizik", "Fizik"), ("ayt_kimya", "Kimya"),
@@ -1050,6 +1053,13 @@ def _create_omr_tables(conn):
     omr_exam_def_cols = [r[1] for r in conn.execute("PRAGMA table_info(omr_exam_definitions)").fetchall()]
     if "exam_id" not in omr_exam_def_cols:
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN exam_id INTEGER REFERENCES exams(id)")
+    # Konu/Kazanim artik serbest metin degil, seeds/omr_konu_kazanim/*.json'dan
+    # secilen sabit bir kod+ad cifti (bkz. api_teacher_omr_curriculum_topics) -
+    # 'topic' sutunu geriye donuk uyumluluk icin konu ADINI tutmaya devam eder.
+    if "kazanim_kodu" not in omr_exam_def_cols:
+        conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_kodu TEXT")
+    if "kazanim_adi" not in omr_exam_def_cols:
+        conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_adi TEXT")
     conn.commit()
 
 
@@ -5083,6 +5093,53 @@ def api_teacher_omr_meta():
     })
 
 
+# Optik Okuma "Konu/Kazanım" secimi - Soru Havuzu'nun curriculum_nodes DB
+# agacindan BAGIMSIZ, kullanicinin verdigi statik JSON dosyalarindan okunur
+# (bkz. seeds/omr_konu_kazanim/). subjects.code -> dosya adi eslemesi.
+_OMR_CURRICULUM_FILES = {
+    "matematik": "soru_etiketleri_matematik.json",
+    "fen": "soru_etiketleri_fen_bilimleri.json",
+    "sosyal_bilgiler": "soru_etiketleri_sosyal_bilgiler.json",
+    "inkilap": "soru_etiketleri_tc_inkilap_tarihi.json",
+}
+_OMR_CURRICULUM_CACHE = {}
+
+
+def _load_omr_curriculum(subject_code):
+    if subject_code not in _OMR_CURRICULUM_FILES:
+        return None
+    if subject_code in _OMR_CURRICULUM_CACHE:
+        return _OMR_CURRICULUM_CACHE[subject_code]
+    path = os.path.join(BASE_DIR, "seeds", "omr_konu_kazanim", _OMR_CURRICULUM_FILES[subject_code])
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    _OMR_CURRICULUM_CACHE[subject_code] = data
+    return data
+
+
+@app.route("/api/teacher/omr/curriculum-topics")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_curriculum_topics():
+    """Ders+sinifa gore konu listesini (her konunun kendi kazanimlariyla
+    birlikte) doner - ogretmen konu secince kazanim secenekleri ayri bir
+    istek atmadan (bkz. js/teacher/omrDefine.js) client-side filtrelenir."""
+    db = get_db()
+    subject_id = request.args.get("subjectId", type=int)
+    grade_level = request.args.get("gradeLevel")
+    if not subject_id or not grade_level:
+        return jsonify({"error": "Ders ve sınıf seviyesi gerekli."}), 400
+    subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+    if not subject_row:
+        return jsonify({"error": "Geçersiz ders."}), 400
+    data = _load_omr_curriculum(subject_row["code"])
+    if not data:
+        return jsonify({"konular": []})
+    grade_data = (data.get("siniflar") or {}).get(str(grade_level))
+    return jsonify({"konular": (grade_data or {}).get("konular") or []})
+
+
 @app.route("/api/teacher/omr/exams", methods=["GET"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_list_exams():
@@ -5091,7 +5148,7 @@ def api_teacher_omr_list_exams():
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
-        "SELECT e.id, e.title, e.topic, e.grade_level, e.question_count, e.created_at, "
+        "SELECT e.id, e.title, e.topic, e.kazanim_adi, e.grade_level, e.question_count, e.created_at, "
         "s.name AS subject_name FROM omr_exam_definitions e "
         "LEFT JOIN subjects s ON s.id = e.subject_id "
         "WHERE e.organization_id = ? ORDER BY e.created_at DESC",
@@ -5134,6 +5191,8 @@ def api_teacher_omr_create_exam():
     subject_id = data.get("subjectId")
     grade_level = (data.get("gradeLevel") or "").strip() or None
     topic = (data.get("topic") or "").strip() or None
+    kazanim_kodu = (data.get("kazanimKodu") or "").strip() or None
+    kazanim_adi = (data.get("kazanimAdi") or "").strip() or None
     curriculum_range = data.get("curriculumRange")
 
     if not title:
@@ -5162,18 +5221,24 @@ def api_teacher_omr_create_exam():
     # yazabilir.
     exam_id = _platform_admin_next_id(db, "exams", org_id)
     db.execute(
-        "INSERT INTO exams (id, organization_id, name, date, exam_type, source) VALUES (?,?,?,?,?,?)",
-        (exam_id, org_id, title, now[:10], "optik_kamera", "omr_scan"),
+        "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) VALUES (?,?,?,?,?,?,?)",
+        # data_json='{}' (NULL DEGIL): _build_student_report gibi mevcut
+        # raporlama kodu exams.data_json'in HER ZAMAN gecerli JSON oldugunu
+        # varsayip dogrudan json.loads() cagiriyor - NULL birakilsaydi bu,
+        # o ogrencinin herhangi bir raporunu (hatta sunucu baslarken
+        # calisan sync_derived_tables'i) TypeError ile cokertirdi (gercek
+        # bir testte dogrulandi).
+        (exam_id, org_id, title, now[:10], "optik_kamera", "{}", "omr_scan"),
     )
 
     cur = db.execute(
         "INSERT INTO omr_exam_definitions (organization_id, subject_id, grade_level, topic, title, "
-        "question_count, answer_key_json, curriculum_range_json, created_by, created_at, exam_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "question_count, answer_key_json, curriculum_range_json, created_by, created_at, exam_id, "
+        "kazanim_kodu, kazanim_adi) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (org_id, subject_id, grade_level, topic, title, question_count,
          json.dumps(answer_key, ensure_ascii=False),
          json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None,
-         session["user_id"], now, exam_id),
+         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi),
     )
     db.commit()
     log_audit(db, "OMR_EXAM_DEFINITION_CREATED", resource_type="omr_exam_definition", resource_id=cur.lastrowid)
