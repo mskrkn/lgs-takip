@@ -4951,6 +4951,45 @@ def api_platform_add_result():
     return jsonify({"ok": True, "id": new_id})
 
 
+@app.route("/api/teacher/platform-admin-data")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_platform_admin_data():
+    """Bu okula platform admin'in (Aktif Okul üzerinden) DOĞRUDAN eklediği
+    source='platform_admin' öğrenci/deneme/sonuçları döner - okulun kendi
+    tarayıcısı (js/app.js init()) bunu çekip yerel Dexie'ye (salt-okunur
+    olarak) işler ki bu kayıtlar okulun kendi Anasayfa/Öğrenciler/Denemeler/
+    Raporlar ekranlarında da görünsün. exams/results.data_json zaten yerel
+    Dexie obje şekliyle bire bir aynı (bkz. api_platform_add_exam/
+    api_platform_add_result) - sadece json.loads yeterli; students düz
+    sütunlardan camelCase'e çevrilir."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    student_rows = db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students "
+        "WHERE organization_id=? AND source='platform_admin'", (org_id,),
+    ).fetchall()
+    exam_rows = db.execute(
+        "SELECT id, data_json FROM exams WHERE organization_id=? AND source='platform_admin'",
+        (org_id,),
+    ).fetchall()
+    result_rows = db.execute(
+        "SELECT id, data_json FROM results WHERE organization_id=? AND source='platform_admin'",
+        (org_id,),
+    ).fetchall()
+
+    students = [{
+        "id": r["id"], "schoolNumber": r["school_number"], "firstName": r["first_name"],
+        "lastName": r["last_name"], "className": r["class_name"],
+    } for r in student_rows]
+    exams = [{**json.loads(r["data_json"]), "id": r["id"]} for r in exam_rows if r["data_json"]]
+    results = [{**json.loads(r["data_json"]), "id": r["id"]} for r in result_rows if r["data_json"]]
+
+    return jsonify({"students": students, "exams": exams, "results": results})
+
+
 # ============================================================
 # API: Admin - Optik Okuyucu şablonları (okul içinde paylaşılan)
 # ============================================================
