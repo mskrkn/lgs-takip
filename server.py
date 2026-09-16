@@ -5218,10 +5218,12 @@ def api_teacher_omr_create_exam():
         ans = answer_key.get(str(q_no))
         if ans not in ("A", "B", "C", "D"):
             return jsonify({"error": f"{q_no}. sorunun cevabı eksik ya da geçersiz."}), 400
+    subject_code = None
     if subject_id is not None:
-        subject_row = db.execute("SELECT id FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+        subject_row = db.execute("SELECT id, code FROM subjects WHERE id = ?", (subject_id,)).fetchone()
         if not subject_row:
             return jsonify({"error": "Geçersiz ders."}), 400
+        subject_code = subject_row["code"]
     if curriculum_range is not None and not isinstance(curriculum_range, list):
         return jsonify({"error": "Geçersiz kazanım aralığı."}), 400
 
@@ -5232,16 +5234,32 @@ def api_teacher_omr_create_exam():
     # satirina baglanir - boylece api_teacher_omr_approve_scan sonucu
     # DOGRUDAN mevcut results tablosuna, sanki sıradan bir deneme gibi
     # yazabilir.
+    #
+    # data_json'a GERCEK bir topicMap yaziliyor (BOS {} DEGIL): mevcut
+    # build_question_stats/build_topic_stats/_build_compass/
+    # _build_error_memory (server.py) - ogrenci detay modalinin Konu &
+    # Kazanim Analizi / Basari Pusulasi / Hata Hafizasi sekmeleri - HER
+    # ZAMAN bu sekli (exams.data_json.topicMap[ders] = [{dizilim, soruId,
+    # kazanim}, ...] + results.data_json.subjects[ders].answers D/Y/B
+    # dizisi) bekliyor; bu SADECE eski fiziksel-tarayici Optik Okuyucu
+    # ile dolduruluyordu. Kamera OMR'i AYNI sekle sokmak, o zaten var olan
+    # zengin analiz ekranlarini (yeni UI kodu YAZMADAN) otomatik calistirir
+    # - bkz. proje plani "Optik Okuma Sonuclarini Ogrenci Sayfasinda
+    # Gosterme". V1'de bir OMR testinin TUM sorulari AYNI kazanima
+    # etiketlenir (bir test = bir kazanim/konu).
+    kazanim_label = kazanim_adi or topic or title
+    topic_map = {
+        (subject_code or "optik_genel"): [
+            {"dizilim": i, "soruId": None, "kazanim": kazanim_label}
+            for i in range(1, question_count + 1)
+        ]
+    }
+    exam_data_json = json.dumps({"topicMap": topic_map}, ensure_ascii=False)
+
     exam_id = _platform_admin_next_id(db, "exams", org_id)
     db.execute(
         "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) VALUES (?,?,?,?,?,?,?)",
-        # data_json='{}' (NULL DEGIL): _build_student_report gibi mevcut
-        # raporlama kodu exams.data_json'in HER ZAMAN gecerli JSON oldugunu
-        # varsayip dogrudan json.loads() cagiriyor - NULL birakilsaydi bu,
-        # o ogrencinin herhangi bir raporunu (hatta sunucu baslarken
-        # calisan sync_derived_tables'i) TypeError ile cokertirdi (gercek
-        # bir testte dogrulandi).
-        (exam_id, org_id, title, now[:10], "optik_kamera", "{}", "omr_scan"),
+        (exam_id, org_id, title, now[:10], "optik_kamera", exam_data_json, "omr_scan"),
     )
 
     cur = db.execute(
@@ -5672,12 +5690,24 @@ def api_teacher_omr_approve_scan(scan_id):
         return jsonify({"error": "Bu teste bağlı bir deneme kaydı bulunamadı."}), 500
 
     subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (exam_def["subject_id"],)).fetchone()
-    subject_key = subject_row["code"] if subject_row else "optik"
+    # "optik_genel" fallback'i api_teacher_omr_create_exam'daki topicMap
+    # anahtariyla BIREBIR AYNI olmali (subject_id secilmemis testler icin) -
+    # aksi halde build_question_stats bu dersi topicMap'te hic bulamaz ve
+    # Konu & Kazanim Analizi sekmesi sessizce bos kalir.
+    subject_key = subject_row["code"] if subject_row else "optik_genel"
 
     payload = json.loads(scan["per_question_json"])
     summary = payload["summary"]
     correct, wrong, blank = summary["correct"], summary["wrong"], summary["blank"] + summary["flagged"]
     net = max(0, round(correct - wrong / 3, 2))
+
+    # Ogrenci detay modalinin Konu & Kazanim Analizi / Basari Pusulasi /
+    # Hata Hafizasi sekmelerinin (server.py build_question_stats vb.)
+    # okudugu D/Y/B kodlu soru-soru cevap dizisi - "multi"/"ambiguous"
+    # yukaridaki aggregate blank hesabiyla TUTARLI olacak sekilde "B"ye
+    # esleniyor.
+    _outcome_to_code = {"correct": "D", "wrong": "Y", "blank": "B", "multi": "B", "ambiguous": "B"}
+    answers = [_outcome_to_code[q["outcome"]] for q in payload["questions"]]
 
     exam_id = exam_def["exam_id"]
     existing = db.execute(
@@ -5687,7 +5717,7 @@ def api_teacher_omr_approve_scan(scan_id):
     if existing and existing["source"] == "browser_sync":
         return jsonify({"error": "Bu öğrenci/deneme için okulun kendi verisinden zaten bir sonuç var."}), 409
 
-    subjects_payload = {subject_key: {"correct": correct, "wrong": wrong, "blank": blank, "net": net}}
+    subjects_payload = {subject_key: {"correct": correct, "wrong": wrong, "blank": blank, "net": net, "answers": answers}}
     result_payload = {"studentId": scan["student_id"], "examId": exam_id, "subjects": subjects_payload}
     if existing:
         result_id = existing["id"]
