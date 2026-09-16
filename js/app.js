@@ -110,6 +110,19 @@ const App = {
     db.setUserLimit(this.currentUser?.userLimit ?? null);
     db.repairAndLinkStudents().catch(console.error);
 
+    // Platform admin'in (Aktif Okul uzerinden) bu okula DOGRUDAN ekledigi
+    // ogrenci/deneme/sonuclari (source='platform_admin') yerel Dexie'ye
+    // cek - aksi halde bu okulun kendi hesabi kendi Anasayfa/Ogrenciler/
+    // Denemeler/Raporlar ekranlarinda bu kayitlari HIC gormez (bkz.
+    // [[edupusula_aktif_okul_context_switcher]]). Tek seferlik, sessiz -
+    // aci basarisiz olursa (offline) yerel onbellekle devam edilir.
+    if (this.currentUser?.organizationId) {
+      try {
+        const paRes = await fetch('/api/teacher/platform-admin-data');
+        if (paRes.ok) await db.syncPlatformAdminData(await paRes.json());
+      } catch (e) { /* offline: sessizce yerel onbellekle devam */ }
+    }
+
     // KRITIK: Bulut Senkronizasyonu (Firebase) anahtarini HER GIRISTE bu
     // okulun organization_id'sine kilitle - SyncModule.init() bunu okumadan
     // ONCE calisir. Eskiden bu alan serbest metindi ve varsayilan deger
@@ -1731,6 +1744,7 @@ const App = {
         <div style="display:flex;align-items:center;gap:10px">
           <div class="result-avatar" style="width:32px;height:32px;font-size:11px;border-radius:8px">${UI.avatar()}</div>
           <span style="font-weight:600">${row.firstName} ${row.lastName}</span>
+          ${row.source === 'platform_admin' ? '<span title="Platform tarafından eklendi" style="font-size:12px">🧭</span>' : ''}
         </div>
       `},
       { label: 'Sınıf', key: 'className' },
@@ -1754,7 +1768,7 @@ const App = {
         <div style="display:flex;gap:4px;justify-content:center;align-items:center">
           <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); App.showAddStudentResultModal(${row.id})" title="Bu öğrenciye deneme sonucu gir">➕ Sonuç Gir</button>
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); App.navigateTo('student-profile', { studentId: ${row.id} })">Profil</button>
-          <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); App.deleteStudent(${row.id})" title="Öğrenciyi Sil">🗑</button>
+          ${row.source === 'platform_admin' ? '' : `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); App.deleteStudent(${row.id})" title="Öğrenciyi Sil">🗑</button>`}
         </div>
       `
     });
@@ -1806,6 +1820,11 @@ const App = {
   },
 
   async deleteStudent(id) {
+    const student = await db.getStudent(id);
+    if (student?.source === 'platform_admin') {
+      UI.toast('Bu kayıt platform tarafından eklendi, buradan silinemez.', 'warning');
+      return;
+    }
     const ok = await UI.confirm('Bu öğrenciyi ve tüm sonuçlarını silmek istediğinize emin misiniz?');
     if (!ok) return;
     await db.deleteStudent(id);
@@ -2174,9 +2193,13 @@ const App = {
             📊 Toplam Net: <strong>${UI.formatNet(db.calcTotalNet(result))}</strong>
           </div>
         </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentResultModal(${studentId}, ${examId})">✏️ Düzenle</button>
-          <button class="btn btn-danger btn-sm" onclick="App.deleteStudentResult(${studentId}, ${examId})">🗑️ Sil</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${result.source === 'platform_admin' ? `
+            <span class="badge badge-info" style="font-size:12px" title="Platform tarafından eklendi">🧭 Platform kaydı - salt okunur</span>
+          ` : `
+            <button class="btn btn-secondary btn-sm" onclick="App.showAddStudentResultModal(${studentId}, ${examId})">✏️ Düzenle</button>
+            <button class="btn btn-danger btn-sm" onclick="App.deleteStudentResult(${studentId}, ${examId})">🗑️ Sil</button>
+          `}
         </div>
       </div>
       ${UI.buildTable(columns, rows)}
@@ -2204,6 +2227,11 @@ const App = {
   },
 
   async deleteStudentResult(studentId, examId) {
+    const result = await db.getResult(studentId, examId);
+    if (result?.source === 'platform_admin') {
+      UI.toast('Bu sonuç platform tarafından eklendi, buradan silinemez.', 'warning');
+      return;
+    }
     const ok = await UI.confirm('Bu deneme sonucunu silmek istediğinize emin misiniz?');
     if (!ok) return;
     await db.deleteResultByStudentAndExam(studentId, examId);
@@ -2484,10 +2512,10 @@ const App = {
         <div class="stat-card" style="cursor:pointer" onclick="App.navigateTo('exam-detail', { examId: ${exam.id} })">
           <div style="display:flex;justify-content:space-between;align-items:start">
             <div>
-              <h3 style="font-size:16px;font-weight:700">${exam.name}</h3>
+              <h3 style="font-size:16px;font-weight:700">${exam.name} ${exam.source === 'platform_admin' ? '<span title="Platform tarafından eklendi" style="font-size:12px">🧭</span>' : ''}</h3>
               <p class="text-muted" style="font-size:13px">${UI.formatDate(exam.date)} · <span class="badge badge-info" style="font-size:10px;padding:1px 6px">${EXAM_TYPE_LABELS[exam.examType] || 'LGS'}</span></p>
             </div>
-            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); App.deleteExam(${exam.id})" title="Sil">🗑</button>
+            ${exam.source === 'platform_admin' ? '' : `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); App.deleteExam(${exam.id})" title="Sil">🗑</button>`}
           </div>
           ${avg ? `
             <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap">
@@ -2539,6 +2567,11 @@ const App = {
   },
 
   async deleteExam(id) {
+    const exam = await db.getExam(id);
+    if (exam?.source === 'platform_admin') {
+      UI.toast('Bu deneme platform tarafından eklendi, buradan silinemez.', 'warning');
+      return;
+    }
     const ok = await UI.confirm('Bu denemeyi ve tüm sonuçlarını silmek istediğinize emin misiniz?');
     if (!ok) return;
     await db.deleteExam(id);

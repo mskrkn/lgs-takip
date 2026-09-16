@@ -1020,7 +1020,43 @@ class Database {
       this.getAllExams(),
       this.db.results.toArray()
     ]);
-    return { students, exams, results, exportDate: new Date().toISOString() };
+    // source==='platform_admin' satirlar (bkz. syncPlatformAdminData) BULUT
+    // SENKRONUNA (api/admin/sync) ASLA gonderilmemeli - sunucu bu id'leri
+    // _org_scoped_id ile ayni okulun kendi id blogunda gercek platform_admin
+    // satiriyla CAKISTIRIR (id ayni kalir), push'u INSERT hatasiyla bozar.
+    const ownOnly = (arr) => arr.filter(r => r.source !== 'platform_admin');
+    return {
+      students: ownOnly(students), exams: ownOnly(exams), results: ownOnly(results),
+      exportDate: new Date().toISOString(),
+    };
+  }
+
+  // Platform admin'in (Aktif Okul uzerinden) bu okula DOGRUDAN ekledigi
+  // ogrenci/deneme/sonuclari (source='platform_admin') yerel Dexie'ye
+  // salt-okunur olarak isler - "replace by source": gelen sette olmayan
+  // eski platform_admin satirlari (platform tarafinda silinmis/degismis
+  // olabilir) once temizlenir, sonra gelenler upsert edilir. importData'nin
+  // aksine (o hic silme yapmaz, bkz. js/sync.js) burada silme GEREKLI -
+  // aksi halde platform admin bir kaydi Aktif Okul'dan silince okulun
+  // yerelinde yetim kalirdi.
+  async syncPlatformAdminData(payload) {
+    if (!payload) return;
+    const tables = [
+      { table: this.db.students, incoming: payload.students },
+      { table: this.db.exams, incoming: payload.exams },
+      { table: this.db.results, incoming: payload.results },
+    ];
+    for (const { table, incoming } of tables) {
+      const rows = Array.isArray(incoming) ? incoming : [];
+      const staleIds = await table
+        .filter(r => r.source === 'platform_admin' && !rows.some(inc => inc.id === r.id))
+        .primaryKeys();
+      if (staleIds.length) await table.bulkDelete(staleIds);
+      if (rows.length) {
+        await table.bulkPut(rows.map(r => ({ ...r, source: 'platform_admin' })));
+      }
+    }
+    this._notifyChange();
   }
 
   // Import data from JSON
