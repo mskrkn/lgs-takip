@@ -1234,8 +1234,14 @@
       currentStudentDetailData = data;
       const s = data.student;
       const results = data.results || [];
-      const last = results[0];
-      const prev = results[1];
+      // Genel Deneme (Kazanım Denemesi/OMR HARİÇ) - özet kartları ve "Tüm
+      // Deneme Geçmişi" tablosu karışmasın diye sunucunun ayrı döndürdüğü
+      // generalResults kullanılır (bkz. Faz 1: Genel Deneme/Kazanım
+      // Denemesi ayrımı). Kazanım Denemeleri Optik Okuma sekmesinden
+      // incelenir.
+      const generalResults = data.generalResults || results.filter(r => r.examType !== 'optik_kamera');
+      const last = generalResults[0];
+      const prev = generalResults[1];
 
       let changeHtml = '<span class="net-neutral">➖</span>';
       if (last && prev) {
@@ -1290,7 +1296,7 @@
         <div class="detail-tabs-bar">
           <button type="button" class="detail-tab-btn active" data-tab-switch="overview">📊 1. Genel Bakış & Pusula</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="growth">📈 2. Gelişim & Karşılaştırma</button>
-          <button type="button" class="detail-tab-btn" data-tab-switch="exams">📝 3. Tüm Deneme Geçmişi (${results.length})</button>
+          <button type="button" class="detail-tab-btn" data-tab-switch="exams">📝 3. Tüm Deneme Geçmişi (${generalResults.length})</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="topics">🎯 4. Konu & Kazanım Analizi</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="coaching">🧠 5. Hata Hafızası & Koç</button>
         </div>
@@ -1381,7 +1387,8 @@
         <div class="detail-tab-pane" id="tab-pane-exams">
           <div class="card">
             <div class="card-header"><h4 class="card-title">📝 Katıldığı Tüm Denemeler ve Ders Dökümleri</h4></div>
-            ${results.length ? `
+            <p class="text-muted" style="font-size:12px;padding:0 16px">📘 Genel Denemeler - Kazanım Denemeleri (Optik Okuma) için "Optik Okuma" sekmesindeki inceleme ekranına bakın.</p>
+            ${generalResults.length ? `
             <div class="table-wrapper" style="margin-top:10px">
               <table class="simple-table">
                 <thead>
@@ -1398,7 +1405,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  ${results.map(r => {
+                  ${generalResults.map(r => {
                     const sub = r.subjects || {};
                     const sCell = (k) => {
                       const d = sub[k];
