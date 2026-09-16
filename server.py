@@ -2409,6 +2409,15 @@ def calc_total_net(subjects):
     return round(total, 2)
 
 
+def _is_mastery_exam_type(exam_type):
+    """'Kazanım Denemesi' (Optik Okuma/Kamera OMR kaynaklı) mi, yoksa 'Genel
+    Deneme' mi? exam_type='optik_kamera' bunun TEK ve güvenilir işareti -
+    başka hiçbir yol bu değeri yazmıyor (bkz. api_teacher_omr_create_exam).
+    Genel ortalama/trend/sıralama hesaplarının Kazanım Denemesi netleriyle
+    KARIŞMAMASI için tek noktadan kontrol edilir."""
+    return exam_type == "optik_kamera"
+
+
 def build_question_stats(exam_data, results_rows):
     """exam_data: exams.data_json (dict, 'topicMap' içerir).
     results_rows: [{'subjects': {...}}] listesi."""
@@ -6035,11 +6044,17 @@ def _all_class_averages(db, org_id, exam_id=None):
     verilen okula ait. class_name tek başına okul-güvenli değil (iki okul
     aynı "8/A" adını paylaşabilir), bu yüzden organization_id filtresi
     zorunlu - yoksa iki okulun aynı isimli sınıfları tek grupta karışır."""
-    exam_filter = "AND r.exam_id = ?" if exam_id else ""
+    # exam_id verilmemişse (genel/tüm-zamanlar sınıf ortalaması) Kazanım
+    # Denemesi (OMR) hariç tutulur - aksi halde tek derslik OMR netleri
+    # çok derslik Genel Deneme ortalamasına karışırdı (bkz. Faz 1 planı).
+    # exam_id VERİLMİŞSE (tek bir denemenin kendi sınıf karşılaştırması)
+    # tür farketmez - o zaten tek tip bir denemenin kendi verisidir.
+    exam_filter = "AND r.exam_id = ?" if exam_id else "AND e.exam_type != 'optik_kamera'"
     params = (org_id, exam_id) if exam_id else (org_id,)
     rows = db.execute(
         f"SELECT r.data_json, r.student_id, s.class_name FROM results r "
         f"JOIN students s ON s.id = r.student_id "
+        f"JOIN exams e ON e.id = r.exam_id "
         f"WHERE s.organization_id = ? {exam_filter}", params
     ).fetchall()
     by_class = {}
@@ -6084,7 +6099,7 @@ def _build_teacher_insights(db, student_ids):
     placeholders = ",".join("?" * len(student_ids))
     result_rows = db.execute(
         f"SELECT r.student_id, r.data_json, e.id as exam_id, e.name as exam_name, "
-        f"e.date as exam_date FROM results r JOIN exams e ON e.id = r.exam_id "
+        f"e.date as exam_date, e.exam_type FROM results r JOIN exams e ON e.id = r.exam_id "
         f"WHERE r.student_id IN ({placeholders}) ORDER BY e.date ASC",
         tuple(student_ids),
     ).fetchall()
@@ -6094,13 +6109,25 @@ def _build_teacher_insights(db, student_ids):
         data = json.loads(r["data_json"])
         by_student.setdefault(r["student_id"], []).append({
             "examId": r["exam_id"], "examName": r["exam_name"], "examDate": r["exam_date"],
+            "examType": r["exam_type"],
             "totalNet": calc_total_net(data.get("subjects")),
             "subjects": data.get("subjects", {}),
         })
 
+    # general_by_student: sadece Genel Deneme (Kazanım Denemesi/OMR hariç) -
+    # düşüş uyarısı/kişisel rekor/sınıf net trendi/en başarılı öğrenci
+    # hesapları OMR netiyle karışmasın diye (bkz. Faz 1 planı). Konu başarı
+    # haritası (aşağıda) BİLEREK tam `by_student`'ı kullanmaya devam eder -
+    # o zaten sadece topicMap'i olan (mastery) denemelerden veri çeker.
+    general_by_student = {}
+    for sid, rs in by_student.items():
+        filtered = [r for r in rs if not _is_mastery_exam_type(r["examType"])]
+        if filtered:
+            general_by_student[sid] = filtered
+
     # ---- 1) Son 3 denemede düşüşe geçen ders (öncelikli uyarı) ----
     decline_counts = {}
-    for sid, results in by_student.items():
+    for sid, results in general_by_student.items():
         if len(results) < 3:
             continue
         last3 = results[-3:]
@@ -6124,7 +6151,7 @@ def _build_teacher_insights(db, student_ids):
 
     # ---- 2) Kişisel rekor kıran öğrenciler (başarı) ----
     personal_records = []
-    for sid, results in by_student.items():
+    for sid, results in general_by_student.items():
         if len(results) < 2:
             continue
         nets = [r["totalNet"] for r in results]
@@ -6138,13 +6165,13 @@ def _build_teacher_insights(db, student_ids):
     exam_order = db.execute("SELECT id, name, date FROM exams ORDER BY date ASC").fetchall()
     trend_exams = []
     for e in exam_order:
-        nets = [r["totalNet"] for results in by_student.values() for r in results if r["examId"] == e["id"]]
+        nets = [r["totalNet"] for results in general_by_student.values() for r in results if r["examId"] == e["id"]]
         if nets:
             trend_exams.append({"examId": e["id"], "examName": e["name"], "avgNet": round(sum(nets) / len(nets), 2)})
     trend_exams = trend_exams[-10:]
 
     best_student_id, best_avg = None, -999
-    for sid, results in by_student.items():
+    for sid, results in general_by_student.items():
         avg = sum(r["totalNet"] for r in results) / len(results)
         if avg > best_avg:
             best_avg, best_student_id = avg, sid
@@ -6153,7 +6180,7 @@ def _build_teacher_insights(db, student_ids):
     if best_student_id is not None:
         wanted = {t["examId"] for t in trend_exams}
         best_student_trend = [{"examId": r["examId"], "totalNet": r["totalNet"]}
-                               for r in by_student[best_student_id] if r["examId"] in wanted]
+                               for r in general_by_student[best_student_id] if r["examId"] in wanted]
 
     growth_pct = None
     if len(trend_exams) >= 2 and trend_exams[0]["avgNet"]:
@@ -6313,14 +6340,18 @@ def api_teacher_overview():
     for s in students:
         s_dict = dict(s)
         res_rows = db.execute(
-            "SELECT r.exam_id, r.data_json, e.name as exam_name, e.date as exam_date "
+            "SELECT r.exam_id, r.data_json, e.name as exam_name, e.date as exam_date, e.exam_type "
             "FROM results r JOIN exams e ON e.id = r.exam_id "
             "WHERE r.student_id = ? ORDER BY e.date ASC",
             (s["id"],)
         ).fetchall()
 
+        # nets: sadece Genel Deneme - Kazanım Denemesi (OMR) netleri buradaki
+        # ortalama/en son/en iyi net özetine karışmasın (bkz. Faz 1 planı).
         nets = []
         for r in res_rows:
+            if _is_mastery_exam_type(r["exam_type"]):
+                continue
             data = json.loads(r["data_json"]) if r["data_json"] else {}
             subj = data.get("subjects", {})
             total_net = calc_total_net(subj)
@@ -6441,13 +6472,17 @@ def api_teacher_exam_detail(exam_id):
     prev_net_by_student = {}
     if my_student_ids and exam_row["date"]:
         placeholders = ",".join("?" * len(my_student_ids))
+        # AYNI turdeki (Genel Deneme <-> Genel Deneme, Kazanim Denemesi <->
+        # Kazanim Denemesi) bir onceki denemeyle kiyaslanir - aksi halde
+        # tek derslik bir OMR testinin neti, cok derslik bir LGS denemesiyle
+        # kiyaslanip anlamsiz bir artis/azalis oku gosterebilirdi.
         prev_rows = db.execute(
             f"SELECT r.student_id, r.data_json FROM results r "
             f"JOIN exams e ON e.id = r.exam_id "
             f"WHERE r.student_id IN ({placeholders}) AND r.organization_id = ? "
-            f"AND e.date < ? AND e.id != ? "
+            f"AND e.date < ? AND e.id != ? AND e.exam_type IS ? "
             f"ORDER BY e.date DESC",
-            (*my_student_ids, org_id, exam_row["date"], exam_id),
+            (*my_student_ids, org_id, exam_row["date"], exam_id, exam_row["exam_type"]),
         ).fetchall()
         for r in prev_rows:
             if r["student_id"] in prev_net_by_student:
@@ -8114,8 +8149,18 @@ def _build_student_report(db, student_id, exam_id=None):
             "examType": r["exam_type"], "subjects": subjects,
             "totalNet": calc_total_net(subjects),
         })
-        for key, s in subjects.items():
-            subject_nets.setdefault(key, []).append((s or {}).get("net") or 0)
+        # subject_nets SADECE Genel Deneme'den beslenir - Kazanım Denemesi
+        # (Optik Okuma) genelde tek derslik oluyor, genel ders ortalamasına/
+        # "en güçlü-zayıf ders"e karışırsa yanıltıcı olur (bkz. _is_mastery_exam_type).
+        if not _is_mastery_exam_type(r["exam_type"]):
+            for key, s in subjects.items():
+                subject_nets.setdefault(key, []).append((s or {}).get("net") or 0)
+
+    # general_results: sadece Genel Deneme (Kazanım Denemesi/OMR hariç) -
+    # ortalama/trend/sıralama/skor hesaplarının HİÇBİRİ Kazanım Denemesi
+    # netiyle karışmasın diye (bkz. Faz 1 planı). `results` (her ikisi de)
+    # SADECE dönüş değerindeki ham liste için ayrıca korunur.
+    general_results = [r for r in results if not _is_mastery_exam_type(r["examType"])]
 
     topic_stats = None
     topic_stats_exam_id = None
@@ -8124,7 +8169,11 @@ def _build_student_report(db, student_id, exam_id=None):
         if exam_id:
             target_row = next((r for r in result_rows if r["exam_id"] == exam_id), None)
         if target_row is None:
-            target_row = result_rows[-1]  # varsayilan: en son deneme
+            # varsayilan: EN SON Kazanım Denemesi (topicMap'i olan) - yoksa
+            # kronolojik son deneme. Aksi halde bir OMR testinden SONRA
+            # normal bir deneme girilince kazanım sekmesi "veri yok" görünürdü.
+            mastery_rows = [r for r in result_rows if _is_mastery_exam_type(r["exam_type"])]
+            target_row = mastery_rows[-1] if mastery_rows else result_rows[-1]
         topic_stats_exam_id = target_row["exam_id"]
         exam_data = json.loads(target_row["exam_json"])
         target_result_data = json.loads(target_row["data_json"])
@@ -8141,8 +8190,8 @@ def _build_student_report(db, student_id, exam_id=None):
     # yüzdelik dilim" gibi elimizde olmayan bir veri uydurmak yerine, gerçekten
     # sahip olduğumuz sınıf içi karşılaştırmayı kullanıyoruz.
     class_subject_averages, class_rank = None, None
-    if results:
-        latest_exam_id = results[-1]["examId"]
+    if general_results:
+        latest_exam_id = general_results[-1]["examId"]
         # s.class_name tek basina okul-guvenli degil (iki okul ayni "8/A"
         # adini paylasabilir) - organization_id filtresi olmadan iki okulun
         # sinif ortalamasi/sirasi birbirine karisir.
@@ -8162,7 +8211,7 @@ def _build_student_report(db, student_id, exam_id=None):
         if subject_sums:
             class_subject_averages = {k: round(subject_sums[k] / subject_counts[k], 2) for k in subject_sums}
         if class_totals:
-            my_total = results[-1]["totalNet"]
+            my_total = general_results[-1]["totalNet"]
             rank = sum(1 for t in class_totals if t > my_total) + 1
             class_rank = {"rank": rank, "classSize": len(class_totals)}
 
@@ -8176,14 +8225,14 @@ def _build_student_report(db, student_id, exam_id=None):
     #   Düzenlilik = öğrencinin ilk denemesinden bu yana sınıfta yapılan denemelerin
     #                kaçına katıldığı (katılım tutarlılığı)
     score_breakdown, badges = None, []
-    if results:
-        latest = results[-1]
+    if general_results:
+        latest = general_results[-1]
         subjects = latest["subjects"] or {}
         max_possible = sum((s or {}).get("correct", 0) + (s or {}).get("wrong", 0) + (s or {}).get("blank", 0)
                             for s in subjects.values())
         academic = round(max(0, min(100, latest["totalNet"] / max_possible * 100))) if max_possible else None
 
-        recent = results[-5:]
+        recent = general_results[-5:]
         changes = [recent[i]["totalNet"] - recent[i - 1]["totalNet"] for i in range(1, len(recent))]
         motivation = round(sum(1 for c in changes if c > 0) / len(changes) * 100) if changes else None
 
@@ -8192,25 +8241,25 @@ def _build_student_report(db, student_id, exam_id=None):
             hedef = round(max(0, min(100, latest["totalNet"] / max(class_totals) * 100)))
 
         regularity = None
-        first_date = results[0]["examDate"]
+        first_date = general_results[0]["examDate"]
         row = db.execute(
             "SELECT COUNT(DISTINCT r.exam_id) as cnt FROM results r "
             "JOIN students s ON s.id = r.student_id JOIN exams e ON e.id = r.exam_id "
-            "WHERE s.class_name = ? AND e.date >= ?",
+            "WHERE s.class_name = ? AND e.date >= ? AND e.exam_type != 'optik_kamera'",
             (student["class_name"], first_date),
         ).fetchone()
         class_exam_count = row["cnt"] if row else 0
         if class_exam_count:
-            regularity = round(min(100, len(results) / class_exam_count * 100))
+            regularity = round(min(100, len(general_results) / class_exam_count * 100))
 
         axes = {"academic": academic, "motivation": motivation, "hedef": hedef, "regularity": regularity}
         available = [v for v in axes.values() if v is not None]
         overall = round(sum(available) / len(available)) if available else None
 
         growth_delta = None
-        if academic is not None and len(results) >= 2:
-            back = min(3, len(results) - 1)
-            prev_result = results[-1 - back]
+        if academic is not None and len(general_results) >= 2:
+            back = min(3, len(general_results) - 1)
+            prev_result = general_results[-1 - back]
             prev_subjects = prev_result["subjects"] or {}
             prev_max = sum((s or {}).get("correct", 0) + (s or {}).get("wrong", 0) + (s or {}).get("blank", 0)
                            for s in prev_subjects.values())
@@ -8221,7 +8270,7 @@ def _build_student_report(db, student_id, exam_id=None):
 
         # ---- Başarı Rozetleri (Bölüm 14): öğrenciyi kendi geçmişiyle kıyaslar,
         # başka öğrencilerle değil - hepsi yukarıdaki gerçek verilerden.
-        nets = [r["totalNet"] for r in results]
+        nets = [r["totalNet"] for r in general_results]
         if len(nets) >= 2 and nets[-1] >= max(nets[:-1]):
             badges.append({"icon": "📈", "label": "Kişisel Rekor"})
         if len(nets) >= 3 and nets[-3] < nets[-2] < nets[-1]:
@@ -8235,28 +8284,30 @@ def _build_student_report(db, student_id, exam_id=None):
         if (axes.get("regularity") or 0) >= 90:
             badges.append({"icon": "🧠", "label": "Düzenli Çalışan"})
 
-    # Subject details across all exams
+    # Subject details across all exams (Genel Deneme - subject_nets zaten
+    # sadece Genel Deneme'den besleniyor, burası da tutarlı olsun diye
+    # general_results kullanır)
     subject_details = {}
     for key, nets in subject_nets.items():
         if not nets:
             continue
-        c_tot = sum((r["subjects"].get(key) or {}).get("correct", 0) for r in results)
-        w_tot = sum((r["subjects"].get(key) or {}).get("wrong", 0) for r in results)
-        b_tot = sum((r["subjects"].get(key) or {}).get("blank", 0) for r in results)
-        n_tot = sum((r["subjects"].get(key) or {}).get("net", 0) for r in results)
-        count = len(results)
+        c_tot = sum((r["subjects"].get(key) or {}).get("correct", 0) for r in general_results)
+        w_tot = sum((r["subjects"].get(key) or {}).get("wrong", 0) for r in general_results)
+        b_tot = sum((r["subjects"].get(key) or {}).get("blank", 0) for r in general_results)
+        n_tot = sum((r["subjects"].get(key) or {}).get("net", 0) for r in general_results)
+        count = len(general_results)
         q_tot = c_tot + w_tot + b_tot
         rate = round((c_tot / q_tot * 100), 1) if q_tot > 0 else 0
         subject_details[key] = {
             "avgNet": round(n_tot / count, 2) if count else 0,
-            "latestNet": (results[-1]["subjects"].get(key) or {}).get("net", 0) if results else 0,
+            "latestNet": (general_results[-1]["subjects"].get(key) or {}).get("net", 0) if general_results else 0,
             "totalCorrect": c_tot,
             "totalWrong": w_tot,
             "totalBlank": b_tot,
             "accuracyRate": rate,
         }
 
-    all_nets = [r["totalNet"] for r in results]
+    all_nets = [r["totalNet"] for r in general_results]
     avg_total_net = round(sum(all_nets) / len(all_nets), 2) if all_nets else None
     best_total_net = max(all_nets) if all_nets else None
 
@@ -8267,8 +8318,13 @@ def _build_student_report(db, student_id, exam_id=None):
             "className": student["class_name"], "schoolNumber": student["school_number"],
         },
         "results": list(reversed(results)),
+        # generalResults: sadece Genel Deneme, en yeni önde - "son deneme"
+        # özet kartları/radar/ders ilerlemesi gibi widget'lar Kazanım
+        # Denemesi (OMR) ile karışmasın diye frontend'in kullanması için
+        # (bkz. Faz 1 planı, js/parent/veli.js ve js/student/ogrenci.js).
+        "generalResults": list(reversed(general_results)),
         "netTrend": [{"examName": r["examName"], "examDate": r["examDate"], "totalNet": r["totalNet"]}
-                     for r in results],
+                     for r in general_results],
         "latestExamTopicStats": topic_stats,
         "topicStatsExamId": topic_stats_exam_id,
         "classSubjectAverages": class_subject_averages,
