@@ -3,6 +3,9 @@
     let allAssignments = [];
     let activeExamTab = 'GENERAL'; // 'GENERAL' | 'MASTERY' - bkz. renderExamResultsList
     let lastExamResults = [];
+    let lastMasteryTrend = [];
+    let masteryTrendChart = null;
+    let activeMasteryKazanim = null;
 
     // Genel Deneme / Kazanım Denemesi (Optik Okuma/OMR) ayrımı - "asla
     // karışmaz" ilkesi (bkz. Faz 1 planı). examType==='optik_kamera' TEK
@@ -11,25 +14,67 @@
       return exam && exam.examType === 'optik_kamera';
     }
 
-    function renderExamResultsList(results) {
+    function renderExamResultsList(results, masteryTrend) {
       lastExamResults = results || [];
+      if (masteryTrend !== undefined) lastMasteryTrend = masteryTrend || [];
       const filtered = lastExamResults.filter(r => activeExamTab === 'MASTERY' ? isMasteryExam(r) : !isMasteryExam(r));
       const tabsHtml = `
         <div class="exam-type-tabs" style="display:flex;gap:8px;margin-bottom:10px">
           <button class="btn btn-sm ${activeExamTab === 'GENERAL' ? 'btn-primary' : 'btn-secondary'}" onclick="window._veliSetExamTab('GENERAL')">📘 Genel Denemeler</button>
           <button class="btn btn-sm ${activeExamTab === 'MASTERY' ? 'btn-primary' : 'btn-secondary'}" onclick="window._veliSetExamTab('MASTERY')">🎯 Kazanım Denemeleri</button>
         </div>`;
+      // Kazanım Gelişimi grafiği (Faz 3) - sadece Kazanım Denemeleri
+      // sekmesinde, kazanım koduna göre gruplanmış zaman-içi başarı yüzdesi.
+      const masteryChartHtml = (activeExamTab === 'MASTERY' && lastMasteryTrend.length) ? `
+        <div class="card mt-1" style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <h4 style="margin:0">🎯 Kazanım Gelişimi</h4>
+            ${lastMasteryTrend.length > 1 ? `
+              <select id="mastery-kazanim-select" class="form-control" style="max-width:260px" onchange="window._veliSetMasteryKazanim(this.value)">
+                ${lastMasteryTrend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}">${escapeHtml(g.subjectName)} - ${escapeHtml(g.kazanimAdi)}</option>`).join('')}
+              </select>` : ''}
+          </div>
+          <div style="height:220px;margin-top:10px"><canvas id="mastery-trend-chart"></canvas></div>
+        </div>` : '';
       if (!filtered.length) {
-        document.getElementById('exam-results').innerHTML = tabsHtml + '<p class="text-muted">Bu kategoride henüz deneme sonucu bulunmuyor.</p>';
+        document.getElementById('exam-results').innerHTML = tabsHtml + masteryChartHtml + '<p class="text-muted">Bu kategoride henüz deneme sonucu bulunmuyor.</p>';
+        if (masteryChartHtml) renderMasteryTrendChart();
         return;
       }
-      let html = tabsHtml + '<div class="table-wrapper"><table class="simple-table"><tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>';
+      let html = tabsHtml + masteryChartHtml + '<div class="table-wrapper"><table class="simple-table"><tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>';
       filtered.forEach(r => {
         html += `<tr><td>${escapeHtml(r.examName)}</td><td>${r.examDate || '-'}</td><td class="badge-net">${r.totalNet}</td></tr>`;
       });
       html += '</table></div>';
       document.getElementById('exam-results').innerHTML = html;
+      if (masteryChartHtml) renderMasteryTrendChart();
     }
+
+    function renderMasteryTrendChart() {
+      const canvas = document.getElementById('mastery-trend-chart');
+      if (!canvas || !lastMasteryTrend.length) return;
+      const group = lastMasteryTrend.find(g => g.kazanimKodu === activeMasteryKazanim) || lastMasteryTrend[0];
+      activeMasteryKazanim = group.kazanimKodu;
+      if (masteryTrendChart) { masteryTrendChart.destroy(); masteryTrendChart = null; }
+      masteryTrendChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: group.points.map(p => p.date || p.examName),
+          datasets: [{
+            label: `${group.subjectName} - ${group.kazanimAdi}`,
+            data: group.points.map(p => p.successRate),
+            borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.15)',
+            borderWidth: 3, fill: true, tension: 0.3, pointRadius: 4,
+          }],
+        },
+        options: { ...chartDefaults(), scales: { y: { min: 0, max: 100, ticks: { color: '#64748b', callback: v => v + '%' } } } },
+      });
+    }
+
+    window._veliSetMasteryKazanim = function (kazanimKodu) {
+      activeMasteryKazanim = kazanimKodu;
+      renderMasteryTrendChart();
+    };
 
     window._veliSetExamTab = function (tab) {
       activeExamTab = tab;
@@ -415,7 +460,7 @@
       renderErrorMemory(data.errorMemory);
       renderStudyPlanCard(data.latestExamTopicStats);
 
-      renderExamResultsList(data.results);
+      renderExamResultsList(data.results, data.masteryTrend);
 
       const topicCard = document.getElementById('topic-card');
       if (data.latestExamTopicStats && data.latestExamTopicStats.length) {
