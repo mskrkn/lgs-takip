@@ -14,15 +14,28 @@ let _omrAnswerKey = {};          // { "1": "A", "2": "C", ... } - optik taslak u
 
 // Kagidin FIZIKSEL kapasitesi (bkz. omr_form.py QUESTION_COUNT_MAX) - ogretmen
 // serbestce soru sayisi girebilir (kullanici isteğiyle 2026-09-17: sabit
-// 10/15/20/25 secenekleri yerine elle giris) ama bu sayidan fazlasi kagitta
-// hic yer bulamaz, o yuzden ust sinir burada da uygulanir.
-const OMR_QUESTION_COUNT_MAX = 25;
+// secenekler yerine elle giris) ama bu sayidan fazlasi kagitta hic yer
+// bulamaz, o yuzden ust sinir burada da uygulanir. Girilen sayiya gore
+// sunucu HANGI FIZIKSEL SABLONU (bkz. omr_form.py select_template)
+// kullanacagini kendisi secer - ogretmen sadece soru sayisini girer:
+// 1-25 -> "compact" (70mm, 6 kagit/A4), 26-50 -> "quarter50" (ceyrek A4,
+// 4 kagit/A4, kucuk balon), 51-100 -> "quarter100" (ceyrek A4, en kucuk
+// balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
+// kac sutuna bolunecegini belirler (gorsel), gercek PDF geometrisiyle
+// birebir ayni olmasi gerekmez.
+const OMR_QUESTION_COUNT_MAX = 100;
 
 function _omrGetQuestionCount() {
   const raw = parseInt(document.getElementById('omr-f-count').value, 10);
   if (!raw || raw < 1) return 1;
   if (raw > OMR_QUESTION_COUNT_MAX) return OMR_QUESTION_COUNT_MAX;
   return raw;
+}
+
+function _omrTemplateColsForCount(count) {
+  if (count <= 25) return 2;
+  if (count <= 50) return 4;
+  return 5;
 }
 
 function _omrEsc(str) {
@@ -92,7 +105,7 @@ function _omrBuildFormHtml() {
       <div>
         <label class="form-label">Soru Sayısı</label>
         <input type="number" id="omr-f-count" class="form-control" min="1" max="${OMR_QUESTION_COUNT_MAX}" value="20">
-        <span class="text-muted" style="font-size:12px">Optik kağıtta ${OMR_QUESTION_COUNT_MAX} soruya kadar alan var; fazlası boş kalır ve değerlendirilmez.</span>
+        <span class="text-muted" style="font-size:12px">1-25 arası normal, 26-50 ve 51-100 arası daha yoğun (küçük daireli) optik kağıt kullanılır - kağıt otomatik seçilir.</span>
       </div>
     </div>
 
@@ -126,21 +139,25 @@ function _omrWireForm() {
 }
 
 // ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
-// Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin
-// daireler, 2 sutun x 13 satir - 25 soruluk fiziksel maks. kapasiteye gore,
-// bkz. omr_form.py ANSWER_ROWS_PER_COL) sahip bir HTML taslak - ogretmen
-// dogru sikki gercek kagitta oldugu gibi tiklayarak isaretler.
+// Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin daireler)
+// sahip bir HTML taslak - ogretmen dogru sikki gercek kagitta oldugu gibi
+// tiklayarak isaretler. Sutun sayisi soru sayisina gore degisir (bkz.
+// _omrTemplateColsForCount) - gercek basili kagit da soru sayisi arttikca
+// (26+) daha COK sutuna gecer (bkz. omr_form.py TEMPLATES), bu ekran o
+// degisimi kabaca yansitir; piksel-birebir esitlik gerekmez, sadece her
+// soruya bir yer ayrilmasi yeterli.
 function _omrRenderAnswerKeySheet() {
   const count = _omrGetQuestionCount();
   const sheet = document.getElementById('omr-answer-key-sheet');
-  const col1 = [], col2 = [];
+  const nCols = _omrTemplateColsForCount(count);
+  const rowsPerCol = Math.ceil(count / nCols);
+  const cols = Array.from({ length: nCols }, () => []);
   for (let q = 1; q <= count; q++) {
-    (q <= 13 ? col1 : col2).push(_omrBuildSheetRow(q));
+    cols[Math.floor((q - 1) / rowsPerCol)].push(_omrBuildSheetRow(q));
   }
   sheet.innerHTML = `
     <div class="omr-sheet-cols">
-      <div class="omr-sheet-col">${col1.join('')}</div>
-      <div class="omr-sheet-col">${col2.join('')}</div>
+      ${cols.map(col => `<div class="omr-sheet-col">${col.join('')}</div>`).join('')}
     </div>
   `;
   sheet.querySelectorAll('.omr-bubble').forEach(btn => {

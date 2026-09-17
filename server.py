@@ -111,7 +111,7 @@ except ImportError:
 # uretimine ihtiyac duymuyor) calismaya devam etsin diye ayrica tutulur -
 # tek gercek kaynak yine de omr_form.QUESTION_COUNT_MIN/MAX'tir.
 OMR_QUESTION_COUNT_MIN = getattr(omr_form, "QUESTION_COUNT_MIN", 1)
-OMR_QUESTION_COUNT_MAX = getattr(omr_form, "QUESTION_COUNT_MAX", 25)
+OMR_QUESTION_COUNT_MAX = getattr(omr_form, "QUESTION_COUNT_MAX", 100)
 
 # Kamera OMR goruntu isleme pipeline'i - opencv-python-headless/numpy zaten
 # ZORUNLU bagimlilik (Soru Havuzu PDF kirpma icin de kullaniliyor), bu yuzden
@@ -1010,7 +1010,7 @@ def _create_omr_tables(conn):
             grade_level TEXT,
             topic TEXT,
             title TEXT NOT NULL,
-            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 25),
+            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 100),
             answer_key_json TEXT NOT NULL,
             curriculum_range_json TEXT,
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -1065,6 +1065,14 @@ def _create_omr_tables(conn):
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_kodu TEXT")
     if "kazanim_adi" not in omr_exam_def_cols:
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_adi TEXT")
+    # Hangi FIZIKSEL sablonla (bkz. omr_form.FormTemplate) basildigi -
+    # OLUSTURMA aninda omr_form.select_template(question_count).id ile
+    # belirlenip kalici olarak saklanir, okuma sirasinda BIR DAHA ASLA
+    # question_count'tan yeniden turetilmez (kullanici isteğiyle 2026-09-17:
+    # 50/100 soruluk ek sablonlar, bkz. omr_form.py modul docstring'i).
+    if "form_template" not in omr_exam_def_cols:
+        conn.execute(
+            "ALTER TABLE omr_exam_definitions ADD COLUMN form_template TEXT NOT NULL DEFAULT 'compact'")
     conn.commit()
 
 
@@ -1148,6 +1156,52 @@ def _migrate_omr_question_count_free_range(conn):
             exam_id INTEGER REFERENCES exams(id),
             kazanim_kodu TEXT,
             kazanim_adi TEXT
+        );
+        INSERT INTO omr_exam_definitions_new ({col_list})
+            SELECT {col_list} FROM omr_exam_definitions;
+        DROP TABLE omr_exam_definitions;
+        ALTER TABLE omr_exam_definitions_new RENAME TO omr_exam_definitions;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_omr_question_count_max_100(conn):
+    """question_count CHECK kisiti BETWEEN 1 AND 25 -> BETWEEN 1 AND 100
+    (kullanici isteğiyle 2026-09-17: ceyrek-A4 quarter50/quarter100
+    sablonlari eklendi, bkz. omr_form.py TEMPLATES). AYNI tablo-yeniden-
+    olusturma deseni (bkz. _migrate_omr_question_count_range). form_template
+    sutunu bu noktada zaten additive ALTER ile eklenmis olmali (bkz.
+    _create_omr_tables), col_list onu da otomatik tasir."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='omr_exam_definitions'"
+    ).fetchone()
+    if not row or "BETWEEN 1 AND 25" not in row["sql"]:
+        return  # tablo yok (ilk kurulum, yeni CHECK'le zaten olusuyor) ya da zaten migrate edilmis
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(omr_exam_definitions)").fetchall()]
+    col_list = ", ".join(cols)
+
+    conn.executescript(
+        f"""
+        CREATE TABLE omr_exam_definitions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+            grade_level TEXT,
+            topic TEXT,
+            title TEXT NOT NULL,
+            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 100),
+            answer_key_json TEXT NOT NULL,
+            curriculum_range_json TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            exam_id INTEGER REFERENCES exams(id),
+            kazanim_kodu TEXT,
+            kazanim_adi TEXT,
+            form_template TEXT NOT NULL DEFAULT 'compact'
         );
         INSERT INTO omr_exam_definitions_new ({col_list})
             SELECT {col_list} FROM omr_exam_definitions;
@@ -2258,6 +2312,7 @@ def run_v2_migration(conn):
     _create_omr_tables(conn)
     _migrate_omr_question_count_range(conn)
     _migrate_omr_question_count_free_range(conn)
+    _migrate_omr_question_count_max_100(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -5409,14 +5464,20 @@ def api_teacher_omr_create_exam():
         (exam_id, org_id, title, now[:10], "optik_kamera", exam_data_json, "omr_scan"),
     )
 
+    # Hangi fiziksel sablonla basilacagi SADECE burada, olusturma aninda
+    # belirlenip kalici olarak saklanir - okuma sirasinda bir daha asla
+    # question_count'tan yeniden turetilmez (bkz. omr_form.py modul
+    # docstring'i, select_template()).
+    form_template = omr_form.select_template(question_count).id if OMR_FORM_AVAILABLE else "compact"
+
     cur = db.execute(
         "INSERT INTO omr_exam_definitions (organization_id, subject_id, grade_level, topic, title, "
         "question_count, answer_key_json, curriculum_range_json, created_by, created_at, exam_id, "
-        "kazanim_kodu, kazanim_adi) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "kazanim_kodu, kazanim_adi, form_template) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (org_id, subject_id, grade_level, topic, title, question_count,
          json.dumps(answer_key, ensure_ascii=False),
          json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None,
-         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi),
+         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi, form_template),
     )
     db.commit()
     log_audit(db, "OMR_EXAM_DEFINITION_CREATED", resource_type="omr_exam_definition", resource_id=cur.lastrowid)
@@ -5436,7 +5497,7 @@ def api_teacher_omr_generate_papers(exam_def_id):
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
 
     exam_def = db.execute(
-        "SELECT id, title FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        "SELECT id, title, form_template FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()
     if not exam_def:
@@ -5482,7 +5543,8 @@ def api_teacher_omr_generate_papers(exam_def_id):
     db.commit()
     log_audit(db, "OMR_PAPERS_GENERATED", resource_type="omr_exam_definition", resource_id=exam_def_id)
 
-    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"])
+    template = omr_form.TEMPLATES.get(exam_def["form_template"], omr_form.TEMPLATE_COMPACT)
+    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"], template)
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
@@ -5537,7 +5599,7 @@ def api_teacher_omr_upload_scan():
     if not exam_def_id:
         return jsonify({"error": "Test tanımı belirtilmedi."}), 400
     exam_def = db.execute(
-        "SELECT id, question_count, answer_key_json FROM omr_exam_definitions "
+        "SELECT id, question_count, answer_key_json, form_template FROM omr_exam_definitions "
         "WHERE id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()
@@ -5565,7 +5627,8 @@ def api_teacher_omr_upload_scan():
     warnings = []
 
     try:
-        result = omr_pipeline.process_scan_image(image_bytes, exam_def["question_count"])
+        result = omr_pipeline.process_scan_image(
+            image_bytes, exam_def["question_count"], exam_def["form_template"])
     except omr_pipeline.OmrReadError as exc:
         warnings.append(str(exc))
         result = None
