@@ -2,10 +2,12 @@
 Optik Okuma (Kamera OMR) - basili cevap formu ureteci.
 
 Bu modul, "edupusula-optik-okuma-prompt.md" spesifikasyonundaki sabit
-20-soru x 4-sik grid'i tanimlar ve reportlab ile A4'e 2x2 yerlesen,
-kesim cizgili, ogrenci basina QR kodlu bir PDF uretir.
+20-soru x 4-sik grid'i tanimlar ve reportlab ile A4'e 3x2 yerlesen
+(kullanici isteğiyle 2026-09-16: 4 -> 6 kagit/sayfa, bkz. asagidaki
+"Kullanici isteğiyle 2026-09-16" notu), kesim cizgili, ogrenci basina
+QR kodlu bir PDF uretir.
 
-KRITIK: Buradaki tum geometri sabitleri, mini-formun kendi 105x148mm
+KRITIK: Buradaki tum geometri sabitleri, mini-formun kendi 70x148.5mm
 alani icinde SOL-UST kose orijinli, milimetre cinsinden ve MUTLAK
 degil ORANSAL (0..1) olarak tanimlanir. Boylece Faz 3'teki
 omr_pipeline.py, kamera goruntusunu bu ORANLARIN ayni sekilde
@@ -13,6 +15,14 @@ uygulanabilecegi normalize bir dikdortgene (perspektif duzeltmesi
 sonrasi) donusturup AYNI koordinat fonksiyonlarini dogrudan
 piksel uzayinda kullanabilir - grid koordinatlari iki yerde ayri
 ayri tanimlanip birbirinden sapmaz.
+
+Kullanici isteğiyle 2026-09-16: sayfa basina 6 kagit sigmasi icin form
+GENISLIGI daraltildi (105 -> 70mm, A4 3 sutuna bolunuyor), YUKSEKLIK
+neredeyse degismedi (148 -> 148.5mm, A4 2 satira bolunuyor). Boylece Okul
+No blogunun yukari alinip sikistirilmasi ve soru numarasi/cevap balonu
+arasindaki bosluğun daraltilmasiyla kazanilan dikey alan sayfa
+kisalmasiyla geri yenmiyor, doğrudan cevap balonlarini buyutmeye
+gidiyor (4.2 -> 5.2mm).
 """
 
 import io
@@ -42,40 +52,44 @@ pdfmetrics.registerFont(TTFont("EduPusulaSans-Bold", os.path.join(_FONTS_DIR, "V
 # Sabit grid geometrisi (bkz. modul docstring'i - oransal, mm degil)
 # ============================================================
 
-FORM_W_MM = 105.0
-FORM_H_MM = 148.0
+FORM_W_MM = 70.0    # A4 genisligi 3'e bolunuyor (kullanici isteğiyle 2026-09-16, bkz. modul docstring'i)
+FORM_H_MM = 148.5   # A4 yuksekligi 2'ye bolunuyor - eskiden (148) neredeyse ayni
 
-QUESTION_COUNT_MAX = 20
+QUESTION_COUNT_MAX = 25  # kagidin FIZIKSEL kapasitesi - her zaman bu kadar satir basilir
+ALLOWED_QUESTION_COUNTS = (10, 15, 20, 25)  # ogretmenin bir deneme icin secebilecegi soru sayilari
 CHOICES = ("A", "B", "C", "D")
 
 FIDUCIAL_SIZE_MM = 5.0
 FIDUCIAL_MARGIN_MM = 5.0
 
-QR_BOX_MM = (8.0, 12.0, 28.0, 32.0)  # (x0, y0, x1, y1) sol-ust orijinli
+QR_BOX_MM = (11.0, 10.5, 27.0, 26.5)  # (x0, y0, x1, y1) sol-ust orijinli - daraltilmis formda kucultuldu
 
-# Okul No bloğu: kullanıcı isteğiyle (2026-09-15) SATIR=hane, SÜTUN=rakam
-# (0-9 üstte tek bir başlık satırı, altında 5 hane satırı) düzenine
-# çevrildi - eskiden 4 hane x dikey 0-9 idi. Daha büyük dairelerle daha
-# rahat okunuyor, yatayda kullanılmayan alanı da değerlendiriyor.
+# Okul No bloğu: kullanıcı isteğiyle (2026-09-16) daha da yukari alindi ve
+# sikistirildi (hane/rakam satir-sutun yerlesimi 2026-09-15'ten aynen
+# korunuyor, sadece spacing/bubble kucultuldu) - boylece cevap bloguna
+# devredilecek dikey alan artiyor.
 ID_DIGIT_COUNT = 5   # hane sayisi (satir)
 ID_DIGIT_ROWS = 10   # rakam degeri 0-9 (sutun) - isim ozgun pipeline uyumu icin korunuyor
-ID_BLOCK_ORIGIN_MM = (20.0, 40.0)  # ilk (deger=0) sutunun x'i, baslik satirinin y'si
-ID_DIGIT_COL_SPACING_MM = 6.5
-ID_DIGIT_ROW_SPACING_MM = 6.5
-ID_BUBBLE_D_MM = 4.5
+ID_BLOCK_ORIGIN_MM = (12.0, 29.0)  # ilk (deger=0) sutunun x'i, baslik satirinin y'si
+ID_DIGIT_COL_SPACING_MM = 5.0
+ID_DIGIT_ROW_SPACING_MM = 4.5
+ID_BUBBLE_D_MM = 3.4
 
-# Cevap balonlari kullanici isteğiyle buyutuldu (3.5mm -> 4.2mm); alt
-# fiducial'lerle carpismamak icin ANSWER_GRID_BOTTOM_MM daraltildi, ID
-# bloğunun artik daha az dikey yer kaplamasindan kazanilan alan
-# ANSWER_GRID_TOP_MM'i yukari cekerek geri kazanildi (okuma alanini
-# olabildiğince etkin kullanma isteğiyle uyumlu).
-ANSWER_GRID_TOP_MM = 78.0
-ANSWER_GRID_BOTTOM_MM = 136.0
-ANSWER_ROWS_PER_COL = 10
+# Cevap balonlari kullanici isteğiyle (2026-09-16) tekrar buyutuldu
+# (4.2mm -> 5.2mm): Okul No bloğunun yukari alinip sikistirilmasi VE soru
+# numarasiyla ilk balon arasindaki bosluğun daraltilmasiyla (bkz.
+# _draw_mini_form icindeki num_x_mm hesaplamasi) acilan dikey/yatay alan
+# dogrudan buraya aktarildi.
+ANSWER_GRID_TOP_MM = 57.0
+ANSWER_GRID_BOTTOM_MM = 135.0
+# 25 soruluk maks. kapasite (kullanici isteğiyle 2026-09-16: soru sayisi
+# esnekligi, bkz. ALLOWED_QUESTION_COUNTS) 13+12 olarak 2 sutuna bolunur -
+# ROW_H bu yuzden 10 degil 13'e bolunerek hesaplanir (78mm/13 = tam 6.0mm).
+ANSWER_ROWS_PER_COL = 13
 ANSWER_ROW_H_MM = (ANSWER_GRID_BOTTOM_MM - ANSWER_GRID_TOP_MM) / ANSWER_ROWS_PER_COL
-ANSWER_COL_X_MM = {1: 6.0, 2: 55.0}  # sutun 1: soru 1-10, sutun 2: soru 11-20
-ANSWER_CHOICE_OFFSETS_MM = (9.0, 15.5, 22.0, 28.5)  # A,B,C,D - sutun basindan
-ANSWER_BUBBLE_D_MM = 4.2
+ANSWER_COL_X_MM = {1: 9.0, 2: 41.0}  # sutun 1: soru 1-13, sutun 2: soru 14-25
+ANSWER_CHOICE_OFFSETS_MM = (4.5, 10.5, 16.5, 22.5)  # A,B,C,D - sutun basindan (daraltildi, bkz. yukarisi)
+ANSWER_BUBBLE_D_MM = 4.4  # 13 satirlik daha sik grid icin 5.2'den kucultuldu, yine de eski (4.2) tabandan buyuk
 
 
 def fiducial_centers_mm():
@@ -102,9 +116,9 @@ def id_bubble_center_mm(digit_col, digit_row):
 
 
 def question_bubble_center_mm(question_number, choice_index):
-    """question_number: 1-20, choice_index: 0-3 (A-D)."""
-    col = 1 if question_number <= 10 else 2
-    row = (question_number - 1) % 10
+    """question_number: 1-25, choice_index: 0-3 (A-D)."""
+    col = 1 if question_number <= ANSWER_ROWS_PER_COL else 2
+    row = (question_number - 1) % ANSWER_ROWS_PER_COL
     x_col = ANSWER_COL_X_MM[col]
     x = x_col + ANSWER_CHOICE_OFFSETS_MM[choice_index]
     y = ANSWER_GRID_TOP_MM + row * ANSWER_ROW_H_MM + ANSWER_ROW_H_MM / 2
@@ -152,18 +166,20 @@ def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, paper, exam_title):
     c.drawInlineImage(qr_img, qx, qy, width=qr_size_pt, height=qr_size_pt)
 
     # Kimlik metni (sadece gorsel dogrulama - eslestirme mantigina dahil degil)
-    text_x, text_y = pt(qr_x1 + 4, 16)
-    c.setFont("EduPusulaSans-Bold", 10)
-    c.drawString(text_x, text_y, (exam_title or "")[:38])
-    c.setFont("EduPusulaSans-Bold", 9)
-    c.drawString(text_x, text_y - 11, (paper.get("student_name") or "")[:38])
-    c.setFont("EduPusulaSans", 8)
-    c.drawString(text_x, text_y - 21, f"Sınıf: {paper.get('class_name') or '-'}")
+    # Daraltilmis form (70mm) icin metin genisligi kisitli - font/uzunluk
+    # kucultuldu (kullanici isteğiyle 2026-09-16 daraltma, bkz. modul docstring'i).
+    text_x, text_y = pt(qr_x1 + 3, 15)
+    c.setFont("EduPusulaSans-Bold", 8)
+    c.drawString(text_x, text_y, (exam_title or "")[:16])
+    c.setFont("EduPusulaSans-Bold", 7)
+    c.drawString(text_x, text_y - 9, (paper.get("student_name") or "")[:16])
+    c.setFont("EduPusulaSans", 6)
+    c.drawString(text_x, text_y - 17, f"Sınıf: {paper.get('class_name') or '-'}")
 
     # Okul No bloğu: BAŞLIK satırı "0 1 2 ... 9" + altında 5 hane satırı
     # (kullanıcı isteğiyle satır=hane/sütun=rakam düzenine çevrildi, bkz.
     # id_bubble_center_mm docstring'i).
-    label_x, label_y = pt(ID_BLOCK_ORIGIN_MM[0] - 12, ID_BLOCK_ORIGIN_MM[1])
+    label_x, label_y = pt(ID_BLOCK_ORIGIN_MM[0] - 8, ID_BLOCK_ORIGIN_MM[1])
     c.setFont("EduPusulaSans-Bold", 8)
     c.drawString(label_x, label_y - 2, "No")
     c.setFont("EduPusulaSans-Bold", 7)
@@ -178,50 +194,49 @@ def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, paper, exam_title):
             c.setLineWidth(1.0)
             c.circle(cx, cy, r, stroke=1, fill=0)
 
-    # Cevap grid'i (20 soru x 4 sik) - buyuk, kalin hatli daireler
+    # Cevap grid'i (25 soru x 4 sik, 13+12 sutun) - buyuk, kalin hatli daireler
     for q in range(1, QUESTION_COUNT_MAX + 1):
-        col = 1 if q <= 10 else 2
-        row = (q - 1) % 10
-        num_x_mm = ANSWER_COL_X_MM[col] - 4.5
+        col = 1 if q <= ANSWER_ROWS_PER_COL else 2
+        row = (q - 1) % ANSWER_ROWS_PER_COL
+        num_x_mm = ANSWER_COL_X_MM[col] - 3.0  # kullanici isteğiyle 2026-09-16: numara/balon bosluğu daraltildi
         num_y_mm = ANSWER_GRID_TOP_MM + row * ANSWER_ROW_H_MM + ANSWER_ROW_H_MM / 2
         nx, ny = pt(num_x_mm, num_y_mm)
-        c.setFont("EduPusulaSans-Bold", 9)
-        c.drawCentredString(nx, ny - 3, str(q))
+        c.setFont("EduPusulaSans-Bold", 8)
+        c.drawCentredString(nx, ny - 2.5, str(q))
         for choice_idx, choice_label in enumerate(CHOICES):
             cx_mm, cy_mm = question_bubble_center_mm(q, choice_idx)
             cx, cy = pt(cx_mm, cy_mm)
             r = ANSWER_BUBBLE_D_MM / 2 * mm
             c.setLineWidth(1.1)
             c.circle(cx, cy, r, stroke=1, fill=0)
-            c.setFont("EduPusulaSans-Bold", 7)
-            c.drawCentredString(cx, cy - 2.4, choice_label)
+            c.setFont("EduPusulaSans-Bold", 6)
+            c.drawCentredString(cx, cy - 2.0, choice_label)
 
 
 def generate_omr_pdf(papers, exam_title):
     """papers: [{paper_token, student_name, class_name}, ...] - her biri icin
-    bir mini-form cizilir, A4 sayfalara 2x2 yerlestirilir. PDF byte'larini
+    bir mini-form cizilir, A4 sayfalara 3x2 yerlestirilir. PDF byte'larini
     dondurur."""
     buf = io.BytesIO()
     c = pdf_canvas.Canvas(buf, pagesize=A4)
     page_w, page_h = A4
 
-    # 2x2 yerlesim: her sayfada 4 mini-form, aralarinda kesim payi yok
-    # (kesim cizgisi kenarliktan geliyor), sayfayi ortalamak icin kucuk bir
-    # dis bosluk birakiliyor.
-    grid_w = FORM_W_MM * 2 * mm
+    # 3x2 yerlesim: her sayfada 6 mini-form (kullanici isteğiyle 2026-09-16,
+    # eskiden 2x2/4 idi), aralarinda kesim payi yok (kesim cizgisi
+    # kenarliktan geliyor), sayfayi ortalamak icin kucuk bir dis bosluk
+    # birakiliyor.
+    grid_w = FORM_W_MM * 3 * mm
     grid_h = FORM_H_MM * 2 * mm
     offset_x = (page_w - grid_w) / 2
     offset_y = (page_h - grid_h) / 2
 
     slots = [
-        (offset_x, page_h - offset_y),                      # sol-ust
-        (offset_x + FORM_W_MM * mm, page_h - offset_y),      # sag-ust
-        (offset_x, page_h - offset_y - FORM_H_MM * mm),      # sol-alt
-        (offset_x + FORM_W_MM * mm, page_h - offset_y - FORM_H_MM * mm),  # sag-alt
+        (offset_x + col * FORM_W_MM * mm, page_h - offset_y - row * FORM_H_MM * mm)
+        for row in range(2) for col in range(3)
     ]
 
     for i, paper in enumerate(papers):
-        slot = i % 4
+        slot = i % 6
         if slot == 0 and i > 0:
             c.showPage()
         ox, oy_top = slots[slot]

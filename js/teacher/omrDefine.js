@@ -79,8 +79,10 @@ function _omrBuildFormHtml() {
       <div>
         <label class="form-label">Soru Sayısı</label>
         <select id="omr-f-count" class="form-control">
-          <option value="20">20 soru</option>
+          <option value="25">25 soru</option>
+          <option value="20" selected>20 soru</option>
           <option value="15">15 soru</option>
+          <option value="10">10 soru</option>
         </select>
       </div>
     </div>
@@ -112,14 +114,15 @@ function _omrWireForm() {
 
 // ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
 // Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin
-// daireler, 2 sutun x 10 satir) sahip bir HTML taslak - ogretmen dogru
-// sikki gercek kagitta oldugu gibi tiklayarak isaretler.
+// daireler, 2 sutun x 13 satir - 25 soruluk fiziksel maks. kapasiteye gore,
+// bkz. omr_form.py ANSWER_ROWS_PER_COL) sahip bir HTML taslak - ogretmen
+// dogru sikki gercek kagitta oldugu gibi tiklayarak isaretler.
 function _omrRenderAnswerKeySheet() {
   const count = parseInt(document.getElementById('omr-f-count').value, 10) || 20;
   const sheet = document.getElementById('omr-answer-key-sheet');
   const col1 = [], col2 = [];
   for (let q = 1; q <= count; q++) {
-    (q <= 10 ? col1 : col2).push(_omrBuildSheetRow(q));
+    (q <= 13 ? col1 : col2).push(_omrBuildSheetRow(q));
   }
   sheet.innerHTML = `
     <div class="omr-sheet-cols">

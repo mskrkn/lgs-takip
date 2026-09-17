@@ -107,6 +107,10 @@ try:
 except ImportError:
     omr_form = None
     OMR_FORM_AVAILABLE = False
+# omr_form yuklenemese bile (opsiyonel) test-tanimlama validasyonu (PDF
+# uretimine ihtiyac duymuyor) calismaya devam etsin diye ayrica tutulur -
+# tek gercek kaynak yine de omr_form.ALLOWED_QUESTION_COUNTS'tur.
+OMR_ALLOWED_QUESTION_COUNTS = getattr(omr_form, "ALLOWED_QUESTION_COUNTS", (10, 15, 20, 25))
 
 # Kamera OMR goruntu isleme pipeline'i - opencv-python-headless/numpy zaten
 # ZORUNLU bagimlilik (Soru Havuzu PDF kirpma icin de kullaniliyor), bu yuzden
@@ -1005,7 +1009,7 @@ def _create_omr_tables(conn):
             grade_level TEXT,
             topic TEXT,
             title TEXT NOT NULL,
-            question_count INTEGER NOT NULL CHECK(question_count IN (15, 20)),
+            question_count INTEGER NOT NULL CHECK(question_count IN (10, 15, 20, 25)),
             answer_key_json TEXT NOT NULL,
             curriculum_range_json TEXT,
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -1060,6 +1064,52 @@ def _create_omr_tables(conn):
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_kodu TEXT")
     if "kazanim_adi" not in omr_exam_def_cols:
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_adi TEXT")
+    conn.commit()
+
+
+def _migrate_omr_question_count_range(conn):
+    """question_count CHECK kisiti (15,20) -> (10,15,20,25) (kullanici
+    isteğiyle 2026-09-16: soru sayisi esnekligi, bkz. omrDefine.js'teki
+    #omr-f-count secenekleri ve omr_form.py'deki QUESTION_COUNT_MAX). SQLite
+    CHECK kisitini ALTER TABLE ile degistiremedigi icin
+    _migrate_assignment_drive_source ile AYNI kanitlanmis desen kullanilir:
+    yeni semali gecici tablo olusturulup veri kopyalanir, eski tablo
+    silinip gecici yeniden adlandirilir."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='omr_exam_definitions'"
+    ).fetchone()
+    if not row or "IN (15, 20)" not in row["sql"]:
+        return  # tablo yok (ilk kurulum, yeni CHECK'le zaten olusuyor) ya da zaten migrate edilmis
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(omr_exam_definitions)").fetchall()]
+    col_list = ", ".join(cols)
+
+    conn.executescript(
+        f"""
+        CREATE TABLE omr_exam_definitions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+            grade_level TEXT,
+            topic TEXT,
+            title TEXT NOT NULL,
+            question_count INTEGER NOT NULL CHECK(question_count IN (10, 15, 20, 25)),
+            answer_key_json TEXT NOT NULL,
+            curriculum_range_json TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            exam_id INTEGER REFERENCES exams(id),
+            kazanim_kodu TEXT,
+            kazanim_adi TEXT
+        );
+        INSERT INTO omr_exam_definitions_new ({col_list})
+            SELECT {col_list} FROM omr_exam_definitions;
+        DROP TABLE omr_exam_definitions;
+        ALTER TABLE omr_exam_definitions_new RENAME TO omr_exam_definitions;
+        """
+    )
     conn.commit()
 
 
@@ -2161,6 +2211,7 @@ def run_v2_migration(conn):
     _create_invite_tables(conn)
     _create_optical_templates_table(conn)
     _create_omr_tables(conn)
+    _migrate_omr_question_count_range(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -5258,8 +5309,9 @@ def api_teacher_omr_create_exam():
 
     if not title:
         return jsonify({"error": "Test adı gerekli."}), 400
-    if question_count not in (15, 20):
-        return jsonify({"error": "Soru sayısı 15 ya da 20 olmalı."}), 400
+    if question_count not in OMR_ALLOWED_QUESTION_COUNTS:
+        allowed_str = " / ".join(str(n) for n in OMR_ALLOWED_QUESTION_COUNTS)
+        return jsonify({"error": f"Soru sayısı {allowed_str} olmalı."}), 400
     if not isinstance(answer_key, dict) or not answer_key:
         return jsonify({"error": "Cevap anahtarı gerekli."}), 400
     for q_no in range(1, question_count + 1):
