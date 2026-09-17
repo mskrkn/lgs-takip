@@ -79,8 +79,10 @@ function _omrBuildFormHtml() {
       <div>
         <label class="form-label">Soru Sayısı</label>
         <select id="omr-f-count" class="form-control">
-          <option value="20">20 soru</option>
+          <option value="25">25 soru</option>
+          <option value="20" selected>20 soru</option>
           <option value="15">15 soru</option>
+          <option value="10">10 soru</option>
         </select>
       </div>
     </div>
@@ -112,14 +114,15 @@ function _omrWireForm() {
 
 // ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
 // Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin
-// daireler, 2 sutun x 10 satir) sahip bir HTML taslak - ogretmen dogru
-// sikki gercek kagitta oldugu gibi tiklayarak isaretler.
+// daireler, 2 sutun x 13 satir - 25 soruluk fiziksel maks. kapasiteye gore,
+// bkz. omr_form.py ANSWER_ROWS_PER_COL) sahip bir HTML taslak - ogretmen
+// dogru sikki gercek kagitta oldugu gibi tiklayarak isaretler.
 function _omrRenderAnswerKeySheet() {
   const count = parseInt(document.getElementById('omr-f-count').value, 10) || 20;
   const sheet = document.getElementById('omr-answer-key-sheet');
   const col1 = [], col2 = [];
   for (let q = 1; q <= count; q++) {
-    (q <= 10 ? col1 : col2).push(_omrBuildSheetRow(q));
+    (q <= 13 ? col1 : col2).push(_omrBuildSheetRow(q));
   }
   sheet.innerHTML = `
     <div class="omr-sheet-cols">
@@ -319,6 +322,26 @@ async function _omrRefreshReviewList(examDefId, examTitle) {
   `;
 }
 
+// Şube seçilince (ya da hiç seçilmeden, "Tüm Şubeler" varsayılanıyla) Öğrenci
+// dropdown'unu o şubenin öğrencileriyle sınırlar - okul büyükse tek, uzun ve
+// düz bir öğrenci listesinde doğru öğrenciyi bulmak zor oluyordu.
+function _omrBuildStudentOptions(students, classFilter, selectedStudentId) {
+  const filtered = classFilter ? students.filter(st => st.class_name === classFilter) : students;
+  const placeholder = `<option value="">Öğrenci seçin...</option>`;
+  return placeholder + filtered.map(st =>
+    `<option value="${st.id}" ${selectedStudentId === st.id ? 'selected' : ''}>${_omrEsc(st.first_name)} ${_omrEsc(st.last_name)} (${_omrEsc(st.school_number || '-')}${classFilter ? '' : ', ' + _omrEsc(st.class_name || '-')})</option>`
+  ).join('');
+}
+
+function _omrFilterStudentsByClass(scanId) {
+  const classSelect = document.getElementById(`omr-detail-class-${scanId}`);
+  const studentSelect = document.getElementById(`omr-detail-student-${scanId}`);
+  if (!classSelect || !studentSelect) return;
+  const students = (_omrOverview && _omrOverview.students) || [];
+  const previouslySelected = Number(studentSelect.value) || null;
+  studentSelect.innerHTML = _omrBuildStudentOptions(students, classSelect.value, previouslySelected);
+}
+
 async function _omrOpenScanDetail(scanId, examDefId, examTitle) {
   const host = document.getElementById(`omr-scan-detail-${examDefId}`);
   if (!host) return;
@@ -326,9 +349,13 @@ async function _omrOpenScanDetail(scanId, examDefId, examTitle) {
   const scan = await fetch(`/api/teacher/omr/scans/${scanId}`).then(r => r.json());
 
   const students = (_omrOverview && _omrOverview.students) || [];
-  const studentOptions = students.map(st =>
-    `<option value="${st.id}" ${scan.student_id === st.id ? 'selected' : ''}>${_omrEsc(st.first_name)} ${_omrEsc(st.last_name)} (${_omrEsc(st.school_number || '-')}, ${_omrEsc(st.class_name || '-')})</option>`
+  const classNames = [...new Set(students.map(st => st.class_name).filter(Boolean))].sort();
+  const assignedStudent = students.find(st => st.id === scan.student_id);
+  const currentClass = assignedStudent ? (assignedStudent.class_name || '') : '';
+  const classOptions = classNames.map(c =>
+    `<option value="${_omrEsc(c)}" ${c === currentClass ? 'selected' : ''}>${_omrEsc(c)}</option>`
   ).join('');
+  const studentOptions = _omrBuildStudentOptions(students, currentClass, scan.student_id);
 
   const outcomeColor = { correct: '#22c55e', wrong: '#f43f5e', blank: '#888', multi: '#f59e0b', ambiguous: '#f59e0b' };
   const questionsHtml = (scan.perQuestion ? scan.perQuestion.questions : []).map(q => `
@@ -354,9 +381,15 @@ async function _omrOpenScanDetail(scanId, examDefId, examTitle) {
       </div>
       <div style="flex:1;min-width:220px">
         <div style="margin-bottom:8px">
+          <label class="form-label">Şube</label>
+          <select id="omr-detail-class-${scanId}" class="form-control" ${readOnly ? 'disabled' : ''} onchange="_omrFilterStudentsByClass(${scanId})">
+            <option value="">Tüm Şubeler</option>${classOptions}
+          </select>
+        </div>
+        <div style="margin-bottom:8px">
           <label class="form-label">Öğrenci</label>
           <select id="omr-detail-student-${scanId}" class="form-control" ${readOnly ? 'disabled' : ''}>
-            <option value="">Öğrenci seçin...</option>${studentOptions}
+            ${studentOptions}
           </select>
           ${!readOnly ? `<button type="button" class="btn btn-sm mt-2" onclick="_omrAssignStudent(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">Öğrenciyi Kaydet</button>` : ''}
         </div>

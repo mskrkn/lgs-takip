@@ -1,6 +1,40 @@
     let children = [];
     let activeChildId = null;
     let allAssignments = [];
+    let activeExamTab = 'GENERAL'; // 'GENERAL' | 'MASTERY' - bkz. renderExamResultsList
+    let lastExamResults = [];
+
+    // Genel Deneme / Kazanım Denemesi (Optik Okuma/OMR) ayrımı - "asla
+    // karışmaz" ilkesi (bkz. Faz 1 planı). examType==='optik_kamera' TEK
+    // güvenilir ayrım işareti (server.py _is_mastery_exam_type ile aynı).
+    function isMasteryExam(exam) {
+      return exam && exam.examType === 'optik_kamera';
+    }
+
+    function renderExamResultsList(results) {
+      lastExamResults = results || [];
+      const filtered = lastExamResults.filter(r => activeExamTab === 'MASTERY' ? isMasteryExam(r) : !isMasteryExam(r));
+      const tabsHtml = `
+        <div class="exam-type-tabs" style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-sm ${activeExamTab === 'GENERAL' ? 'btn-primary' : 'btn-secondary'}" onclick="window._veliSetExamTab('GENERAL')">📘 Genel Denemeler</button>
+          <button class="btn btn-sm ${activeExamTab === 'MASTERY' ? 'btn-primary' : 'btn-secondary'}" onclick="window._veliSetExamTab('MASTERY')">🎯 Kazanım Denemeleri</button>
+        </div>`;
+      if (!filtered.length) {
+        document.getElementById('exam-results').innerHTML = tabsHtml + '<p class="text-muted">Bu kategoride henüz deneme sonucu bulunmuyor.</p>';
+        return;
+      }
+      let html = tabsHtml + '<div class="table-wrapper"><table class="simple-table"><tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>';
+      filtered.forEach(r => {
+        html += `<tr><td>${escapeHtml(r.examName)}</td><td>${r.examDate || '-'}</td><td class="badge-net">${r.totalNet}</td></tr>`;
+      });
+      html += '</table></div>';
+      document.getElementById('exam-results').innerHTML = html;
+    }
+
+    window._veliSetExamTab = function (tab) {
+      activeExamTab = tab;
+      renderExamResultsList(lastExamResults);
+    };
 
     function escapeHtml(str) {
       return String(str === null || str === undefined ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -354,8 +388,12 @@
       }
 
       const s = data.student;
-      const last = data.results[0];
-      const prev = data.results[1];
+      // Genel Deneme (Kazanım Denemesi/OMR HARİÇ) - özet kartları/radar/ders
+      // ilerlemesi karışmasın diye sunucunun ayrı döndürdüğü generalResults
+      // kullanılır (bkz. Faz 1: Genel Deneme/Kazanım Denemesi ayrımı).
+      const generalResults = data.generalResults || data.results;
+      const last = generalResults[0];
+      const prev = generalResults[1];
       const diffVal = (last && prev) ? Math.round((last.totalNet - prev.totalNet) * 100) / 100 : null;
       renderScorecards(last, diffVal, data.classRank);
 
@@ -377,16 +415,7 @@
       renderErrorMemory(data.errorMemory);
       renderStudyPlanCard(data.latestExamTopicStats);
 
-      if (!data.results.length) {
-        document.getElementById('exam-results').innerHTML = '<p class="text-muted">Henüz deneme sonucu bulunmuyor.</p>';
-      } else {
-        let html = '<div class="table-wrapper"><table class="simple-table"><tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>';
-        data.results.forEach(r => {
-          html += `<tr><td>${r.examName}</td><td>${r.examDate || '-'}</td><td class="badge-net">${r.totalNet}</td></tr>`;
-        });
-        html += '</table></div>';
-        document.getElementById('exam-results').innerHTML = html;
-      }
+      renderExamResultsList(data.results);
 
       const topicCard = document.getElementById('topic-card');
       if (data.latestExamTopicStats && data.latestExamTopicStats.length) {

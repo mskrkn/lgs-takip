@@ -52,6 +52,39 @@
     let radarChart = null, areaChart = null, scoreRadarChart = null;
     let studentData = null;      // /api/student/overview yaniti - Pusula AI hizli sorulari icin
     let netTrendWindow = 'all';  // 'last5' | 'last10' | 'all' - Gelisim Yolculugun filtresi
+    let activeExamTab = 'GENERAL'; // 'GENERAL' | 'MASTERY' - bkz. renderExamResultsList
+    let lastExamResults = [];
+
+    // Genel Deneme / Kazanım Denemesi (Optik Okuma/OMR) ayrımı - "asla
+    // karışmaz" ilkesi (bkz. Faz 1 planı). examType==='optik_kamera' TEK
+    // güvenilir ayrım işareti (server.py _is_mastery_exam_type ile aynı).
+    function isMasteryExam(exam) {
+      return exam && exam.examType === 'optik_kamera';
+    }
+
+    function renderExamResultsList(results) {
+      lastExamResults = results || [];
+      const filtered = lastExamResults.filter(r => activeExamTab === 'MASTERY' ? isMasteryExam(r) : !isMasteryExam(r));
+      const tabsHtml = `
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-sm ${activeExamTab === 'GENERAL' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('GENERAL')">📘 Genel Denemeler</button>
+          <button class="btn btn-sm ${activeExamTab === 'MASTERY' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('MASTERY')">🎯 Kazanım Denemeleri</button>
+        </div>`;
+      if (!filtered.length) {
+        document.getElementById('exam-results').innerHTML = tabsHtml + '<div class="ep-empty"><div class="ep-empty-icon">📝</div>Bu kategoride henüz deneme sonucu bulunmuyor.</div>';
+        return;
+      }
+      document.getElementById('exam-results').innerHTML = tabsHtml + `
+        <div style="overflow-x:auto"><table class="ep-exams-table">
+          <tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>
+          ${filtered.map(r => `<tr><td>${escapeHtml(r.examName)}</td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
+        </table></div>`;
+    }
+
+    window._ogrSetExamTab = function (tab) {
+      activeExamTab = tab;
+      renderExamResultsList(lastExamResults);
+    };
 
     // ----- YÖN: Bugünün Pusulası -----
     function renderDirectionStatus(netTrend) {
@@ -1037,8 +1070,12 @@
       document.getElementById('greeting-title').textContent = `${s.firstName} ${s.lastName}!`;
       document.getElementById('greeting-date').textContent = '📅 ' + new Date().toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric'});
 
-      const last    = data.results[0];
-      const prev    = data.results[1];
+      // Genel Deneme (Kazanım Denemesi/OMR HARİÇ) - özet kartları/radar
+      // karışmasın diye sunucunun ayrı döndürdüğü generalResults kullanılır
+      // (bkz. Faz 1: Genel Deneme/Kazanım Denemesi ayrımı).
+      const generalResults = data.generalResults || data.results;
+      const last    = generalResults[0];
+      const prev    = generalResults[1];
       const diffVal = (last && prev) ? Math.round((last.totalNet - prev.totalNet)*100)/100 : null;
       const riseStreak = computeRiseStreak(data.netTrend);
 
@@ -1066,15 +1103,7 @@
       renderNetTrendTable(applyTrendWindow(data.netTrend));
 
       // ----- TÜM DENEMELERİM -----
-      if (!data.results.length) {
-        document.getElementById('exam-results').innerHTML = '<div class="ep-empty"><div class="ep-empty-icon">📝</div>Henüz deneme sonucu bulunmuyor.</div>';
-      } else {
-        document.getElementById('exam-results').innerHTML = `
-          <div style="overflow-x:auto"><table class="ep-exams-table">
-            <tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>
-            ${data.results.map(r => `<tr><td>${escapeHtml(r.examName)}</td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
-          </table></div>`;
-      }
+      renderExamResultsList(data.results);
 
       // ----- KONU ANALİZİ -----
       const topicCard = document.getElementById('topic-card');
