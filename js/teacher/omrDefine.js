@@ -279,15 +279,35 @@ async function _omrSaveExam() {
 function _omrRenderExamList(exams) {
   const root = document.getElementById('omr-exam-list');
   if (!root) return;
+
+  // Faz 3: sınıf boyutlu karşılaştırma tablosu (Ders|Öğretmen|Test|Katılım|
+  // Ortalama) - test listesinin ÜSTÜNE, öğrencilerden türetilmiş sınıf
+  // listesiyle (bkz. şube filtresi deseni) enjekte edilir, ayrı bir HTML
+  // konteynerine ihtiyaç duymaz.
+  const classNames = [...new Set(((_omrOverview && _omrOverview.students) || []).map(s => s.class_name).filter(Boolean))].sort();
+  const classReportHtml = classNames.length ? `
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h4 style="margin:0">📊 Sınıf Kazanım Raporu</h4>
+        <select id="omr-class-report-select" class="form-control" style="max-width:200px" onchange="_omrLoadClassReport(this.value)">
+          <option value="">Sınıf seçin...</option>
+          ${classNames.map(c => `<option value="${_omrEsc(c)}">${_omrEsc(c)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="omr-class-report-body" style="margin-top:10px"></div>
+    </div>
+  ` : '';
+
   if (!exams.length) {
-    root.innerHTML = '<p class="text-muted">Henüz tanımlı test yok.</p>';
+    root.innerHTML = classReportHtml + '<p class="text-muted">Henüz tanımlı test yok.</p>';
     return;
   }
-  root.innerHTML = exams.map(e => `
+  root.innerHTML = classReportHtml + exams.map(e => `
     <div class="card" style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>
           <strong>${_omrEsc(e.title)}</strong>
+          ${e.createdByName ? `<span class="text-muted" title="Bu testi ekleyen" style="font-size:11px"> · 👤 ${_omrEsc(e.createdByName)}</span>` : ''}
           <div class="text-muted" style="font-size:12px">
             ${_omrEsc(e.subject_name || '-')} · ${e.grade_level ? e.grade_level + '. Sınıf' : 'Sınıf belirtilmedi'} · ${e.question_count} soru
           </div>
@@ -296,12 +316,69 @@ function _omrRenderExamList(exams) {
           <button type="button" class="btn btn-sm btn-primary" onclick="_omrOpenPaperDialog(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📄 Form Oluştur</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenScanView(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📷 Kamerayla Tara</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenReviewPanel(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🔍 İncele</button>
+          <button type="button" class="btn btn-sm" onclick="_omrOpenQuestionReport(${e.id})">📊 Soru Analizi</button>
         </div>
       </div>
       <div id="omr-paper-dialog-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
       <div id="omr-review-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
+      <div id="omr-question-report-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
     </div>
   `).join('');
+}
+
+// Faz 3: sınıf boyutlu karşılaştırma tablosu - bkz. api_teacher_omr_class_report.
+async function _omrLoadClassReport(className) {
+  const body = document.getElementById('omr-class-report-body');
+  if (!body) return;
+  if (!className) { body.innerHTML = ''; return; }
+  body.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  const data = await fetch(`/api/teacher/omr/class-report?className=${encodeURIComponent(className)}`).then(r => r.json());
+  if (data.error) { body.innerHTML = `<p class="text-muted">❌ ${_omrEsc(data.error)}</p>`; return; }
+  if (!data.report || !data.report.length) {
+    body.innerHTML = '<p class="text-muted">Bu sınıfa henüz resmen uygulanmış bir Kazanım Denemesi yok.</p>';
+    return;
+  }
+  body.innerHTML = `
+    <div class="table-wrapper"><table class="simple-table">
+      <tr><th>Ders</th><th>Öğretmen</th><th>Test</th><th>Katılım</th><th>Ortalama Net</th></tr>
+      ${data.report.map(row => `
+        <tr>
+          <td>${_omrEsc(row.subjectName)}</td>
+          <td>${_omrEsc(row.teacherName)}</td>
+          <td>${_omrEsc(row.examTitle)}</td>
+          <td>${_omrEsc(row.participation)}</td>
+          <td>${row.avgNet ?? '-'}</td>
+        </tr>
+      `).join('')}
+    </table></div>`;
+}
+
+// Faz 3: per-soru zorluk raporu - bkz. api_teacher_omr_question_stats.
+async function _omrOpenQuestionReport(examDefId) {
+  const container = document.getElementById(`omr-question-report-${examDefId}`);
+  if (!container) return;
+  const isOpen = container.style.display !== 'none';
+  document.querySelectorAll('[id^="omr-question-report-"]').forEach(el => el.style.display = 'none');
+  if (isOpen) return;
+  container.style.display = 'block';
+  container.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  const data = await fetch(`/api/teacher/omr/exams/${examDefId}/question-stats`).then(r => r.json());
+  if (data.error) { container.innerHTML = `<p class="text-muted">❌ ${_omrEsc(data.error)}</p>`; return; }
+  if (!data.questions.length) {
+    container.innerHTML = `<p class="text-muted">Henüz onaylanmış bir tarama yok.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <p class="text-muted" style="font-size:12px">${data.scanCount} onaylanmış tarama üzerinden.</p>
+    <div class="table-wrapper"><table class="simple-table">
+      <tr><th>Soru</th><th>Doğru</th><th>Yanlış</th><th>Boş</th><th>Şüpheli</th><th>Başarı %</th></tr>
+      ${data.questions.map(q => `
+        <tr${q.successRate !== null && q.successRate < 50 ? ' style="color:#fb7185"' : ''}>
+          <td>${q.question}</td><td>${q.correct}</td><td>${q.wrong}</td><td>${q.blank}</td><td>${q.flagged}</td>
+          <td>${q.successRate !== null ? q.successRate + '%' : '-'}</td>
+        </tr>
+      `).join('')}
+    </table></div>`;
 }
 
 // ============================================================

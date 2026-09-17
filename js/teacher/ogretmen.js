@@ -396,8 +396,16 @@
     }
 
     function renderMessagePage(students, className) {
+      // Sınıf seçici eskiden birleşik metni ("8/A, 8/B") TEK, etkileşimsiz
+      // bir <option> olarak gösteriyordu - çok-sınıflı/sınıf öğretmenliği
+      // olan bir öğretmen için gerçek bir seçim değildi. Ödevler sayfasının
+      // (assignment-class) ZATEN DOĞRU deseniyle - öğrencilerden türetilmiş
+      // benzersiz sınıf listesi - değiştirildi (bkz. Faz 2 planı, madde F).
       const classSelect = document.getElementById('message-class-select');
-      classSelect.innerHTML = `<option>${escapeHtml(className || '-')}</option>`;
+      const classNames = [...new Set((students || []).map(s => s.class_name).filter(Boolean))].sort();
+      classSelect.innerHTML = classNames.length
+        ? classNames.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')
+        : `<option>${escapeHtml(className || '-')}</option>`;
 
       const studentSelect = document.getElementById('message-student-select');
       const sorted = [...(students || [])].sort((a, b) =>
