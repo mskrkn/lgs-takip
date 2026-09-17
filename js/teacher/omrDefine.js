@@ -12,6 +12,19 @@ let _omrOverview = null;
 let _omrCurriculumTopics = [];   // secili ders+sinifin konu+kazanim listesi (bkz. _omrLoadCurriculumTopics)
 let _omrAnswerKey = {};          // { "1": "A", "2": "C", ... } - optik taslak uzerinde tiklanarak doldurulur
 
+// Kagidin FIZIKSEL kapasitesi (bkz. omr_form.py QUESTION_COUNT_MAX) - ogretmen
+// serbestce soru sayisi girebilir (kullanici isteğiyle 2026-09-17: sabit
+// 10/15/20/25 secenekleri yerine elle giris) ama bu sayidan fazlasi kagitta
+// hic yer bulamaz, o yuzden ust sinir burada da uygulanir.
+const OMR_QUESTION_COUNT_MAX = 25;
+
+function _omrGetQuestionCount() {
+  const raw = parseInt(document.getElementById('omr-f-count').value, 10);
+  if (!raw || raw < 1) return 1;
+  if (raw > OMR_QUESTION_COUNT_MAX) return OMR_QUESTION_COUNT_MAX;
+  return raw;
+}
+
 function _omrEsc(str) {
   return String(str === null || str === undefined ? '' : str)
     .replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -78,12 +91,8 @@ function _omrBuildFormHtml() {
       </div>
       <div>
         <label class="form-label">Soru Sayısı</label>
-        <select id="omr-f-count" class="form-control">
-          <option value="25">25 soru</option>
-          <option value="20" selected>20 soru</option>
-          <option value="15">15 soru</option>
-          <option value="10">10 soru</option>
-        </select>
+        <input type="number" id="omr-f-count" class="form-control" min="1" max="${OMR_QUESTION_COUNT_MAX}" value="20">
+        <span class="text-muted" style="font-size:12px">Optik kağıtta ${OMR_QUESTION_COUNT_MAX} soruya kadar alan var; fazlası boş kalır ve değerlendirilmez.</span>
       </div>
     </div>
 
@@ -100,9 +109,13 @@ function _omrBuildFormHtml() {
 }
 
 function _omrWireForm() {
-  document.getElementById('omr-f-count').addEventListener('change', () => {
+  const countInput = document.getElementById('omr-f-count');
+  countInput.addEventListener('input', () => {
     _omrAnswerKey = {};
     _omrRenderAnswerKeySheet();
+  });
+  countInput.addEventListener('change', () => {
+    countInput.value = _omrGetQuestionCount();  // gecersiz/sinir disi deger yazildiysa alanda da duzelt
   });
   _omrRenderAnswerKeySheet();
 
@@ -118,7 +131,7 @@ function _omrWireForm() {
 // bkz. omr_form.py ANSWER_ROWS_PER_COL) sahip bir HTML taslak - ogretmen
 // dogru sikki gercek kagitta oldugu gibi tiklayarak isaretler.
 function _omrRenderAnswerKeySheet() {
-  const count = parseInt(document.getElementById('omr-f-count').value, 10) || 20;
+  const count = _omrGetQuestionCount();
   const sheet = document.getElementById('omr-answer-key-sheet');
   const col1 = [], col2 = [];
   for (let q = 1; q <= count; q++) {
@@ -204,7 +217,7 @@ function _omrPopulateKazanimSelect() {
 async function _omrSaveExam() {
   const statusEl = document.getElementById('omr-form-status');
   const title = document.getElementById('omr-f-title').value.trim();
-  const questionCount = parseInt(document.getElementById('omr-f-count').value, 10);
+  const questionCount = _omrGetQuestionCount();
   const answerKey = _omrCollectAnswerKey();
   const subjectIdRaw = document.getElementById('omr-f-subject').value;
   const gradeLevel = document.getElementById('omr-f-grade').value || null;
