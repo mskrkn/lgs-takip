@@ -216,9 +216,10 @@ def _read_id_digits(gray):
 
 def process_scan_image(image_bytes, question_count):
     """Ana giris noktasi. image_bytes: yuklenen fotografin ham byte'lari.
-    question_count: bu sinavin soru sayisi (F.ALLOWED_QUESTION_COUNTS: 10/15/
-    20/25 - fazla satirlar ANALIZ EDILMEZ, bkz. spesifikasyon bolum 1
-    'soru sayisi esnekligi').
+    question_count: bu sinavin soru sayisi (ogretmen serbestce girer,
+    F.QUESTION_COUNT_MIN..F.QUESTION_COUNT_MAX araligina sikistirilir -
+    fazla satirlar ANALIZ EDILMEZ, bkz. spesifikasyon bolum 1 'soru sayisi
+    esnekligi').
 
     Doner: {
       'paper_token': str|None,
@@ -264,7 +265,9 @@ def process_scan_image(image_bytes, question_count):
         else:
             warnings.append("4 haneli numara alanı da okunamadı/boş - manuel atama gerekiyor.")
 
-    question_count = question_count if question_count in F.ALLOWED_QUESTION_COUNTS else 20
+    if not isinstance(question_count, int) or question_count < F.QUESTION_COUNT_MIN:
+        question_count = 20
+    question_count = min(question_count, F.QUESTION_COUNT_MAX)
     questions = _read_questions(gray, question_count)
     if any(q["status"] == "ambiguous" for q in questions):
         warnings.append("Bazı sorularda belirsiz işaretleme tespit edildi.")

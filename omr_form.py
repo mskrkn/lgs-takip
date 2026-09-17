@@ -55,8 +55,11 @@ pdfmetrics.registerFont(TTFont("EduPusulaSans-Bold", os.path.join(_FONTS_DIR, "V
 FORM_W_MM = 70.0    # A4 genisligi 3'e bolunuyor (kullanici isteğiyle 2026-09-16, bkz. modul docstring'i)
 FORM_H_MM = 148.5   # A4 yuksekligi 2'ye bolunuyor - eskiden (148) neredeyse ayni
 
-QUESTION_COUNT_MAX = 25  # kagidin FIZIKSEL kapasitesi - her zaman bu kadar satir basilir
-ALLOWED_QUESTION_COUNTS = (10, 15, 20, 25)  # ogretmenin bir deneme icin secebilecegi soru sayilari
+QUESTION_COUNT_MIN = 1
+QUESTION_COUNT_MAX = 25  # kagidin FIZIKSEL kapasitesi - her zaman bu kadar satir basilir,
+# ogretmen bundan fazlasini giremez (kullanici isteğiyle 2026-09-17: sabit
+# 10/15/20/25 secenekleri yerine serbest sayi girisi, ust sinir sadece
+# kagidin fiziksel kapasitesiyle sinirli).
 CHOICES = ("A", "B", "C", "D")
 
 FIDUCIAL_SIZE_MM = 5.0
