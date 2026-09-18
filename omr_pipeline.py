@@ -7,8 +7,15 @@ QR/4-haneli-no ile kimlik çözümü, bubble doluluk analizi. Geometri sabitleri
 okunur, iki yerde ayrı ayrı tanımlanıp birbirinden sapmaz (bkz. omr_form.py
 docstring'i).
 
-Gerçek basılı+telefonla-fotoğraflanmış örneklerle (2026-09-15) kalibre edildi
-- bkz. proje notu `edupusula-kamera-omr-projesi`. Önemli bulgular:
+Kullanici isteğiyle 2026-09-17: artik TEK sabit form yerine birden fazla
+sablon (bkz. omr_form.FormTemplate) var - bu yuzden bu dosyadaki her
+fonksiyon ilgili taramanin HANGI sablonla basildigini (template objesi,
+sunucuda omr_exam_definitions.form_template'ten okunur) parametre olarak
+alir; hicbir geometri artik modul yuklenirken SABIT hesaplanmiyor.
+
+Gerçek basılı+telefonla-fotoğraflanmış örneklerle (2026-09-15, "compact"
+sablonuyla) kalibre edildi - bkz. proje notu `edupusula-kamera-omr-projesi`.
+Önemli bulgular:
   - Perspektif düzeltmeyi SADECE QR'ın 4 köşesinden hesaplamak YETERSİZ:
     telefon kamerasının hafif lens distorsiyonu QR'dan (sayfanın bir
     köşesinde) uzaklaştıkça birikip sayfanın öbür ucundaki bubble'ları
@@ -26,6 +33,12 @@ Gerçek basılı+telefonla-fotoğraflanmış örneklerle (2026-09-15) kalibre ed
     çıktı (gölgeli fotoğraflarda bile doğru okundu).
   - QR decode bazen ham/rektifiye görüntüde başarısız olsa da, QR bölgesini
     kırpıp 4x büyütünce çözülebiliyor - bu yüzden üç kademeli denenir.
+
+DIKKAT: "quarter50"/"quarter100" sablonlari (kucuk balon, 2.8-3.6mm) HENUZ
+gercek fotograflarla kalibre edilmedi - BUBBLE_SAMPLE_R_MM/esikler sadece
+"compact"in 4.4mm balonuyla dogrulandi. Kucuk balonlarda okuma
+guvenilirligi dusebilir, gercek kullanimdan once fiziksel testle
+dogrulanmali.
 """
 
 import cv2
@@ -34,13 +47,7 @@ import numpy as np
 import omr_form as F
 
 PX_PER_MM = 8
-CANON_W = int(F.FORM_W_MM * PX_PER_MM)
-CANON_H = int(F.FORM_H_MM * PX_PER_MM)
 
-_QR_MM_CORNERS = [
-    (F.QR_BOX_MM[0], F.QR_BOX_MM[1]), (F.QR_BOX_MM[2], F.QR_BOX_MM[1]),
-    (F.QR_BOX_MM[2], F.QR_BOX_MM[3]), (F.QR_BOX_MM[0], F.QR_BOX_MM[3]),
-]
 _FIDUCIAL_ORDER = ["TL", "TR", "BR", "BL"]
 
 BLANK_VS_MARKED_GAP = 15  # bkz. modul docstring'i - gercek fotograflarla olculdu
@@ -53,14 +60,21 @@ class OmrReadError(Exception):
     pass
 
 
+def _resolve_template(template_id):
+    return F.TEMPLATES.get(template_id, F.TEMPLATE_COMPACT)
+
+
+def _canon_size_px(template):
+    return int(template.form_w_mm * PX_PER_MM), int(template.form_h_mm * PX_PER_MM)
+
+
+def _qr_mm_corners(template):
+    x0, y0, x1, y1 = template.qr_box_mm
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
 def _mm_to_px(x_mm, y_mm):
     return (x_mm * PX_PER_MM, y_mm * PX_PER_MM)
-
-
-def _rough_homography_from_qr(qr_points):
-    src = np.array(qr_points, dtype=np.float32)
-    dst = np.array([_mm_to_px(x, y) for x, y in _QR_MM_CORNERS], dtype=np.float32)
-    return cv2.getPerspectiveTransform(src, dst)
 
 
 def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
@@ -93,17 +107,17 @@ def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
     return best
 
 
-def _rectify(img, qr_points):
+def _rectify(img, qr_points, template):
     """QR koseleri + kose fiducial'lerinden nihai rektifiye (duzlestirilmis,
     sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     qr_size_px = float(np.linalg.norm(qr_points[1] - qr_points[0]))
     win_r = qr_size_px * 1.4
-    expected_fid_area_px = (qr_size_px * (F.FIDUCIAL_SIZE_MM / 20.0)) ** 2
+    expected_fid_area_px = (qr_size_px * (template.fiducial_size_mm / 20.0)) ** 2
 
-    fid_mm = F.fiducial_centers_mm()
+    fid_mm = template.fiducial_centers_mm()
     known_src = [tuple(p) for p in qr_points]
-    known_dst = [_mm_to_px(x, y) for x, y in _QR_MM_CORNERS]
+    known_dst = [_mm_to_px(x, y) for x, y in _qr_mm_corners(template)]
 
     refined = {}
     for key in _FIDUCIAL_ORDER:
@@ -125,7 +139,8 @@ def _rectify(img, qr_points):
     src = np.array([refined[k] for k in _FIDUCIAL_ORDER], dtype=np.float32)
     dst = np.array([_mm_to_px(*fid_mm[k]) for k in _FIDUCIAL_ORDER], dtype=np.float32)
     H_final = cv2.getPerspectiveTransform(src, dst)
-    warped = cv2.warpPerspective(img, H_final, (CANON_W, CANON_H))
+    canon_w, canon_h = _canon_size_px(template)
+    warped = cv2.warpPerspective(img, H_final, (canon_w, canon_h))
     return warped, refined
 
 
@@ -134,12 +149,13 @@ def _decode_qr(detector, image):
     return (data or None), points
 
 
-def _decode_qr_cropped_upscale(detector, warped):
+def _decode_qr_cropped_upscale(detector, warped, template):
     """QR bazen ham/rektifiye tam goruntude cozulmez ama kendi bolgesi
     kirpilip 4x buyutulunce cozulebiliyor (gercek fotograflarla dogrulandi -
     bkz. modul docstring'i)."""
-    x0, y0 = _mm_to_px(F.QR_BOX_MM[0] - 3, F.QR_BOX_MM[1] - 3)
-    x1, y1 = _mm_to_px(F.QR_BOX_MM[2] + 3, F.QR_BOX_MM[3] + 3)
+    qr_x0, qr_y0, qr_x1, qr_y1 = template.qr_box_mm
+    x0, y0 = _mm_to_px(qr_x0 - 3, qr_y0 - 3)
+    x1, y1 = _mm_to_px(qr_x1 + 3, qr_y1 + 3)
     x0, y0 = max(0, int(x0)), max(0, int(y0))
     x1, y1 = min(warped.shape[1], int(x1)), min(warped.shape[0], int(y1))
     crop = warped[y0:y1, x0:x1]
@@ -180,12 +196,12 @@ def _classify_group(means, labels):
     return {"status": "single", "value": labels[order[0]]}
 
 
-def _read_questions(gray, question_count):
+def _read_questions(gray, question_count, template):
     results = []
     for q in range(1, question_count + 1):
         means = []
         for choice_idx in range(4):
-            x_mm, y_mm = F.question_bubble_center_mm(q, choice_idx)
+            x_mm, y_mm = template.question_bubble_center_mm(q, choice_idx)
             cx, cy = _mm_to_px(x_mm, y_mm)
             means.append(_disk_mean(gray, cx, cy, BUBBLE_SAMPLE_R_MM * PX_PER_MM))
         cls = _classify_group(means, F.CHOICES)
@@ -194,7 +210,7 @@ def _read_questions(gray, question_count):
     return results
 
 
-def _read_id_digits(gray):
+def _read_id_digits(gray, template):
     """4 haneli okul-no bubble blogu - QR okunamadiginda yedek kimlik
     dogrulama. NOT: gercek ornek fotograflarda ogrenci bu alani hic
     doldurmadi (QR zaten kimligi tasiyordu) - bu fonksiyon ayni GORECELI
@@ -202,11 +218,11 @@ def _read_id_digits(gray):
     henuz DOGRULANMADI, ileride gercek veriyle kontrol edilmeli."""
     digits = []
     statuses = []
-    for col in range(F.ID_DIGIT_COUNT):
-        means = [_disk_mean(gray, *_mm_to_px(*F.id_bubble_center_mm(col, row)),
-                             F.ID_BUBBLE_D_MM / 2 * PX_PER_MM)
-                 for row in range(F.ID_DIGIT_ROWS)]
-        cls = _classify_group(means, [str(d) for d in range(F.ID_DIGIT_ROWS)])
+    for col in range(template.id_digit_count):
+        means = [_disk_mean(gray, *_mm_to_px(*template.id_bubble_center_mm(col, row)),
+                             template.id_bubble_d_mm / 2 * PX_PER_MM)
+                 for row in range(template.id_digit_rows)]
+        cls = _classify_group(means, [str(d) for d in range(template.id_digit_rows)])
         digits.append(cls["value"])
         statuses.append(cls["status"])
     if any(s != "single" for s in statuses):
@@ -214,12 +230,13 @@ def _read_id_digits(gray):
     return "".join(digits)
 
 
-def process_scan_image(image_bytes, question_count):
+def process_scan_image(image_bytes, question_count, template_id="compact"):
     """Ana giris noktasi. image_bytes: yuklenen fotografin ham byte'lari.
     question_count: bu sinavin soru sayisi (ogretmen serbestce girer,
-    F.QUESTION_COUNT_MIN..F.QUESTION_COUNT_MAX araligina sikistirilir -
-    fazla satirlar ANALIZ EDILMEZ, bkz. spesifikasyon bolum 1 'soru sayisi
-    esnekligi').
+    template.question_count_max ile sinirlanir - fazla satirlar ANALIZ
+    EDILMEZ). template_id: bu sinavin BASILDIGI sablonun kimligi
+    (omr_exam_definitions.form_template'ten okunur, bkz. omr_form.py
+    modul docstring'i - ASLA question_count'tan yeniden turetilmez).
 
     Doner: {
       'paper_token': str|None,
@@ -232,6 +249,7 @@ def process_scan_image(image_bytes, question_count):
     bulunamadi) firlatilir - cagiran taraf bunu 'needs_review' + tam manuel
     atamaya dusurmeli.
     """
+    template = _resolve_template(template_id)
     warnings = []
     arr = np.frombuffer(image_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -244,12 +262,12 @@ def process_scan_image(image_bytes, question_count):
         raise OmrReadError("Kağıdın QR kodu/kimlik alanı bulunamadı - kağıt kadraja tam girmiyor olabilir.")
 
     qr_points = points[0]
-    warped, _refined_fid = _rectify(img, qr_points)
+    warped, _refined_fid = _rectify(img, qr_points, template)
     gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
 
     paper_token, _points_r = _decode_qr(detector, warped)
     if not paper_token:
-        paper_token = _decode_qr_cropped_upscale(detector, warped)
+        paper_token = _decode_qr_cropped_upscale(detector, warped, template)
     if not paper_token and _data:
         paper_token = _data  # duzeltme once basarisiz olup ham goruntude basarili oldugu nadir durum
 
@@ -259,7 +277,7 @@ def process_scan_image(image_bytes, question_count):
         match_status = "matched_qr"
     else:
         warnings.append("QR kodu okunamadı, 4 haneli numara alanına düşülüyor.")
-        id_digits = _read_id_digits(gray)
+        id_digits = _read_id_digits(gray, template)
         if id_digits:
             match_status = "matched_id_digits"
         else:
@@ -267,8 +285,8 @@ def process_scan_image(image_bytes, question_count):
 
     if not isinstance(question_count, int) or question_count < F.QUESTION_COUNT_MIN:
         question_count = 20
-    question_count = min(question_count, F.QUESTION_COUNT_MAX)
-    questions = _read_questions(gray, question_count)
+    question_count = min(question_count, template.question_count_max)
+    questions = _read_questions(gray, question_count, template)
     if any(q["status"] == "ambiguous" for q in questions):
         warnings.append("Bazı sorularda belirsiz işaretleme tespit edildi.")
 

@@ -111,7 +111,7 @@ except ImportError:
 # uretimine ihtiyac duymuyor) calismaya devam etsin diye ayrica tutulur -
 # tek gercek kaynak yine de omr_form.QUESTION_COUNT_MIN/MAX'tir.
 OMR_QUESTION_COUNT_MIN = getattr(omr_form, "QUESTION_COUNT_MIN", 1)
-OMR_QUESTION_COUNT_MAX = getattr(omr_form, "QUESTION_COUNT_MAX", 25)
+OMR_QUESTION_COUNT_MAX = getattr(omr_form, "QUESTION_COUNT_MAX", 100)
 
 # Kamera OMR goruntu isleme pipeline'i - opencv-python-headless/numpy zaten
 # ZORUNLU bagimlilik (Soru Havuzu PDF kirpma icin de kullaniliyor), bu yuzden
@@ -323,6 +323,14 @@ def _migrate_users_table(conn):
         # Ogretmenin branşı (admin-panel-prompt.md bölüm 6 filtreleri icin) -
         # diger roller icin anlamsiz, NULL kalir.
         conn.execute("ALTER TABLE users ADD COLUMN subject TEXT")
+    if "homeroom_class_name" not in cols:
+        # "Sınıf öğretmeni" (homeroom) - admin tarafından atanır, o sınıfın
+        # TÜM Optik Okuma testlerini (branşı ne olursa olsun) görebilsin diye
+        # (bkz. Faz 2 planı). class_name (CSV/normal branş erişimi) ile
+        # KARIŞTIRILMAMALI - ayrı, dar bir görünürlük kuralı için kullanılır
+        # (bkz. teacher_effective_classes). Bir öğretmen en fazla bir sınıfın
+        # sınıf öğretmeni olur, tek değer yeterli.
+        conn.execute("ALTER TABLE users ADD COLUMN homeroom_class_name TEXT")
 
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -1010,7 +1018,7 @@ def _create_omr_tables(conn):
             grade_level TEXT,
             topic TEXT,
             title TEXT NOT NULL,
-            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 25),
+            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 100),
             answer_key_json TEXT NOT NULL,
             curriculum_range_json TEXT,
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -1047,6 +1055,22 @@ def _create_omr_tables(conn):
         CREATE INDEX IF NOT EXISTS idx_omr_papers_token ON omr_papers(paper_token);
         CREATE INDEX IF NOT EXISTS idx_omr_papers_exam ON omr_papers(exam_definition_id);
         CREATE INDEX IF NOT EXISTS idx_omr_scans_exam ON omr_scans(exam_definition_id);
+
+        -- Faz 2: bir test tanımının hangi sınıf(lar)a RESMİ OLARAK uygulandığının
+        -- kaydı - api_teacher_omr_generate_papers (kağıt üretimi, zaten TEK bir
+        -- sınıfa göre öğrenci seçtiriyor) her çağrıldığında bir satır ekler.
+        -- Öğretmen boyutlu rapor (Faz 3) ve "bu test hangi sınıflara verildi"
+        -- göstergesi bunu kullanır. Aynı test+sınıf tekrar kağıt basılırsa
+        -- UNIQUE + INSERT OR IGNORE ile çoğalmaz.
+        CREATE TABLE IF NOT EXISTS omr_exam_applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exam_definition_id INTEGER NOT NULL REFERENCES omr_exam_definitions(id) ON DELETE CASCADE,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            class_name TEXT NOT NULL,
+            applied_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            applied_at TEXT NOT NULL,
+            UNIQUE(exam_definition_id, class_name)
+        );
         """
     )
     # Faz 4: onaylanan taramalarin sonucunu mevcut results/exams altyapisina
@@ -1065,6 +1089,14 @@ def _create_omr_tables(conn):
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_kodu TEXT")
     if "kazanim_adi" not in omr_exam_def_cols:
         conn.execute("ALTER TABLE omr_exam_definitions ADD COLUMN kazanim_adi TEXT")
+    # Hangi FIZIKSEL sablonla (bkz. omr_form.FormTemplate) basildigi -
+    # OLUSTURMA aninda omr_form.select_template(question_count).id ile
+    # belirlenip kalici olarak saklanir, okuma sirasinda BIR DAHA ASLA
+    # question_count'tan yeniden turetilmez (kullanici isteğiyle 2026-09-17:
+    # 50/100 soruluk ek sablonlar, bkz. omr_form.py modul docstring'i).
+    if "form_template" not in omr_exam_def_cols:
+        conn.execute(
+            "ALTER TABLE omr_exam_definitions ADD COLUMN form_template TEXT NOT NULL DEFAULT 'compact'")
     conn.commit()
 
 
@@ -1148,6 +1180,52 @@ def _migrate_omr_question_count_free_range(conn):
             exam_id INTEGER REFERENCES exams(id),
             kazanim_kodu TEXT,
             kazanim_adi TEXT
+        );
+        INSERT INTO omr_exam_definitions_new ({col_list})
+            SELECT {col_list} FROM omr_exam_definitions;
+        DROP TABLE omr_exam_definitions;
+        ALTER TABLE omr_exam_definitions_new RENAME TO omr_exam_definitions;
+        """
+    )
+    conn.commit()
+
+
+def _migrate_omr_question_count_max_100(conn):
+    """question_count CHECK kisiti BETWEEN 1 AND 25 -> BETWEEN 1 AND 100
+    (kullanici isteğiyle 2026-09-17: ceyrek-A4 quarter50/quarter100
+    sablonlari eklendi, bkz. omr_form.py TEMPLATES). AYNI tablo-yeniden-
+    olusturma deseni (bkz. _migrate_omr_question_count_range). form_template
+    sutunu bu noktada zaten additive ALTER ile eklenmis olmali (bkz.
+    _create_omr_tables), col_list onu da otomatik tasir."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='omr_exam_definitions'"
+    ).fetchone()
+    if not row or "BETWEEN 1 AND 25" not in row["sql"]:
+        return  # tablo yok (ilk kurulum, yeni CHECK'le zaten olusuyor) ya da zaten migrate edilmis
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(omr_exam_definitions)").fetchall()]
+    col_list = ", ".join(cols)
+
+    conn.executescript(
+        f"""
+        CREATE TABLE omr_exam_definitions_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+            grade_level TEXT,
+            topic TEXT,
+            title TEXT NOT NULL,
+            question_count INTEGER NOT NULL CHECK(question_count BETWEEN 1 AND 100),
+            answer_key_json TEXT NOT NULL,
+            curriculum_range_json TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            exam_id INTEGER REFERENCES exams(id),
+            kazanim_kodu TEXT,
+            kazanim_adi TEXT,
+            form_template TEXT NOT NULL DEFAULT 'compact'
         );
         INSERT INTO omr_exam_definitions_new ({col_list})
             SELECT {col_list} FROM omr_exam_definitions;
@@ -2258,6 +2336,7 @@ def run_v2_migration(conn):
     _create_omr_tables(conn)
     _migrate_omr_question_count_range(conn)
     _migrate_omr_question_count_free_range(conn)
+    _migrate_omr_question_count_max_100(conn)
     org_id = _seed_reference_data(conn)
     _sync_user_roles_and_profiles(conn, org_id)
     sync_derived_tables(conn, org_id)
@@ -2687,6 +2766,23 @@ def teacher_class_display(class_name_raw):
     return ", ".join(classes) if classes else None
 
 
+def teacher_effective_classes(class_name_raw, homeroom_class_name=None):
+    """teacher_class_list'in "sınıf öğretmenliği" (homeroom) ile
+    genişletilmiş hali - bir öğretmenin branşı için erişebildiği sınıflara
+    (class_name CSV/'*') EK OLARAK, admin tarafından "sınıf öğretmeni"
+    atandığı sınıfı da erişilebilir sayar (bkz. Faz 2 planı). '*' zaten
+    sınırsız olduğu için homeroom eklemeye gerek yok. SADECE genel öğrenci/
+    veri erişimi (get_allowed_student_ids, ödevler, api_teacher_overview)
+    için kullanılır - OMR test tanımı GÖRÜNÜRLÜĞÜ bunun DIŞINDA, ayrı ve
+    daha dar bir kuraldır (bkz. api_teacher_omr_list_exams)."""
+    classes = teacher_class_list(class_name_raw)
+    if classes is None:
+        return None
+    if homeroom_class_name and homeroom_class_name not in classes:
+        classes = [*classes, homeroom_class_name]
+    return classes
+
+
 def get_allowed_student_ids(db):
     """None => sınırsız erişim (admin / tüm sınıflara yetkili öğretmen).
     Aksi halde izinli öğrenci id'lerinin kümesi."""
@@ -2707,7 +2803,7 @@ def get_allowed_student_ids(db):
         return {r["id"] for r in rows}
     if role == "teacher":
         org_id = _current_org_id(db)
-        classes = teacher_class_list(session.get("class_name"))
+        classes = teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
         if classes is None:
             rows = db.execute("SELECT id FROM students WHERE organization_id = ?", (org_id,)).fetchall()
         elif classes:
@@ -2908,6 +3004,7 @@ def api_login():
     session["role"] = user["role"]
     session["display_name"] = user["display_name"]
     session["class_name"] = user["class_name"]
+    session["homeroom_class_name"] = user["homeroom_class_name"]
     session["student_id"] = user["student_id"]
     session.permanent = True
 
@@ -2937,6 +3034,7 @@ def api_login():
     return jsonify({
         "ok": True, "role": user["role"], "displayName": user["display_name"],
         "className": teacher_class_display(user["class_name"]) if user["role"] == "teacher" else user["class_name"],
+        "homeroomClassName": user["homeroom_class_name"] if user["role"] == "teacher" else None,
         "studentId": user["student_id"],
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
@@ -2988,6 +3086,7 @@ def api_me():
         "authenticated": True, "role": session.get("role"),
         "displayName": session.get("display_name"),
         "className": teacher_class_display(session.get("class_name")) if session.get("role") == "teacher" else session.get("class_name"),
+        "homeroomClassName": session.get("homeroom_class_name") if session.get("role") == "teacher" else None,
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
         "canManageSchools": can_manage_schools,
@@ -5305,14 +5404,48 @@ def api_teacher_omr_list_exams():
     org_id = _effective_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
-    rows = db.execute(
+
+    base_query = (
         "SELECT e.id, e.title, e.topic, e.kazanim_adi, e.grade_level, e.question_count, e.created_at, "
-        "s.name AS subject_name FROM omr_exam_definitions e "
+        "e.created_by, u.display_name AS created_by_name, s.name AS subject_name "
+        "FROM omr_exam_definitions e "
         "LEFT JOIN subjects s ON s.id = e.subject_id "
-        "WHERE e.organization_id = ? ORDER BY e.created_at DESC",
-        (org_id,),
-    ).fetchall()
-    return jsonify({"exams": [dict(r) for r in rows]})
+        "LEFT JOIN users u ON u.id = e.created_by "
+        "WHERE e.organization_id = ?"
+    )
+    role = session.get("role")
+    if role in ("admin", "super_admin"):
+        # Platform/okul admini zaten okulun TAMAMINI görür/yönetir - kapsam
+        # daraltılmaz (bkz. Faz 2 planı, madde C).
+        rows = db.execute(base_query + " ORDER BY e.created_at DESC", (org_id,)).fetchall()
+    else:
+        # Branş öğretmeni sadece KENDİ oluşturduğu testleri görür; sınıf
+        # öğretmeni (homeroom) ayrıca kendi sınıfına UYGULANMIŞ (en az bir
+        # omr_papers kaydı olan) testleri de görür - branşı ne olursa olsun
+        # ("derse giren öğretmen kendi denemesini görürken sınıf öğretmeni
+        # o sınıfın TÜM denemelerini görsün", kullanıcı kararı).
+        homeroom = session.get("homeroom_class_name")
+        if homeroom:
+            rows = db.execute(
+                base_query + " AND (e.created_by = ? OR EXISTS ("
+                "SELECT 1 FROM omr_papers p WHERE p.exam_definition_id = e.id AND p.class_name = ?"
+                ")) ORDER BY e.created_at DESC",
+                (org_id, session.get("user_id"), homeroom),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                base_query + " AND e.created_by = ? ORDER BY e.created_at DESC",
+                (org_id, session.get("user_id")),
+            ).fetchall()
+
+    exams = []
+    for r in rows:
+        d = dict(r)
+        # Kendi testinde etiket gösterilmez - sadece "bu neden burada?"
+        # sorusuna cevap olan (sınıf öğretmenliği sayesinde görünen) testlerde.
+        d["createdByName"] = d.pop("created_by_name") if d["created_by"] != session.get("user_id") else None
+        exams.append(d)
+    return jsonify({"exams": exams})
 
 
 @app.route("/api/teacher/omr/exams/<int:exam_def_id>", methods=["GET"])
@@ -5409,14 +5542,20 @@ def api_teacher_omr_create_exam():
         (exam_id, org_id, title, now[:10], "optik_kamera", exam_data_json, "omr_scan"),
     )
 
+    # Hangi fiziksel sablonla basilacagi SADECE burada, olusturma aninda
+    # belirlenip kalici olarak saklanir - okuma sirasinda bir daha asla
+    # question_count'tan yeniden turetilmez (bkz. omr_form.py modul
+    # docstring'i, select_template()).
+    form_template = omr_form.select_template(question_count).id if OMR_FORM_AVAILABLE else "compact"
+
     cur = db.execute(
         "INSERT INTO omr_exam_definitions (organization_id, subject_id, grade_level, topic, title, "
         "question_count, answer_key_json, curriculum_range_json, created_by, created_at, exam_id, "
-        "kazanim_kodu, kazanim_adi) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "kazanim_kodu, kazanim_adi, form_template) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (org_id, subject_id, grade_level, topic, title, question_count,
          json.dumps(answer_key, ensure_ascii=False),
          json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None,
-         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi),
+         session["user_id"], now, exam_id, kazanim_kodu, kazanim_adi, form_template),
     )
     db.commit()
     log_audit(db, "OMR_EXAM_DEFINITION_CREATED", resource_type="omr_exam_definition", resource_id=cur.lastrowid)
@@ -5436,7 +5575,7 @@ def api_teacher_omr_generate_papers(exam_def_id):
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
 
     exam_def = db.execute(
-        "SELECT id, title FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        "SELECT id, title, form_template FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()
     if not exam_def:
@@ -5479,15 +5618,153 @@ def api_teacher_omr_generate_papers(exam_def_id):
             "student_name": f"{s['first_name'] or ''} {s['last_name'] or ''}".strip(),
             "class_name": s["class_name"] or "",
         })
+    # Faz 2: bu testin hangi sınıf(lar)a resmen uygulandığını kaydet - normalde
+    # tek bir sınıf (dialog tek şubeye göre filtreliyor) ama birden fazla
+    # şubeden öğrenci seçilmiş olabilir ihtimaline karşı HER BENZERSİZ sınıf
+    # için ayrı satır (UNIQUE + OR IGNORE, tekrar basımda çoğalmaz).
+    for cls in {s["class_name"] for s in students if s["class_name"]}:
+        db.execute(
+            "INSERT OR IGNORE INTO omr_exam_applications "
+            "(exam_definition_id, organization_id, class_name, applied_by, applied_at) "
+            "VALUES (?,?,?,?,?)",
+            (exam_def_id, org_id, cls, session.get("user_id"), now),
+        )
     db.commit()
     log_audit(db, "OMR_PAPERS_GENERATED", resource_type="omr_exam_definition", resource_id=exam_def_id)
 
-    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"])
+    template = omr_form.TEMPLATES.get(exam_def["form_template"], omr_form.TEMPLATE_COMPACT)
+    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, exam_def["title"], template)
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="optik-form-{exam_def_id}.pdf"'},
     )
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/applications")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_exam_applications(exam_def_id):
+    """Bu test tanımının resmen hangi sınıf(lar)a uygulandığı (bkz.
+    omr_exam_applications, Faz 2) - "bu test kime verildi" göstergesi ve
+    öğretmen boyutlu rapor (Faz 3) için."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    rows = db.execute(
+        "SELECT class_name, applied_at FROM omr_exam_applications "
+        "WHERE exam_definition_id = ? ORDER BY class_name",
+        (exam_def_id,),
+    ).fetchall()
+    return jsonify({"applications": [dict(r) for r in rows]})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/question-stats")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_question_stats(exam_def_id):
+    """Faz 3: per-soru zorluk raporu - bu test tanımının TÜM onaylanmış
+    taramaları (sınıf/tarih farketmeksizin) üzerinden soru numarasına göre
+    (kazanıma göre DEĞİL) doğru/yanlış/boş/şüpheli sayıları."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    scans = db.execute(
+        "SELECT per_question_json FROM omr_scans "
+        "WHERE exam_definition_id = ? AND organization_id = ? AND status = 'approved' "
+        "AND per_question_json IS NOT NULL",
+        (exam_def_id, org_id),
+    ).fetchall()
+
+    by_question = {}
+    for scan in scans:
+        payload = json.loads(scan["per_question_json"])
+        for q in payload.get("questions", []):
+            no = q["question"]
+            stat = by_question.setdefault(no, {"question": no, "correct": 0, "wrong": 0, "blank": 0, "flagged": 0})
+            outcome = q.get("outcome")
+            if outcome == "correct":
+                stat["correct"] += 1
+            elif outcome == "wrong":
+                stat["wrong"] += 1
+            elif outcome == "blank":
+                stat["blank"] += 1
+            else:  # multi / ambiguous
+                stat["flagged"] += 1
+
+    report = []
+    for no in sorted(by_question):
+        stat = by_question[no]
+        total = stat["correct"] + stat["wrong"] + stat["blank"] + stat["flagged"]
+        stat["successRate"] = round(stat["correct"] / total * 100) if total else None
+        report.append(stat)
+    return jsonify({"scanCount": len(scans), "questions": report})
+
+
+@app.route("/api/teacher/omr/class-report")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_class_report():
+    """Faz 3: öğretmen boyutlu karşılaştırma tablosu (spesifikasyon bölüm
+    4/8) - bir sınıfa RESMEN uygulanmış (omr_exam_applications) her Kazanım
+    Denemesi için ders/öğretmen/katılım/ortalama satırı."""
+    class_name = (request.args.get("className") or "").strip()
+    if not class_name:
+        return jsonify({"error": "className gerekli."}), 400
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if session.get("role") == "teacher" and not _teacher_can_use_class(class_name):
+        return jsonify({"error": "Bu sınıfa erişiminiz yok."}), 403
+
+    total_students = db.execute(
+        "SELECT COUNT(*) c FROM students WHERE organization_id = ? AND class_name = ?",
+        (org_id, class_name),
+    ).fetchone()["c"]
+
+    applications = db.execute(
+        "SELECT oed.id, oed.title, oed.exam_id, s.name AS subject_name, "
+        "u.display_name AS teacher_name "
+        "FROM omr_exam_applications oea "
+        "JOIN omr_exam_definitions oed ON oed.id = oea.exam_definition_id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id "
+        "LEFT JOIN users u ON u.id = oed.created_by "
+        "WHERE oea.class_name = ? AND oea.organization_id = ? "
+        "ORDER BY oed.created_at DESC",
+        (class_name, org_id),
+    ).fetchall()
+
+    report = []
+    for a in applications:
+        if not a["exam_id"]:
+            continue
+        result_rows = db.execute(
+            "SELECT r.data_json FROM results r JOIN students st ON st.id = r.student_id "
+            "WHERE r.exam_id = ? AND st.class_name = ? AND st.organization_id = ?",
+            (a["exam_id"], class_name, org_id),
+        ).fetchall()
+        nets = [calc_total_net(json.loads(r["data_json"]).get("subjects")) for r in result_rows]
+        report.append({
+            "examTitle": a["title"], "subjectName": a["subject_name"] or "-",
+            "teacherName": a["teacher_name"] or "-",
+            "participation": f"{len(nets)}/{total_students}",
+            "avgNet": round(sum(nets) / len(nets), 2) if nets else None,
+        })
+    return jsonify({"className": class_name, "totalStudents": total_students, "report": report})
 
 
 _OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
@@ -5537,7 +5814,7 @@ def api_teacher_omr_upload_scan():
     if not exam_def_id:
         return jsonify({"error": "Test tanımı belirtilmedi."}), 400
     exam_def = db.execute(
-        "SELECT id, question_count, answer_key_json FROM omr_exam_definitions "
+        "SELECT id, question_count, answer_key_json, form_template FROM omr_exam_definitions "
         "WHERE id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()
@@ -5565,7 +5842,8 @@ def api_teacher_omr_upload_scan():
     warnings = []
 
     try:
-        result = omr_pipeline.process_scan_image(image_bytes, exam_def["question_count"])
+        result = omr_pipeline.process_scan_image(
+            image_bytes, exam_def["question_count"], exam_def["form_template"])
     except omr_pipeline.OmrReadError as exc:
         warnings.append(str(exc))
         result = None
@@ -5901,7 +6179,8 @@ def api_admin_list_users():
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     rows = db.execute(
-        "SELECT id, username, role, display_name, class_name, student_id, active, subject FROM users "
+        "SELECT id, username, role, display_name, class_name, student_id, active, subject, "
+        "homeroom_class_name FROM users "
         "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
@@ -5929,6 +6208,7 @@ def api_admin_list_users():
             "active": bool(r["active"]),
             "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
             "subject": r["subject"] if r["role"] == "teacher" else None,
+            "homeroomClassName": r["homeroom_class_name"] if r["role"] == "teacher" else None,
         })
     return jsonify(out)
 
@@ -5964,6 +6244,7 @@ def api_admin_create_user():
     student_id = data.get("studentId") or None
     student_ids = [int(x) for x in (data.get("studentIds") or []) if x]
     subject = (data.get("subject") or "").strip() or None
+    homeroom_class_name = (data.get("homeroomClassName") or "").strip() or None
 
     if not username or not password or role not in ("teacher", "parent", "student"):
         return jsonify({"error": "Kullanıcı adı, şifre ve geçerli bir rol (teacher/parent/student) gerekli."}), 400
@@ -5997,10 +6278,11 @@ def api_admin_create_user():
 
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
-        "student_id, organization_id, subject, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        "student_id, organization_id, subject, homeroom_class_name, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (username, hash_password(password), role, display_name,
          class_name, student_id if role == "student" else None, org_id,
-         subject if role == "teacher" else None, datetime.now().isoformat()),
+         subject if role == "teacher" else None,
+         homeroom_class_name if role == "teacher" else None, datetime.now().isoformat()),
     )
     if role == "parent":
         new_user_id = cur.lastrowid
@@ -6114,6 +6396,33 @@ def api_admin_set_delegate(user_id):
     log_audit(db, "DELEGATE_GRANTED" if grant else "DELEGATE_REVOKED",
               resource_type="user", resource_id=user_id)
     return jsonify({"ok": True, "isDelegate": grant})
+
+
+@app.route("/api/admin/users/<int:user_id>/homeroom", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="users.manage")
+def api_admin_set_homeroom(user_id):
+    """Bir öğretmeni bir sınıfın "sınıf öğretmeni" (homeroom) yapar/kaldırır
+    (bkz. Faz 2 planı, users.homeroom_class_name). className boş/None
+    gönderilirse sınıf öğretmenliği kaldırılır (idempotent)."""
+    data = request.get_json(silent=True) or {}
+    class_name = (data.get("className") or "").strip() or None
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    target = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role = 'teacher' AND organization_id = ?",
+        (user_id, org_id),
+    ).fetchone()
+    if not target:
+        return jsonify({"error": "Öğretmen bulunamadı."}), 404
+
+    db.execute("UPDATE users SET homeroom_class_name = ? WHERE id = ?", (class_name, user_id))
+    db.commit()
+    log_audit(db, "HOMEROOM_CLASS_SET" if class_name else "HOMEROOM_CLASS_CLEARED",
+              resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "homeroomClassName": class_name})
 
 
 @app.route("/api/me/password", methods=["POST"])
@@ -6371,7 +6680,7 @@ def api_teacher_insights():
 def api_teacher_overview():
     db = get_db()
     org_id = _effective_org_id(db)
-    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     allowed_ids = get_allowed_student_ids(db)
@@ -6508,7 +6817,7 @@ def api_teacher_exam_detail(exam_id):
     org_id = _effective_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
-    classes = None if session.get("role") in ("admin", "super_admin") else teacher_class_list(session.get("class_name"))
+    classes = None if session.get("role") in ("admin", "super_admin") else teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
     exam_row = db.execute(
@@ -6748,7 +7057,7 @@ def _teacher_can_use_class(class_name):
     get_allowed_student_ids ile AYNI teacher_class_list mantigi (ASSIGNED scope)."""
     if session.get("role") in ("admin", "super_admin"):
         return True
-    allowed = teacher_class_list(session.get("class_name"))
+    allowed = teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
     return allowed is None or class_name in allowed
 
 
@@ -8059,6 +8368,45 @@ def _build_compass(subject_nets, topic_stats):
     }
 
 
+def _build_mastery_trend(db, student_id):
+    """Faz 3: '🎯 Kazanım Gelişimi' - öğrencinin Kazanım Denemesi (OMR)
+    sonuçlarını kazanım koduna göre gruplar, her grup için tarihe göre
+    sıralı başarı yüzdesi dizisi döner (spesifikasyon bölüm 4: 'Matematik/
+    Kesirler: 09-01 %55 → 09-08 %68 → 09-15 %78'). Bir test = bir kazanım
+    (V1 sınırı, bkz. omr_exam_definitions) olduğu için test bazında tek bir
+    başarı yüzdesi yeterli - per-soru build_question_stats'a gerek yok."""
+    rows = db.execute(
+        "SELECT r.data_json, e.date, e.name AS exam_name, oed.kazanim_kodu, oed.kazanim_adi, "
+        "s.name AS subject_name "
+        "FROM results r "
+        "JOIN exams e ON e.id = r.exam_id "
+        "JOIN omr_exam_definitions oed ON oed.exam_id = e.id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id "
+        "WHERE r.student_id = ? AND r.source = 'omr_scan' AND oed.kazanim_kodu IS NOT NULL "
+        "ORDER BY e.date ASC",
+        (student_id,),
+    ).fetchall()
+    groups = {}
+    for r in rows:
+        subjects = json.loads(r["data_json"]).get("subjects", {})
+        correct = sum((s or {}).get("correct", 0) for s in subjects.values())
+        wrong = sum((s or {}).get("wrong", 0) for s in subjects.values())
+        blank = sum((s or {}).get("blank", 0) for s in subjects.values())
+        total = correct + wrong + blank
+        if not total:
+            continue
+        key = r["kazanim_kodu"]
+        group = groups.setdefault(key, {
+            "kazanimKodu": key, "kazanimAdi": r["kazanim_adi"] or key,
+            "subjectName": r["subject_name"] or "-", "points": [],
+        })
+        group["points"].append({
+            "examName": r["exam_name"], "date": r["date"],
+            "successRate": round(correct / total * 100),
+        })
+    return list(groups.values())
+
+
 def _build_error_memory(result_rows):
     """Hata Hafızası (Bölüm 10): öğrencinin en son denemesindeki yanlışlarını,
     o konudaki KENDİ geçmiş başarı oranına göre sınıflandırır - uydurma bir
@@ -8476,6 +8824,7 @@ def api_parent_child_detail(student_id):
     if not report:
         return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
     report["classAverages"] = _all_class_averages(db, _current_org_id(db))
+    report["masteryTrend"] = _build_mastery_trend(db, student_id)
     return jsonify(report)
 
 
@@ -8492,6 +8841,7 @@ def api_student_overview():
     if not report:
         return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı. Lütfen okulunuzla iletişime geçin."}), 404
     report["classAverages"] = _all_class_averages(db, _current_org_id(db))
+    report["masteryTrend"] = _build_mastery_trend(db, student_id)
     message_rows = db.execute(
         "SELECT m.id, m.message, m.created_at, m.read_at, u.display_name FROM teacher_messages m "
         "JOIN users u ON u.id = m.teacher_user_id "

@@ -172,6 +172,12 @@ const AdminUsers = {
                 </label>`).join('')}
             </div>
             <small class="text-muted" style="display:block;margin-top:6px">Birden fazla sınıf seçilebilir, ya da "Tümü" ile hepsine erişim verilebilir.</small>
+            <label class="form-label mt-2">Sınıf Öğretmenliği (opsiyonel)</label>
+            <select id="new-user-homeroom-class" class="form-control">
+              <option value="">Yok</option>
+              ${classNames.map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+            <small class="text-muted" style="display:block;margin-top:6px">Seçilirse bu öğretmen, branşı ne olursa olsun, bu sınıfın TÜM Optik Okuma denemelerini görebilir.</small>
           </div>
           <div id="new-user-student-wrap" style="display:none">
             <label class="form-label">Sınıf Düzeyi (Öğrenci İçin)</label>
@@ -335,14 +341,17 @@ const AdminUsers = {
         ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setDelegate(${u.id}, ${!u.isDelegate})">
             ${u.isDelegate ? '⬇️ Yönetici Yardımcılığını Kaldır' : '⬆️ Yönetici Yardımcısı Yap'}
           </button>` : '';
+      const homeroomBtn = (isRealAdmin && u.role === 'teacher')
+        ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setHomeroom(${u.id}, '${(u.homeroomClassName || '').replace(/'/g, "\\'")}')">🏠 Sınıf Öğretmenliği</button>`
+        : '';
       html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
         <td style="padding:8px">${this._roleLabel(u.role)}${u.isDelegate ? ' <span style="color:#2DD4BF;font-size:11px">(Yönetici Yrd.)</span>' : ''}</td>
         <td style="padding:8px">${u.displayName || '-'}</td>
         <td style="padding:8px">${u.username}</td>
         <td style="padding:8px">${u.subject || '-'}</td>
-        <td style="padding:8px">${scope}</td>
+        <td style="padding:8px">${scope}${u.homeroomClassName ? ` <span title="Sınıf Öğretmeni" style="color:#f59e0b;font-size:11px">🏠 ${u.homeroomClassName}</span>` : ''}</td>
         <td style="padding:8px">${u.active ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
-        <td style="padding:8px;text-align:right;white-space:nowrap">${delegateBtn}${adminOnlyActions}</td>
+        <td style="padding:8px;text-align:right;white-space:nowrap">${homeroomBtn}${delegateBtn}${adminOnlyActions}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -521,6 +530,7 @@ const AdminUsers = {
     const studentIds = Array.from(document.querySelectorAll('.new-user-child-checkbox:checked'))
       .map(cb => Number(cb.value));
     const subject = document.getElementById('new-user-subject').value.trim();
+    const homeroomClassName = document.getElementById('new-user-homeroom-class')?.value || '';
 
     try {
       const res = await fetch(`/api/admin/users${this._schoolQuery()}`, {
@@ -530,6 +540,7 @@ const AdminUsers = {
           role, displayName, username, password,
           className: role === 'teacher' ? className : undefined,
           subject: role === 'teacher' ? subject : undefined,
+          homeroomClassName: role === 'teacher' ? homeroomClassName : undefined,
           studentId: role === 'student' ? Number(studentId) : undefined,
           studentIds: role === 'parent' ? studentIds : undefined,
         }),
@@ -588,6 +599,23 @@ const AdminUsers = {
     } catch (err) {
       UI.toast(err.message, 'danger');
     }
+  },
+
+  async setHomeroom(id, currentClassName) {
+    const value = prompt(
+      'Sınıf öğretmenliği için sınıf adı girin (örn: 8/A), kaldırmak için boş bırakıp onaylayın:',
+      currentClassName || ''
+    );
+    if (value === null) return; // iptal
+    const res = await fetch(`/api/admin/users/${id}/homeroom${this._schoolQuery()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ className: value.trim() }),
+    });
+    const result = await res.json();
+    if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
+    UI.toast(result.homeroomClassName ? `Sınıf öğretmenliği: ${result.homeroomClassName}` : 'Sınıf öğretmenliği kaldırıldı.', 'success');
+    this.render();
   },
 
   async resetPassword(id) {

@@ -14,15 +14,28 @@ let _omrAnswerKey = {};          // { "1": "A", "2": "C", ... } - optik taslak u
 
 // Kagidin FIZIKSEL kapasitesi (bkz. omr_form.py QUESTION_COUNT_MAX) - ogretmen
 // serbestce soru sayisi girebilir (kullanici isteğiyle 2026-09-17: sabit
-// 10/15/20/25 secenekleri yerine elle giris) ama bu sayidan fazlasi kagitta
-// hic yer bulamaz, o yuzden ust sinir burada da uygulanir.
-const OMR_QUESTION_COUNT_MAX = 25;
+// secenekler yerine elle giris) ama bu sayidan fazlasi kagitta hic yer
+// bulamaz, o yuzden ust sinir burada da uygulanir. Girilen sayiya gore
+// sunucu HANGI FIZIKSEL SABLONU (bkz. omr_form.py select_template)
+// kullanacagini kendisi secer - ogretmen sadece soru sayisini girer:
+// 1-25 -> "compact" (70mm, 6 kagit/A4), 26-50 -> "quarter50" (ceyrek A4,
+// 4 kagit/A4, kucuk balon), 51-100 -> "quarter100" (ceyrek A4, en kucuk
+// balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
+// kac sutuna bolunecegini belirler (gorsel), gercek PDF geometrisiyle
+// birebir ayni olmasi gerekmez.
+const OMR_QUESTION_COUNT_MAX = 100;
 
 function _omrGetQuestionCount() {
   const raw = parseInt(document.getElementById('omr-f-count').value, 10);
   if (!raw || raw < 1) return 1;
   if (raw > OMR_QUESTION_COUNT_MAX) return OMR_QUESTION_COUNT_MAX;
   return raw;
+}
+
+function _omrTemplateColsForCount(count) {
+  if (count <= 25) return 2;
+  if (count <= 50) return 4;
+  return 5;
 }
 
 function _omrEsc(str) {
@@ -92,7 +105,7 @@ function _omrBuildFormHtml() {
       <div>
         <label class="form-label">Soru Sayısı</label>
         <input type="number" id="omr-f-count" class="form-control" min="1" max="${OMR_QUESTION_COUNT_MAX}" value="20">
-        <span class="text-muted" style="font-size:12px">Optik kağıtta ${OMR_QUESTION_COUNT_MAX} soruya kadar alan var; fazlası boş kalır ve değerlendirilmez.</span>
+        <span class="text-muted" style="font-size:12px">1-25 arası normal, 26-50 ve 51-100 arası daha yoğun (küçük daireli) optik kağıt kullanılır - kağıt otomatik seçilir.</span>
       </div>
     </div>
 
@@ -126,21 +139,25 @@ function _omrWireForm() {
 }
 
 // ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
-// Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin
-// daireler, 2 sutun x 13 satir - 25 soruluk fiziksel maks. kapasiteye gore,
-// bkz. omr_form.py ANSWER_ROWS_PER_COL) sahip bir HTML taslak - ogretmen
-// dogru sikki gercek kagitta oldugu gibi tiklayarak isaretler.
+// Basili formla (bkz. omr_form.py) AYNI gorsel dile (buyuk, kalin daireler)
+// sahip bir HTML taslak - ogretmen dogru sikki gercek kagitta oldugu gibi
+// tiklayarak isaretler. Sutun sayisi soru sayisina gore degisir (bkz.
+// _omrTemplateColsForCount) - gercek basili kagit da soru sayisi arttikca
+// (26+) daha COK sutuna gecer (bkz. omr_form.py TEMPLATES), bu ekran o
+// degisimi kabaca yansitir; piksel-birebir esitlik gerekmez, sadece her
+// soruya bir yer ayrilmasi yeterli.
 function _omrRenderAnswerKeySheet() {
   const count = _omrGetQuestionCount();
   const sheet = document.getElementById('omr-answer-key-sheet');
-  const col1 = [], col2 = [];
+  const nCols = _omrTemplateColsForCount(count);
+  const rowsPerCol = Math.ceil(count / nCols);
+  const cols = Array.from({ length: nCols }, () => []);
   for (let q = 1; q <= count; q++) {
-    (q <= 13 ? col1 : col2).push(_omrBuildSheetRow(q));
+    cols[Math.floor((q - 1) / rowsPerCol)].push(_omrBuildSheetRow(q));
   }
   sheet.innerHTML = `
     <div class="omr-sheet-cols">
-      <div class="omr-sheet-col">${col1.join('')}</div>
-      <div class="omr-sheet-col">${col2.join('')}</div>
+      ${cols.map(col => `<div class="omr-sheet-col">${col.join('')}</div>`).join('')}
     </div>
   `;
   sheet.querySelectorAll('.omr-bubble').forEach(btn => {
@@ -262,15 +279,35 @@ async function _omrSaveExam() {
 function _omrRenderExamList(exams) {
   const root = document.getElementById('omr-exam-list');
   if (!root) return;
+
+  // Faz 3: sınıf boyutlu karşılaştırma tablosu (Ders|Öğretmen|Test|Katılım|
+  // Ortalama) - test listesinin ÜSTÜNE, öğrencilerden türetilmiş sınıf
+  // listesiyle (bkz. şube filtresi deseni) enjekte edilir, ayrı bir HTML
+  // konteynerine ihtiyaç duymaz.
+  const classNames = [...new Set(((_omrOverview && _omrOverview.students) || []).map(s => s.class_name).filter(Boolean))].sort();
+  const classReportHtml = classNames.length ? `
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h4 style="margin:0">📊 Sınıf Kazanım Raporu</h4>
+        <select id="omr-class-report-select" class="form-control" style="max-width:200px" onchange="_omrLoadClassReport(this.value)">
+          <option value="">Sınıf seçin...</option>
+          ${classNames.map(c => `<option value="${_omrEsc(c)}">${_omrEsc(c)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="omr-class-report-body" style="margin-top:10px"></div>
+    </div>
+  ` : '';
+
   if (!exams.length) {
-    root.innerHTML = '<p class="text-muted">Henüz tanımlı test yok.</p>';
+    root.innerHTML = classReportHtml + '<p class="text-muted">Henüz tanımlı test yok.</p>';
     return;
   }
-  root.innerHTML = exams.map(e => `
+  root.innerHTML = classReportHtml + exams.map(e => `
     <div class="card" style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>
           <strong>${_omrEsc(e.title)}</strong>
+          ${e.createdByName ? `<span class="text-muted" title="Bu testi ekleyen" style="font-size:11px"> · 👤 ${_omrEsc(e.createdByName)}</span>` : ''}
           <div class="text-muted" style="font-size:12px">
             ${_omrEsc(e.subject_name || '-')} · ${e.grade_level ? e.grade_level + '. Sınıf' : 'Sınıf belirtilmedi'} · ${e.question_count} soru
           </div>
@@ -279,12 +316,69 @@ function _omrRenderExamList(exams) {
           <button type="button" class="btn btn-sm btn-primary" onclick="_omrOpenPaperDialog(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📄 Form Oluştur</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenScanView(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📷 Kamerayla Tara</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenReviewPanel(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🔍 İncele</button>
+          <button type="button" class="btn btn-sm" onclick="_omrOpenQuestionReport(${e.id})">📊 Soru Analizi</button>
         </div>
       </div>
       <div id="omr-paper-dialog-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
       <div id="omr-review-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
+      <div id="omr-question-report-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
     </div>
   `).join('');
+}
+
+// Faz 3: sınıf boyutlu karşılaştırma tablosu - bkz. api_teacher_omr_class_report.
+async function _omrLoadClassReport(className) {
+  const body = document.getElementById('omr-class-report-body');
+  if (!body) return;
+  if (!className) { body.innerHTML = ''; return; }
+  body.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  const data = await fetch(`/api/teacher/omr/class-report?className=${encodeURIComponent(className)}`).then(r => r.json());
+  if (data.error) { body.innerHTML = `<p class="text-muted">❌ ${_omrEsc(data.error)}</p>`; return; }
+  if (!data.report || !data.report.length) {
+    body.innerHTML = '<p class="text-muted">Bu sınıfa henüz resmen uygulanmış bir Kazanım Denemesi yok.</p>';
+    return;
+  }
+  body.innerHTML = `
+    <div class="table-wrapper"><table class="simple-table">
+      <tr><th>Ders</th><th>Öğretmen</th><th>Test</th><th>Katılım</th><th>Ortalama Net</th></tr>
+      ${data.report.map(row => `
+        <tr>
+          <td>${_omrEsc(row.subjectName)}</td>
+          <td>${_omrEsc(row.teacherName)}</td>
+          <td>${_omrEsc(row.examTitle)}</td>
+          <td>${_omrEsc(row.participation)}</td>
+          <td>${row.avgNet ?? '-'}</td>
+        </tr>
+      `).join('')}
+    </table></div>`;
+}
+
+// Faz 3: per-soru zorluk raporu - bkz. api_teacher_omr_question_stats.
+async function _omrOpenQuestionReport(examDefId) {
+  const container = document.getElementById(`omr-question-report-${examDefId}`);
+  if (!container) return;
+  const isOpen = container.style.display !== 'none';
+  document.querySelectorAll('[id^="omr-question-report-"]').forEach(el => el.style.display = 'none');
+  if (isOpen) return;
+  container.style.display = 'block';
+  container.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  const data = await fetch(`/api/teacher/omr/exams/${examDefId}/question-stats`).then(r => r.json());
+  if (data.error) { container.innerHTML = `<p class="text-muted">❌ ${_omrEsc(data.error)}</p>`; return; }
+  if (!data.questions.length) {
+    container.innerHTML = `<p class="text-muted">Henüz onaylanmış bir tarama yok.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <p class="text-muted" style="font-size:12px">${data.scanCount} onaylanmış tarama üzerinden.</p>
+    <div class="table-wrapper"><table class="simple-table">
+      <tr><th>Soru</th><th>Doğru</th><th>Yanlış</th><th>Boş</th><th>Şüpheli</th><th>Başarı %</th></tr>
+      ${data.questions.map(q => `
+        <tr${q.successRate !== null && q.successRate < 50 ? ' style="color:#fb7185"' : ''}>
+          <td>${q.question}</td><td>${q.correct}</td><td>${q.wrong}</td><td>${q.blank}</td><td>${q.flagged}</td>
+          <td>${q.successRate !== null ? q.successRate + '%' : '-'}</td>
+        </tr>
+      `).join('')}
+    </table></div>`;
 }
 
 // ============================================================
