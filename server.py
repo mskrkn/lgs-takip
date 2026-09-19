@@ -5795,6 +5795,39 @@ def _grade_omr_questions(questions, answer_key):
     return graded, {"correct": correct, "wrong": wrong, "blank": blank, "flagged": flagged}
 
 
+def _omr_net(correct, wrong):
+    """Net = dogru - yanlis/3 (alt sinir 0) - mevcut js/optikProfiles.js
+    formuluyle AYNI. Onay ucu ve kamera sonuc karti ayni sayiyi gostersin
+    diye tek yerde tutulur."""
+    return max(0, round(correct - wrong / 3, 2))
+
+
+def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
+    """Kamera ekranindaki anlik sonuc karti icin bir omr_scans satirinin ozeti
+    (ogrenci adi/no/sinif, D/Y/B, net, durum). Yukleme yaniti ve 'zaten
+    okundu' (duplicate) yaniti AYNI sekli doner."""
+    student = None
+    if scan["student_id"]:
+        student = db.execute(
+            "SELECT first_name, last_name, school_number, class_name FROM students WHERE id = ?",
+            (scan["student_id"],),
+        ).fetchone()
+    summary = None
+    if scan["per_question_json"]:
+        summary = json.loads(scan["per_question_json"]).get("summary")
+    return {
+        "ok": True, "id": scan["id"], "scanId": scan["id"], "status": scan["status"],
+        "matchStatus": scan["match_status"], "studentId": scan["student_id"],
+        "studentName": f"{student['first_name'] or ''} {student['last_name'] or ''}".strip() if student else None,
+        "schoolNumber": student["school_number"] if student else None,
+        "className": student["class_name"] if student else None,
+        "summary": summary,
+        "net": _omr_net(summary["correct"], summary["wrong"]) if summary else None,
+        "readable": summary is not None,
+        "duplicate": duplicate, "warnings": warnings, "processingMs": processing_ms,
+    }
+
+
 @app.route("/api/teacher/omr/scans", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_upload_scan():
@@ -5841,6 +5874,7 @@ def api_teacher_omr_upload_scan():
     per_question_payload = None
     warnings = []
 
+    t_pipeline = time.perf_counter()
     try:
         result = omr_pipeline.process_scan_image(
             image_bytes, exam_def["question_count"], exam_def["form_template"])
@@ -5887,6 +5921,25 @@ def api_teacher_omr_upload_scan():
         per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
                                            ensure_ascii=False)
 
+    pipeline_ms = round((time.perf_counter() - t_pipeline) * 1000)
+
+    # Ayni kagit (QR ile taninan paper_id) zaten okunmus ve reddedilmemisse
+    # yeni kayit ACILMAZ - kamera ayni kagidi kadrajda tutarken art arda
+    # cekim yapabiliyor (2026-09-19'da staging'de 1-2 sn icinde 4 kayit).
+    # Reddedilmis (Sil) tarama varsa yeniden okumaya izin verilir.
+    if paper_id:
+        existing_scan = db.execute(
+            "SELECT * FROM omr_scans WHERE paper_id = ? AND organization_id = ? AND status != 'rejected' "
+            "ORDER BY id DESC LIMIT 1",
+            (paper_id, org_id),
+        ).fetchone()
+        if existing_scan:
+            try:
+                os.remove(image_path)
+            except OSError:
+                pass
+            return jsonify(_omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)), 200
+
     now = datetime.now().isoformat()
     cur = db.execute(
         "INSERT INTO omr_scans (paper_id, exam_definition_id, organization_id, student_id, match_status, "
@@ -5897,10 +5950,8 @@ def api_teacher_omr_upload_scan():
     )
     db.commit()
     log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
-    return jsonify({
-        "ok": True, "id": cur.lastrowid, "status": "needs_review",
-        "matchStatus": match_status, "studentId": student_id, "warnings": warnings,
-    }), 201
+    new_scan = db.execute("SELECT * FROM omr_scans WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(_omr_scan_card(db, new_scan, warnings, duplicate=False, processing_ms=pipeline_ms)), 201
 
 
 # ============================================================
@@ -5966,6 +6017,9 @@ def api_teacher_omr_get_scan(scan_id):
     result["perQuestion"] = json.loads(result.pop("per_question_json") or "null")
     result["examTitle"] = exam_def["title"] if exam_def else None
     result["student"] = student
+    # Kamera ekranindaki sonuc karti (js/teacher/omrScan.js) "Duzenle"den
+    # donunce kartini yukleme yanitiyla AYNI sekilde bu alandan yeniler.
+    result["card"] = _omr_scan_card(db, scan, [], False)
     return jsonify(result)
 
 
@@ -6124,7 +6178,7 @@ def api_teacher_omr_approve_scan(scan_id):
     payload = json.loads(scan["per_question_json"])
     summary = payload["summary"]
     correct, wrong, blank = summary["correct"], summary["wrong"], summary["blank"] + summary["flagged"]
-    net = max(0, round(correct - wrong / 3, 2))
+    net = _omr_net(correct, wrong)
 
     # Ogrenci detay modalinin Konu & Kazanim Analizi / Basari Pusulasi /
     # Hata Hafizasi sekmelerinin (server.py build_question_stats vb.)

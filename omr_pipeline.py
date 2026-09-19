@@ -149,6 +149,50 @@ def _decode_qr(detector, image):
     return (data or None), points
 
 
+_ARUCO_QR_AVAILABLE = hasattr(cv2, "QRCodeDetectorAruco")
+
+
+def _detect_qr(img):
+    """Ham fotografta QR'i bulur. Klasik cv2.QRCodeDetector QR kucuk kalinca
+    (kamera kagittan uzaksa) cogu zaman HIC bulamiyordu - 14 gercek staging
+    fotografinin sadece 4'unde buldu, Aruco tabanli detektor (QRCodeDetector
+    Aruco) 11'inde, ikisi + 2x buyutme 13'unde. Bu yuzden sirayla: klasik ->
+    Aruco -> 2x buyutulmus goruntude ikisi. Doner: (data|None, points(4,2)|None);
+    points ham (buyutulmemis) piksel koordinatlaridir."""
+    detectors = [cv2.QRCodeDetector()]
+    if _ARUCO_QR_AVAILABLE:
+        detectors.append(cv2.QRCodeDetectorAruco())
+    for scale in (1.0, 2.0):
+        im = img if scale == 1.0 else cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        for det in detectors:
+            try:
+                data, pts, _ = det.detectAndDecode(im)
+            except cv2.error:
+                continue
+            if pts is None or len(pts) == 0:
+                continue
+            # Noktalar bulunur bulunmaz DUR - kimlik zaten rektifiye edilmis
+            # goruntude (asagida) cozuluyor, ham goruntude decode'a ugrasip
+            # 2x buyutulmus tekrar denemeler yapmak sureyi ~1.5 sn'ye cikariyordu.
+            return (data or None), np.asarray(pts[0], dtype=np.float32) / scale
+    return None, None
+
+
+def _decode_qr_any(image):
+    """Rektifiye (duzlestirilmis) goruntude QR'i klasik ve Aruco detektorle dener."""
+    dets = [cv2.QRCodeDetector()]
+    if _ARUCO_QR_AVAILABLE:
+        dets.append(cv2.QRCodeDetectorAruco())
+    for det in dets:
+        try:
+            data, _pts, _ = det.detectAndDecode(image)
+        except cv2.error:
+            continue
+        if data:
+            return data
+    return None
+
+
 def _decode_qr_cropped_upscale(detector, warped, template):
     """QR bazen ham/rektifiye tam goruntude cozulmez ama kendi bolgesi
     kirpilip 4x buyutulunce cozulebiliyor (gercek fotograflarla dogrulandi -
@@ -163,7 +207,7 @@ def _decode_qr_cropped_upscale(detector, warped, template):
         return None
     crop_big = cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
     data, _points, _ = detector.detectAndDecode(crop_big)
-    return data or None
+    return data or _decode_qr_any(crop_big)
 
 
 def _disk_mean(gray, cx, cy, r):
@@ -257,17 +301,18 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
         raise OmrReadError("Görüntü dosyası okunamadı (bozuk veya desteklenmeyen format).")
 
     detector = cv2.QRCodeDetector()
-    _data, points = _decode_qr(detector, img)
-    if points is None:
+    _data, qr_points = _detect_qr(img)
+    if qr_points is None:
         raise OmrReadError("Kağıdın QR kodu/kimlik alanı bulunamadı - kağıt kadraja tam girmiyor olabilir.")
 
-    qr_points = points[0]
     warped, _refined_fid = _rectify(img, qr_points, template)
     gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
 
     paper_token, _points_r = _decode_qr(detector, warped)
     if not paper_token:
         paper_token = _decode_qr_cropped_upscale(detector, warped, template)
+    if not paper_token:
+        paper_token = _decode_qr_any(warped)
     if not paper_token and _data:
         paper_token = _data  # duzeltme once basarisiz olup ham goruntude basarili oldugu nadir durum
 
