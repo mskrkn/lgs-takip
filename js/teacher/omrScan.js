@@ -68,7 +68,10 @@ async function _omrUploadScan(examDefId, blob) {
   const fd = new FormData();
   fd.append('examDefinitionId', examDefId);
   fd.append('image', blob, 'scan.jpg');
-  const res = await fetch('/api/teacher/omr/scans', { method: 'POST', body: fd });
+  // Takili bir istek "busy" kilidini sonsuza kadar acik tutmasin diye zaman asimi.
+  const opts = { method: 'POST', body: fd };
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(30000);
+  const res = await fetch('/api/teacher/omr/scans', opts);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `Sunucu hatası (${res.status})`);
@@ -120,6 +123,8 @@ function _omrOpenScanView(examDefId, examTitle) {
         <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
       <button id="omr-scan-close" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
+      <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
+      <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
     </div>
     <div style="padding:14px;background:#111;display:flex;align-items:center;justify-content:space-between;gap:10px">
       <span id="omr-scan-counter" style="font-size:13px;color:#ccc">0 tarandı</span>
@@ -131,7 +136,13 @@ function _omrOpenScanView(examDefId, examTitle) {
   `;
   document.body.appendChild(overlay);
 
-  _omrScanState = { examDefId, examTitle, uploaded: 0, queued: 0, ready: false, readySince: 0 };
+  _omrScanState = {
+    examDefId, examTitle, uploaded: 0, queued: 0, ready: false, readySince: 0,
+    // Cift okuma engeli: cekimden sonra kagit kadrajdan CIKANA kadar otomatik
+    // cekim kilitli (awaitingRemoval); yukleme surerken (busy) de yeni cekim yok.
+    awaitingRemoval: false, notReadySince: 0, busy: false,
+    approved: 0, pendingIds: new Set(), card: null,
+  };
 
   // Tarayicilar getUserMedia'yi SADECE "guvenli baglam"da (HTTPS ya da
   // localhost/127.0.0.1) sunar - ozellikle telefon tarayicilarinda LAN IP'si
@@ -178,8 +189,11 @@ function _omrCloseScanView() {
 function _omrUpdateCounter() {
   const el = document.getElementById('omr-scan-counter');
   if (!el || !_omrScanState) return;
-  const { uploaded, queued } = _omrScanState;
-  el.textContent = queued > 0 ? `${uploaded} tarandı · ${queued} kuyrukta` : `${uploaded} tarandı`;
+  const { uploaded, queued, approved, pendingIds } = _omrScanState;
+  const parts = [`${uploaded} okundu`, `${approved} onaylı`];
+  if (pendingIds.size > 0) parts.push(`${pendingIds.size} onay bekliyor`);
+  if (queued > 0) parts.push(`${queued} kuyrukta`);
+  el.textContent = parts.join(' · ');
 }
 
 // Hafif, cihaz-bağımsız ön kontrol: gerçek CV değil, downsample edilmiş bir
@@ -280,15 +294,50 @@ function _omrAnalyzeFrame(ctx, w, h) {
 }
 
 const OMR_AUTO_CAPTURE_HOLD_MS = 600;
+// Kagit bu kadar sure kadrajdan CIKMIS (hazir degil) gorunmeden ayni kagit
+// yeniden otomatik okunmaz.
+const OMR_REARM_ABSENT_MS = 500;
+// Kagit hizla degistirilirken "hazir degil" araligi hic olusmayabilir - bu
+// sureden sonra kilit yine de acilir (QR'li ayni kagit sunucuda zaten
+// "zaten okundu" olarak tekillestirilir, yeni kayit acilmaz).
+const OMR_LOCK_MAX_MS = 6000;
 
 function _omrApplyReadyState(ready, hint) {
   const frame = document.getElementById('omr-scan-frame');
   const hintEl = document.getElementById('omr-scan-hint');
+  if (!_omrScanState) return;
+  const now = Date.now();
+
+  if (_omrScanState.busy) {
+    if (hintEl) hintEl.textContent = '⏳ Okunuyor...';
+    _omrScanState.ready = false;
+    return;
+  }
+  if (_omrScanState.awaitingRemoval) {
+    // Okunan kagit hala kadrajdaysa (hazir) yeniden tetikleme; kagit
+    // cekilip yeterince sure "hazir degil" kalinca kilit acilir.
+    if (hintEl) hintEl.textContent = ready ? 'Sıradaki kağıdı gösterin' : hint;
+    if (frame) frame.style.borderColor = 'rgba(255,255,255,0.7)';
+    _omrScanState.ready = false;
+    if (ready) {
+      _omrScanState.notReadySince = 0;
+    } else if (!_omrScanState.notReadySince) {
+      _omrScanState.notReadySince = now;
+    } else if (now - _omrScanState.notReadySince > OMR_REARM_ABSENT_MS) {
+      _omrScanState.awaitingRemoval = false;
+      _omrScanState.notReadySince = 0;
+    }
+    if (_omrScanState.awaitingRemoval && now - _omrScanState.lockedAt > OMR_LOCK_MAX_MS) {
+      _omrScanState.awaitingRemoval = false;
+      _omrScanState.notReadySince = 0;
+    }
+    return;
+  }
+
   if (hintEl) hintEl.textContent = hint;
-  if (!frame || !_omrScanState) return;
+  if (!frame) return;
   frame.style.borderColor = ready ? '#22c55e' : 'rgba(255,255,255,0.7)';
 
-  const now = Date.now();
   if (ready) {
     if (!_omrScanState.ready) {
       _omrScanState.ready = true;
@@ -303,32 +352,251 @@ function _omrApplyReadyState(ready, hint) {
 }
 
 function _omrCaptureFrame() {
-  if (!_omrScanState) return;
+  if (!_omrScanState || _omrScanState.busy) return;
   const video = document.getElementById('omr-scan-video');
   const canvas = document.getElementById('omr-scan-canvas');
   if (!video || !video.videoWidth) return;
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext('2d').drawImage(video, 0, 0);
+  // Ayni kagidi tekrar tekrar cekmemek icin: yukleme bitene kadar (busy) ve
+  // kagit kadrajdan cikana kadar (awaitingRemoval) otomatik cekim kilitli.
+  _omrScanState.busy = true;
+  _omrScanState.awaitingRemoval = true;
+  _omrScanState.notReadySince = 0;
+  _omrScanState.lockedAt = Date.now();
   canvas.toBlob(async (blob) => {
-    if (!blob || !_omrScanState) return;
+    if (!_omrScanState) return;
+    if (!blob) { _omrScanState.busy = false; return; }
     const examDefId = _omrScanState.examDefId;
     const hintEl = document.getElementById('omr-scan-hint');
     try {
-      await _omrUploadScan(examDefId, blob);
-      if (_omrScanState) {
-        _omrScanState.uploaded++;
-        _omrUpdateCounter();
-      }
+      const data = await _omrUploadScan(examDefId, blob);
+      if (_omrScanState) _omrHandleScanResponse(data);
       _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
-      if (hintEl) hintEl.textContent = '✅ Yüklendi - sıradaki öğrenci';
     } catch (err) {
-      await _omrQueueAdd({ examDefId, blob, capturedAt: new Date().toISOString() });
-      if (_omrScanState) {
-        _omrScanState.queued++;
-        _omrUpdateCounter();
+      // SADECE gercek ag hatasi (fetch TypeError) "cevrimdisi" sayilir ve
+      // kuyruga alinir - sunucunun verdigi bir hata (oturum dustu, test
+      // bulunamadi vb.) eskiden ayni sekilde "kuyruga eklendi" gorunup sonsuza
+      // kadar tekrar denenirdi, ogretmen gercek nedeni hic goremezdi.
+      if (err instanceof TypeError || err.name === 'TimeoutError' || err.name === 'AbortError') {
+        await _omrQueueAdd({ examDefId, blob, capturedAt: new Date().toISOString() });
+        if (_omrScanState) {
+          _omrScanState.queued++;
+          _omrUpdateCounter();
+        }
+        if (hintEl) hintEl.textContent = '📥 Çevrimdışı - kuyruğa eklendi';
+      } else if (hintEl) {
+        hintEl.textContent = '❌ ' + (err.message || 'Yükleme başarısız');
       }
-      if (hintEl) hintEl.textContent = '📥 Çevrimdışı - kuyruğa eklendi';
+    } finally {
+      if (_omrScanState) _omrScanState.busy = false;
     }
   }, 'image/jpeg', 0.85);
+}
+
+// ============================================================
+// Anlik sonuc karti (videodaki gibi: kagit okununca ogrenci/puan karti,
+// uzerinde Onayla/Duzenle/Sil) - kart ENGELLEYICI DEGIL, yeni bir kagit
+// okununca yenisiyle degisir; onaylanmadan gecilenler needs_review kalir.
+// ============================================================
+
+function _omrHandleScanResponse(data) {
+  const st = _omrScanState;
+  if (!st) return;
+  if (!data.duplicate) st.uploaded++;
+  if (data.status === 'needs_review') st.pendingIds.add(data.scanId);
+  _omrUpdateCounter();
+  _omrShowCard(data);
+}
+
+const _OMR_CARD_BTN = 'border:none;border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;color:#fff;cursor:pointer';
+
+function _omrShowCard(data) {
+  const el = document.getElementById('omr-scan-card');
+  if (!el || !_omrScanState) return;
+  _omrScanState.card = data;
+  _omrScanState.cardToken = (_omrScanState.cardToken || 0) + 1;
+  const esc = _omrEsc;
+  const s = data.summary;
+
+  let header;
+  if (data.studentName) {
+    header = `<div style="font-size:16px;font-weight:700">${esc(data.studentName)}</div>
+      <div style="font-size:12px;color:#9ca3af">No ${esc(data.schoolNumber || '-')} · ${esc(data.className || '-')}</div>`;
+  } else {
+    header = `<div style="font-size:16px;font-weight:700;color:#f59e0b">Öğrenci eşleşmedi</div>`;
+  }
+
+  let body = '';
+  if (data.duplicate) {
+    body += `<div style="font-size:12px;color:#60a5fa;margin-top:4px">ℹ️ Bu kağıt zaten okundu${data.status === 'approved' ? ' (onaylı)' : ''}.</div>`;
+  }
+  if (!data.readable) {
+    const why = (data.warnings && data.warnings[0]) ? ' ' + esc(data.warnings[0]) : '';
+    body += `<div style="font-size:14px;color:#f87171;margin-top:6px">❌ Okunamadı - kağıdı düzleştirip ışığı kontrol ederek tekrar deneyin.${why}</div>`;
+  } else {
+    body += `<div style="font-size:15px;margin-top:6px">
+      <span style="color:#4ade80">✔ ${s.correct}</span> ·
+      <span style="color:#fb7185">✘ ${s.wrong}</span> ·
+      <span style="color:#9ca3af">○ ${s.blank}</span> ·
+      <strong>Net ${data.net}</strong></div>`;
+    if (s.flagged > 0) {
+      body += `<div style="font-size:12px;color:#fbbf24;margin-top:2px">⚠️ ${s.flagged} şüpheli soru (çift işaret/belirsiz)</div>`;
+    }
+  }
+
+  let picker = '';
+  if (data.status === 'needs_review' && data.readable && !data.studentId) {
+    const students = (_omrOverview && _omrOverview.students) || [];
+    const classNames = [...new Set(students.map(st => st.class_name).filter(Boolean))].sort();
+    const sel = 'background:#111;color:#fff;border:1px solid #444;border-radius:6px;padding:7px;width:100%;margin-top:6px';
+    picker = `
+      <select id="omr-card-class" style="${sel}" onchange="_omrCardFilterStudents()">
+        <option value="">Tüm Şubeler</option>
+        ${classNames.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+      </select>
+      <select id="omr-card-student" style="${sel}">${_omrBuildStudentOptions(students, '', null)}</select>`;
+  }
+
+  let buttons = '';
+  if (data.status === 'needs_review') {
+    const del = `<button style="${_OMR_CARD_BTN};background:#dc2626" onclick="_omrCardReject()">🗑 Sil</button>`;
+    if (!data.readable) {
+      buttons = del;
+    } else {
+      buttons = `
+        <button style="${_OMR_CARD_BTN};background:#16a34a" onclick="_omrCardApprove()">✅ ${data.studentId ? 'Onayla' : 'Ata ve Onayla'}</button>
+        <button style="${_OMR_CARD_BTN};background:#4b5563" onclick="_omrCardEdit()">✏️ Düzenle</button>
+        ${del}`;
+    }
+  } else {
+    buttons = `<button style="${_OMR_CARD_BTN};background:#4b5563" onclick="_omrCardClose()">Kapat</button>`;
+  }
+
+  el.innerHTML = `${header}${body}${picker}
+    <div id="omr-card-msg" style="font-size:12px;color:#f87171;min-height:14px;margin-top:4px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${buttons}</div>`;
+  el.style.display = 'block';
+}
+
+function _omrCardMsg(text) {
+  const m = document.getElementById('omr-card-msg');
+  if (m) m.textContent = text;
+}
+
+function _omrCardClose() {
+  const el = document.getElementById('omr-scan-card');
+  if (el) el.style.display = 'none';
+  if (_omrScanState) _omrScanState.card = null;
+}
+
+// Onay/silme sonrasi kart kisa bir sonuc metni gosterip kapanir.
+function _omrFlashCard(text) {
+  const el = document.getElementById('omr-scan-card');
+  if (!el || !_omrScanState) return;
+  const token = ++_omrScanState.cardToken;
+  el.innerHTML = `<div style="font-size:16px;font-weight:700;text-align:center;padding:6px 0">${_omrEsc(text)}</div>`;
+  el.style.display = 'block';
+  setTimeout(() => {
+    if (_omrScanState && _omrScanState.cardToken === token) _omrCardClose();
+  }, 1400);
+}
+
+function _omrCardFilterStudents() {
+  const cls = document.getElementById('omr-card-class');
+  const stu = document.getElementById('omr-card-student');
+  if (!cls || !stu) return;
+  const students = (_omrOverview && _omrOverview.students) || [];
+  stu.innerHTML = _omrBuildStudentOptions(students, cls.value, null);
+}
+
+async function _omrCardApprove() {
+  const st = _omrScanState;
+  const card = st && st.card;
+  if (!card) return;
+  if (card.summary && card.summary.flagged > 0 &&
+      !confirm(`${card.summary.flagged} şüpheli soru boş sayılacak. Yine de onaylansın mı?\n(Düzeltmek için "Düzenle"ye basın.)`)) return;
+  _omrCardMsg('');
+  try {
+    if (!card.studentId) {
+      const sid = document.getElementById('omr-card-student')?.value;
+      if (!sid) { _omrCardMsg('❌ Önce bir öğrenci seçin.'); return; }
+      const ar = await fetch(`/api/teacher/omr/scans/${card.scanId}/assign`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: parseInt(sid, 10) }),
+      });
+      const ad = await ar.json();
+      if (!ar.ok) { _omrCardMsg('❌ ' + (ad.error || 'Öğrenci atanamadı.')); return; }
+    }
+    const res = await fetch(`/api/teacher/omr/scans/${card.scanId}/approve`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { _omrCardMsg('❌ ' + (data.error || 'Onaylanamadı.')); return; }
+    window._omrOnScanChanged(card.scanId, 'approved', data.net);
+  } catch (err) {
+    _omrCardMsg('❌ Bağlantı hatası, tekrar deneyin.');
+  }
+}
+
+async function _omrCardReject() {
+  const card = _omrScanState && _omrScanState.card;
+  if (!card) return;
+  _omrCardMsg('');
+  try {
+    const res = await fetch(`/api/teacher/omr/scans/${card.scanId}/reject`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { _omrCardMsg('❌ ' + (data.error || 'Silinemedi.')); return; }
+    window._omrOnScanChanged(card.scanId, 'rejected');
+  } catch (err) {
+    _omrCardMsg('❌ Bağlantı hatası, tekrar deneyin.');
+  }
+}
+
+// Onay/red nerede yapildiysa (kart ya da Duzenle sayfasi) sayaci ve karti
+// gunceller - omrDefine.js _omrApproveScan/_omrRejectScan da bunu cagirir.
+window._omrOnScanChanged = function (scanId, status, net) {
+  const st = _omrScanState;
+  if (!st) return;
+  if (st.pendingIds.has(scanId)) {
+    st.pendingIds.delete(scanId);
+    if (status === 'approved') st.approved++;
+  }
+  _omrUpdateCounter();
+  _omrCloseSheet(false);
+  if (st.card && st.card.scanId === scanId) {
+    const shownNet = net !== undefined ? net : st.card.net;
+    _omrFlashCard(status === 'approved' ? `✅ Onaylandı${shownNet != null ? ' (net ' + shownNet + ')' : ''}` : '🗑 Silindi');
+  }
+};
+
+// Duzenle: kamerayi kapatmadan overlay icinde mevcut Incele detay gorunumunu
+// (foto, soru-soru okuma, A/B/C/D duzeltme, ogrenci atama) acar.
+function _omrCardEdit() {
+  const st = _omrScanState;
+  const card = st && st.card;
+  if (!card) return;
+  const sheet = document.getElementById('omr-scan-sheet');
+  if (!sheet) return;
+  sheet.style.display = 'block';
+  sheet.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <button style="${_OMR_CARD_BTN};background:#4b5563" onclick="_omrCloseSheet(true)">✕ Kapat</button>
+    </div>
+    <div id="omr-sheet-host"></div>`;
+  _omrOpenScanDetail(card.scanId, st.examDefId, st.examTitle, document.getElementById('omr-sheet-host'));
+}
+
+async function _omrCloseSheet(refreshCard) {
+  const sheet = document.getElementById('omr-scan-sheet');
+  if (!sheet || sheet.style.display === 'none') return;
+  sheet.style.display = 'none';
+  sheet.innerHTML = '';
+  const card = _omrScanState && _omrScanState.card;
+  if (!refreshCard || !card) return;
+  try {
+    const scan = await fetch(`/api/teacher/omr/scans/${card.scanId}`).then(r => r.json());
+    if (scan && scan.card && _omrScanState && _omrScanState.card && _omrScanState.card.scanId === card.scanId) {
+      _omrShowCard(scan.card);
+    }
+  } catch (err) { /* kart eski haliyle kalir */ }
 }
