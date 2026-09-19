@@ -449,8 +449,22 @@ function _omrFilterStudentsByClass(scanId) {
   studentSelect.innerHTML = _omrBuildStudentOptions(students, classSelect.value, previouslySelected);
 }
 
-async function _omrOpenScanDetail(scanId, examDefId, examTitle) {
-  const host = document.getElementById(`omr-scan-detail-${examDefId}`);
+// Kamera ekranındaki "Düzenle" sayfası (omrScan.js) aynı detay görünümünü
+// kamera overlay'i İÇİNDE göstermek için kendi konteynerini verir. Sayfa
+// kapanıp DOM'dan çıkınca (document.body.contains) otomatik olarak geçersiz
+// sayılır ve İncele paneli eskisi gibi varsayılan konteyneri kullanır.
+let _omrDetailHostOverride = null;
+
+async function _omrOpenScanDetail(scanId, examDefId, examTitle, hostEl) {
+  if (hostEl) {
+    _omrDetailHostOverride = hostEl;
+    // Aynı taramanın detayı İncele panelinde de açıksa çift element id'si
+    // (omr-detail-status-N vb.) oluşmasın diye oradakini boşalt.
+    const pageHost = document.getElementById(`omr-scan-detail-${examDefId}`);
+    if (pageHost) pageHost.innerHTML = '';
+  }
+  const overrideValid = _omrDetailHostOverride && document.body.contains(_omrDetailHostOverride);
+  const host = overrideValid ? _omrDetailHostOverride : document.getElementById(`omr-scan-detail-${examDefId}`);
   if (!host) return;
   host.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
   const scan = await fetch(`/api/teacher/omr/scans/${scanId}`).then(r => r.json());
@@ -553,6 +567,7 @@ async function _omrApproveScan(scanId, examDefId, examTitle) {
   if (!res.ok) { statusEl.textContent = '❌ ' + data.error; return; }
   statusEl.textContent = `✅ Onaylandı (net: ${data.net}).`;
   await _omrRefreshReviewList(examDefId, examTitle);
+  if (typeof window._omrOnScanChanged === 'function') window._omrOnScanChanged(scanId, 'approved');
 }
 
 async function _omrRejectScan(scanId, examDefId, examTitle) {
@@ -561,6 +576,7 @@ async function _omrRejectScan(scanId, examDefId, examTitle) {
   const data = await res.json();
   if (!res.ok) { alert(data.error); return; }
   await _omrRefreshReviewList(examDefId, examTitle);
+  if (typeof window._omrOnScanChanged === 'function') window._omrOnScanChanged(scanId, 'rejected');
 }
 
 function _omrOpenPaperDialog(examDefId, examTitle) {
