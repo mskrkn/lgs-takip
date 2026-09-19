@@ -107,6 +107,12 @@ try:
 except ImportError:
     omr_form = None
     OMR_FORM_AVAILABLE = False
+# OMR raporlari + PDF/Excel/CSV/TXT disa aktarma (omr_reports.py) da reportlab
+# gerektirir - kurulu degilse sadece rapor ucu 503 doner, sunucu calisir.
+try:
+    import omr_reports
+except ImportError:
+    omr_reports = None
 # omr_form yuklenemese bile (opsiyonel) test-tanimlama validasyonu (PDF
 # uretimine ihtiyac duymuyor) calismaya devam etsin diye ayrica tutulur -
 # tek gercek kaynak yine de omr_form.QUESTION_COUNT_MIN/MAX'tir.
@@ -5397,6 +5403,30 @@ def api_teacher_omr_curriculum_topics():
     return jsonify({"konular": (grade_data or {}).get("konular") or []})
 
 
+def _omr_visibility_filter():
+    """Oturumdaki kullanicinin GOREBILECEGI OMR test tanimlarini sinirlayan SQL
+    parcasi ('e' = omr_exam_definitions takma adi) + parametreleri. Admin/
+    super_admin hepsini gorur; brans ogretmeni SADECE kendi olusturdugunu;
+    sinif ogretmeni ek olarak kendi sinifina uygulanmis (omr_papers) testleri
+    (bkz. Faz 2 plani, madde C). Liste ucu ve raporlar AYNI kurali kullanir."""
+    if session.get("role") in ("admin", "super_admin"):
+        return "", ()
+    uid = session.get("user_id")
+    homeroom = session.get("homeroom_class_name")
+    if homeroom:
+        return (" AND (e.created_by = ? OR EXISTS (SELECT 1 FROM omr_papers p "
+                "WHERE p.exam_definition_id = e.id AND p.class_name = ?))", (uid, homeroom))
+    return " AND e.created_by = ?", (uid,)
+
+
+def _omr_exam_visible(db, org_id, exam_def_id):
+    frag, params = _omr_visibility_filter()
+    return db.execute(
+        "SELECT e.id FROM omr_exam_definitions e WHERE e.id = ? AND e.organization_id = ?" + frag,
+        (exam_def_id, org_id, *params),
+    ).fetchone() is not None
+
+
 @app.route("/api/teacher/omr/exams", methods=["GET"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_list_exams():
@@ -5413,30 +5443,8 @@ def api_teacher_omr_list_exams():
         "LEFT JOIN users u ON u.id = e.created_by "
         "WHERE e.organization_id = ?"
     )
-    role = session.get("role")
-    if role in ("admin", "super_admin"):
-        # Platform/okul admini zaten okulun TAMAMINI görür/yönetir - kapsam
-        # daraltılmaz (bkz. Faz 2 planı, madde C).
-        rows = db.execute(base_query + " ORDER BY e.created_at DESC", (org_id,)).fetchall()
-    else:
-        # Branş öğretmeni sadece KENDİ oluşturduğu testleri görür; sınıf
-        # öğretmeni (homeroom) ayrıca kendi sınıfına UYGULANMIŞ (en az bir
-        # omr_papers kaydı olan) testleri de görür - branşı ne olursa olsun
-        # ("derse giren öğretmen kendi denemesini görürken sınıf öğretmeni
-        # o sınıfın TÜM denemelerini görsün", kullanıcı kararı).
-        homeroom = session.get("homeroom_class_name")
-        if homeroom:
-            rows = db.execute(
-                base_query + " AND (e.created_by = ? OR EXISTS ("
-                "SELECT 1 FROM omr_papers p WHERE p.exam_definition_id = e.id AND p.class_name = ?"
-                ")) ORDER BY e.created_at DESC",
-                (org_id, session.get("user_id"), homeroom),
-            ).fetchall()
-        else:
-            rows = db.execute(
-                base_query + " AND e.created_by = ? ORDER BY e.created_at DESC",
-                (org_id, session.get("user_id")),
-            ).fetchall()
+    frag, frag_params = _omr_visibility_filter()
+    rows = db.execute(base_query + frag + " ORDER BY e.created_at DESC", (org_id, *frag_params)).fetchall()
 
     exams = []
     for r in rows:
@@ -5765,6 +5773,58 @@ def api_teacher_omr_class_report():
             "avgNet": round(sum(nets) / len(nets), 2) if nets else None,
         })
     return jsonify({"className": class_name, "totalStudents": total_students, "report": report})
+
+
+@app.route("/api/teacher/omr/reports/<kind>")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_report(kind):
+    """Aşama B: Optik Okuma raporları (basic|detailed|class_compare|question:
+    test bazlı `examId`; kazanim: sınıf bazlı `className`) - `format`=json
+    (ekranda göstermek için, varsayılan) ya da pdf|xlsx|csv|txt (indirme).
+    Bkz. omr_reports.py. Test bazlı raporlarda test, liste ucuyla AYNI
+    görünürlük kuralına (_omr_exam_visible) tabidir ve öğretmen için satırlar
+    get_allowed_student_ids ile süzülür (sınıf öğretmeni başka sınıfın
+    satırını görmez)."""
+    if omr_reports is None:
+        return jsonify({"error": "Rapor modülü kullanılamıyor (reportlab kurulu değil)."}), 503
+    if kind not in omr_reports.REPORT_KINDS:
+        return jsonify({"error": "Geçersiz rapor türü."}), 400
+    fmt = (request.args.get("format") or "json").lower()
+    if fmt not in omr_reports.FORMATS:
+        return jsonify({"error": "Geçersiz biçim."}), 400
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    resource_id = None
+    if kind == "kazanim":
+        class_name = (request.args.get("className") or "").strip()
+        if not class_name:
+            return jsonify({"error": "className gerekli."}), 400
+        if session.get("role") == "teacher" and not _teacher_can_use_class(class_name):
+            return jsonify({"error": "Bu sınıfa erişiminiz yok."}), 403
+        report = omr_reports.build_kazanim(db, org_id, class_name)
+    else:
+        exam_id = request.args.get("examId", type=int)
+        if not exam_id or not _omr_exam_visible(db, org_id, exam_id):
+            return jsonify({"error": "Test tanımı bulunamadı."}), 404
+        resource_id = exam_id
+        builder = {
+            "basic": omr_reports.build_basic, "detailed": omr_reports.build_detailed,
+            "class_compare": omr_reports.build_class_compare, "question": omr_reports.build_question,
+        }[kind]
+        report = builder(db, org_id, exam_id, get_allowed_student_ids(db))
+
+    if fmt == "json":
+        return jsonify(report)
+    data, mime, ext = omr_reports.render(report, fmt)
+    log_audit(db, "OMR_REPORT_EXPORTED", resource_type="omr_exam_definition", resource_id=resource_id)
+    return Response(
+        data, mimetype=mime,
+        headers={"Content-Disposition": f'attachment; filename="optik-{kind}-{datetime.now():%Y%m%d}.{ext}"'},
+    )
 
 
 _OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
