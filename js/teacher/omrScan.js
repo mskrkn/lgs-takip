@@ -216,7 +216,7 @@ function _omrScanAnalysisLoop() {
       // çalışmaya devam eder.
     }
   }
-  setTimeout(_omrScanAnalysisLoop, 300);
+  setTimeout(_omrScanAnalysisLoop, 150);
 }
 
 function _omrAnalyzeFrame(ctx, w, h) {
@@ -293,10 +293,10 @@ function _omrAnalyzeFrame(ctx, w, h) {
   return { ready: true, hint: 'Hazır - otomatik çekiliyor...' };
 }
 
-const OMR_AUTO_CAPTURE_HOLD_MS = 600;
+const OMR_AUTO_CAPTURE_HOLD_MS = 300;
 // Kagit bu kadar sure kadrajdan CIKMIS (hazir degil) gorunmeden ayni kagit
 // yeniden otomatik okunmaz.
-const OMR_REARM_ABSENT_MS = 500;
+const OMR_REARM_ABSENT_MS = 300;
 // Kagit hizla degistirilirken "hazir degil" araligi hic olusmayabilir - bu
 // sureden sonra kilit yine de acilir (QR'li ayni kagit sunucuda zaten
 // "zaten okundu" olarak tekillestirilir, yeni kayit acilmaz).
@@ -365,6 +365,14 @@ function _omrCaptureFrame() {
   _omrScanState.awaitingRemoval = true;
   _omrScanState.notReadySince = 0;
   _omrScanState.lockedAt = Date.now();
+  const tCapture = performance.now();
+  // Aninda gorsel geri bildirim: sonuc gelene kadar kartta "Okunuyor" gosterilir.
+  const cardEl = document.getElementById('omr-scan-card');
+  if (cardEl) {
+    _omrScanState.card = null;
+    cardEl.innerHTML = '<div style="font-size:15px;text-align:center;padding:8px 0">⏳ Okunuyor...</div>';
+    cardEl.style.display = 'block';
+  }
   canvas.toBlob(async (blob) => {
     if (!_omrScanState) return;
     if (!blob) { _omrScanState.busy = false; return; }
@@ -372,9 +380,11 @@ function _omrCaptureFrame() {
     const hintEl = document.getElementById('omr-scan-hint');
     try {
       const data = await _omrUploadScan(examDefId, blob);
+      data.timing = { totalMs: Math.round(performance.now() - tCapture), sizeKb: Math.round(blob.size / 1024) };
       if (_omrScanState) _omrHandleScanResponse(data);
       _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
     } catch (err) {
+      _omrCardClose(); // "Okunuyor" karti hata durumunda takili kalmasin
       // SADECE gercek ag hatasi (fetch TypeError) "cevrimdisi" sayilir ve
       // kuyruga alinir - sunucunun verdigi bir hata (oturum dustu, test
       // bulunamadi vb.) eskiden ayni sekilde "kuyruga eklendi" gorunup sonsuza
@@ -392,7 +402,7 @@ function _omrCaptureFrame() {
     } finally {
       if (_omrScanState) _omrScanState.busy = false;
     }
-  }, 'image/jpeg', 0.85);
+  }, 'image/jpeg', 0.75);
 }
 
 // ============================================================
@@ -476,7 +486,8 @@ function _omrShowCard(data) {
 
   el.innerHTML = `${header}${body}${picker}
     <div id="omr-card-msg" style="font-size:12px;color:#f87171;min-height:14px;margin-top:4px"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${buttons}</div>`;
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${buttons}</div>
+    ${data.timing ? `<div style="font-size:10px;color:#6b7280;margin-top:6px">⏱ toplam ${data.timing.totalMs} ms · sunucu ${data.processingMs ?? '-'} ms · ${data.timing.sizeKb} KB</div>` : ''}`;
   el.style.display = 'block';
 }
 

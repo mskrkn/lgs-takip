@@ -5802,7 +5802,7 @@ def _omr_net(correct, wrong):
     return max(0, round(correct - wrong / 3, 2))
 
 
-def _omr_scan_card(db, scan, warnings, duplicate):
+def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
     """Kamera ekranindaki anlik sonuc karti icin bir omr_scans satirinin ozeti
     (ogrenci adi/no/sinif, D/Y/B, net, durum). Yukleme yaniti ve 'zaten
     okundu' (duplicate) yaniti AYNI sekli doner."""
@@ -5824,7 +5824,7 @@ def _omr_scan_card(db, scan, warnings, duplicate):
         "summary": summary,
         "net": _omr_net(summary["correct"], summary["wrong"]) if summary else None,
         "readable": summary is not None,
-        "duplicate": duplicate, "warnings": warnings,
+        "duplicate": duplicate, "warnings": warnings, "processingMs": processing_ms,
     }
 
 
@@ -5874,6 +5874,7 @@ def api_teacher_omr_upload_scan():
     per_question_payload = None
     warnings = []
 
+    t_pipeline = time.perf_counter()
     try:
         result = omr_pipeline.process_scan_image(
             image_bytes, exam_def["question_count"], exam_def["form_template"])
@@ -5920,6 +5921,8 @@ def api_teacher_omr_upload_scan():
         per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
                                            ensure_ascii=False)
 
+    pipeline_ms = round((time.perf_counter() - t_pipeline) * 1000)
+
     # Ayni kagit (QR ile taninan paper_id) zaten okunmus ve reddedilmemisse
     # yeni kayit ACILMAZ - kamera ayni kagidi kadrajda tutarken art arda
     # cekim yapabiliyor (2026-09-19'da staging'de 1-2 sn icinde 4 kayit).
@@ -5935,7 +5938,7 @@ def api_teacher_omr_upload_scan():
                 os.remove(image_path)
             except OSError:
                 pass
-            return jsonify(_omr_scan_card(db, existing_scan, [], duplicate=True)), 200
+            return jsonify(_omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)), 200
 
     now = datetime.now().isoformat()
     cur = db.execute(
@@ -5948,7 +5951,7 @@ def api_teacher_omr_upload_scan():
     db.commit()
     log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
     new_scan = db.execute("SELECT * FROM omr_scans WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return jsonify(_omr_scan_card(db, new_scan, warnings, duplicate=False)), 201
+    return jsonify(_omr_scan_card(db, new_scan, warnings, duplicate=False, processing_ms=pipeline_ms)), 201
 
 
 # ============================================================
