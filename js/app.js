@@ -206,6 +206,11 @@ const App = {
     // girer - nav'da görünmeleri güvenlik açığı değil, sadece erişilebilirlik.
     const isPurePlatformAccount = this.currentUser?.role === 'super_admin' ||
       (this.currentUser?.canManageSchools && !this.currentUser?.organizationId);
+    // "Kazanım Testleri" bağlantısı (Öğretmen Paneli - kendi okulunun Optik
+    // Okuma'sı): okulsuz saf platform hesabı ve sadece Kullanıcılar'ı gören
+    // delege hesaplar için anlamsız/yetkisiz, gizlenir.
+    const kazanimNav = document.getElementById('nav-kazanim-testleri');
+    if (kazanimNav && (isPurePlatformAccount || this.currentUser?.isDelegateAdmin)) kazanimNav.style.display = 'none';
     if (isPurePlatformAccount) {
       const visiblePages = ['dashboard', 'schools', 'system-logs', 'users', 'students', 'exams', 'import', 'question-bank', 'reports'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
