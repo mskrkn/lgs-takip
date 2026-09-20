@@ -343,7 +343,7 @@ def to_xlsx(report):
     r += 1
     sheet_rows.append((r, [(c, 1) for c in report["columns"]])); header_row = r; r += 1
     for row in report["rows"]:
-        sheet_rows.append((r, [(v, 0) for v in row])); r += 1
+        sheet_rows.append((r, [(v, 2 if isinstance(v, str) and len(v) > 40 else 0) for v in row])); r += 1
     if report.get("notes"):
         r += 1
         for n in report["notes"]:
@@ -378,8 +378,9 @@ def to_xlsx(report):
         '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
         '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>'
+        '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs>'
         '</styleSheet>'
     )
     workbook = (
@@ -436,18 +437,43 @@ def to_pdf(report):
     sub_style = ParagraphStyle("s", fontName="EduPusulaSans", fontSize=10, leading=13, textColor=colors.HexColor("#555555"))
     note_style = ParagraphStyle("n", fontName="EduPusulaSans", fontSize=8, leading=10, textColor=colors.HexColor("#555555"))
 
-    data = [[_cell_text(c) for c in report["columns"]]] + [[_cell_text(v) for v in row] for row in report["rows"]]
-    # Sutun genisligi: icerik uzunluguyla orantili, sayfa genisligine sigacak sekilde olceklenir
-    lens = [max(len(r[i]) for r in data) for i in range(ncols)]
-    weights = [max(l, 2) + 1.5 for l in lens]
-    total_w = sum(weights)
-    col_widths = [avail * w / total_w for w in weights]
+    cell_style = ParagraphStyle("c", fontName="EduPusulaSans", fontSize=font_size, leading=font_size * 1.25)
+    head_style = ParagraphStyle("h", fontName="EduPusulaSans-Bold", fontSize=font_size, leading=font_size * 1.25)
+    cols = [_cell_text(c) for c in report["columns"]]
+    body = [[_cell_text(v) for v in row] for row in report["rows"]]
+
+    # Sutun genisligi: hucreler SARILDIGI icin (Paragraph) uzun bir metin
+    # (or. kazanim adi) diger sutunlari ezmez. Her sutunun alt siniri =
+    # basligin/icerigin en uzun KELIMESI, istenen genislik = icerigin
+    # (60 karakterle sinirli) uzunlugu; sigmiyorsa artan pay orantili dagitilir.
+    char_w = font_size * 0.64  # buyuk harf/kalin baslik icin pay birakir
+    pad = 7
+    mins, wants = [], []
+    for i in range(ncols):
+        texts = [cols[i]] + [r[i] for r in body if i < len(r)]
+        longest_word = max((len(w) for t in texts for w in t.split()), default=1)
+        longest_text = max((len(t) for t in texts), default=1)
+        mins.append(min(longest_word, 30) * char_w + pad)
+        wants.append(max(min(longest_text, 60) * char_w + pad, mins[-1]))
+    if sum(wants) <= avail:
+        # Sayfaya sigan raporlar sayfa genisligini doldursun (en fazla 1.5x buyur)
+        scale = min(avail / sum(wants), 1.5)
+        col_widths = [w * scale for w in wants]
+    else:
+        floor_total = sum(mins)
+        if floor_total >= avail:
+            col_widths = [avail * m / floor_total for m in mins]
+        else:
+            room = avail - floor_total
+            growth = [w - m for w, m in zip(wants, mins)]
+            gtotal = sum(growth) or 1
+            col_widths = [m + room * g / gtotal for m, g in zip(mins, growth)]
+
+    data = [[Paragraph(_xml_escape(c), head_style) for c in cols]]
+    data += [[Paragraph(_xml_escape(v), cell_style) for v in row] for row in body]
 
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, -1), "EduPusulaSans"),
-        ("FONTNAME", (0, 0), (-1, 0), "EduPusulaSans-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), font_size),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E7EB")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9FAFB")]),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D1D5DB")),
