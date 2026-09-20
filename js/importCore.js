@@ -24,6 +24,7 @@ const ImportCore = {
         <button class="tab-btn" data-tab="import-excel">📊 Excel / CSV</button>
         <button class="tab-btn" data-tab="import-pdf">📄 PDF</button>
         <button class="tab-btn" data-tab="import-optical">🔤 Optik / TXT Değerlendirme</button>
+        <button class="tab-btn" data-tab="import-kazanim">🎯 Kazanım Testi (Optik Okuma)</button>
       </div>
 
       <!-- Manuel Giriş -->
@@ -45,7 +46,35 @@ const ImportCore = {
       <div class="tab-content" id="import-optical">
         ${this.renderOpticalImport()}
       </div>
+
+      <!-- Kazanım Testi (kamera ile Optik Okuma - Öğretmen Paneli) -->
+      <div class="tab-content" id="import-kazanim">
+        ${this.renderKazanimTab()}
+      </div>
     `;
+  },
+
+  // İki ayrı veri akışının tek "Veri Girişi" ekranında yan yana görünmesi için:
+  // 📘 Genel Denemeler (yukarıdaki sekmeler) ve 🎯 Kazanım Testleri (telefon
+  // kamerasıyla Optik Okuma - Öğretmen Paneli'nde). Sonuçlar ayrı tutulur.
+  renderKazanimTab() {
+    const user = (typeof App !== 'undefined') ? App.currentUser : null;
+    const canOpen = !!(user && user.organizationId) && !(typeof App !== 'undefined' && App.actingSchool);
+    return `
+      <div class="card">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🎯</span> Kazanım Testi - Kamera ile Optik Okuma</h3></div>
+        <p class="text-muted" style="font-size:14px;line-height:1.6">
+          Sitede iki ayrı deneme akışı vardır:<br>
+          📘 <strong>Genel Denemeler</strong> - bu sayfadaki Manuel / Excel / PDF / Optik-TXT sekmeleriyle yüklenir.<br>
+          🎯 <strong>Kazanım Testleri</strong> - kırtasiye konu tarama testleri; öğrenciye özel optik form basılır,
+          <strong>telefon kamerasıyla</strong> okunur, sonuçlar ve raporlar (PDF/Excel/CSV/TXT) Öğretmen Paneli'ndeki
+          <em>Optik Okuma</em> sayfasında görünür.<br>
+          İki akışın sonuçları ayrı tutulur, ortalamalar birbirine karışmaz.
+        </p>
+        ${canOpen
+          ? '<a class="btn btn-primary" href="/ogretmen.html?page=omr" target="_blank" rel="noopener">📷 Optik Okuma\'yı Aç</a>'
+          : '<p class="text-muted" style="font-size:13px">⚠️ Optik Okuma, giriş yaptığınız hesabın KENDİ okuluna bağlıdır; okulsuz/Aktif Okul modunda buradan açılamaz.</p>'}
+      </div>`;
   },
 
   // ---- Initialize Event Listeners ----

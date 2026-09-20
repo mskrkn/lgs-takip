@@ -1,5 +1,6 @@
     let currentExamId = null;
     let studentTrendChart = null;
+    let studentMasteryChart = null, studentMasteryTrend = [], studentMasteryKazanim = null;
     let studentScoreRadarChart = null;
     let studentSubjectChart = null;
     let classTrendChart = null;
@@ -174,11 +175,66 @@
       renderClassAverages(overview.classAverages, 'other-class-averages', null);
       renderStudentRosterEnhanced();
       renderDashboardInsights(overview, insights);
+      renderDashboardTwoStreams(overview, insights);
 
       if (!overview.students.length) {
         document.getElementById('my-class-results').innerHTML =
           '<p class="text-muted">Sınıfınıza kayıtlı öğrenci bulunamadı. Admin ile iletişime geçin.</p>';
       }
+
+      // Derin bağlantı: yönetim panelinden /ogretmen.html?page=omr gibi açılır.
+      const pageParam = new URLSearchParams(window.location.search).get('page');
+      if (pageParam && document.getElementById(`page-${pageParam}`)) {
+        showPage(pageParam);
+        if (pageParam === 'omr') renderOmrDefinePage();
+        if (pageParam === 'assignments') renderAssignmentsPage();
+      }
+    }
+
+    // Anasayfa: Genel Denemeler ve Kazanım Testleri YAN YANA ama ayrı kartlarda -
+    // ortalamalar hiçbir yerde tek sayıda birleştirilmez (Faz 1 ilkesi).
+    function renderDashboardTwoStreams(overview, insights) {
+      const gen = document.getElementById('dash-general-body');
+      const exams = overview.exams || [];   // sunucu Genel-only döner, tarihe göre yeni -> eski
+      const lastExam = exams[0];
+      if (gen) {
+        const growth = insights && insights.trend && insights.trend.growthPct != null
+          ? `${insights.trend.growthPct > 0 ? '+' : ''}${insights.trend.growthPct}%` : '-';
+        const attention = insights && insights.radar ? insights.radar.attention.length : '-';
+        gen.innerHTML = lastExam ? `
+          <div style="font-weight:700">${escapeHtml(lastExam.name)}</div>
+          <div class="text-muted" style="font-size:12px;margin-bottom:8px">${escapeHtml(lastExam.date || '-')} · ${exams.length} genel deneme</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
+            <div><div class="text-muted" style="font-size:11px">Sınıf ort. net</div><strong>${lastExam.stats ? lastExam.stats.totalNet : '-'}</strong></div>
+            <div><div class="text-muted" style="font-size:11px">En yüksek</div><strong>${lastExam.stats ? lastExam.stats.highestNet : '-'}</strong></div>
+            <div><div class="text-muted" style="font-size:11px">Gelişim</div><strong>${growth}</strong></div>
+            <div><div class="text-muted" style="font-size:11px">Dikkat</div><strong>${attention}</strong></div>
+          </div>
+          <div style="margin-top:10px"><button type="button" class="btn btn-sm" onclick="showPage('exams')">📝 Denemelere git</button></div>
+        ` : '<p class="text-muted">Henüz genel deneme yüklenmemiş (Veri Girişi\'nden TXT/PDF/Excel ile yüklenir).</p>';
+      }
+
+      const kaz = document.getElementById('dash-kazanim-body');
+      if (!kaz) return;
+      fetch('/api/teacher/omr/summary').then(r => r.json()).then(sm => {
+        if (sm.error) { kaz.innerHTML = `<p class="text-muted">${escapeHtml(sm.error)}</p>`; return; }
+        const goOmr = "showPage('omr');renderOmrDefinePage()";
+        const pendingBadge = sm.pendingScans > 0
+          ? `<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:13px">⏳ <strong>${sm.pendingScans}</strong> tarama onay bekliyor
+              <button type="button" class="btn btn-sm" style="margin-left:6px" onclick="${goOmr}">İncele</button></div>`
+          : '';
+        const recent = (sm.recentExams || []).map(e => `
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:3px 0;border-bottom:1px solid var(--border,#2a2a2a)">
+            <span>${escapeHtml(e.title)}${e.subjectName ? ` <span class="text-muted">· ${escapeHtml(e.subjectName)}</span>` : ''}</span>
+            <span class="text-muted" style="white-space:nowrap">${e.approved} onaylı${e.pending ? ` · ${e.pending} bekliyor` : ''}${e.avgNet != null ? ` · ort ${e.avgNet}` : ''}</span>
+          </div>`).join('');
+        const weak = (sm.weakKazanim || []).map(k => `
+          <div style="font-size:12px;padding:2px 0">⚠️ ${escapeHtml(k.kazanim)} <span class="text-muted">(${escapeHtml(k.subject)})</span> — <strong>%${k.avgSuccess}</strong></div>`).join('');
+        kaz.innerHTML = `${pendingBadge}
+          ${recent || '<p class="text-muted">Henüz Kazanım Testi tanımlanmamış.</p>'}
+          ${weak ? `<div style="margin-top:8px"><div class="text-muted" style="font-size:11px">En zayıf kazanımlar</div>${weak}</div>` : ''}
+          <div style="margin-top:10px"><button type="button" class="btn btn-sm btn-primary" onclick="${goOmr}">📷 Optik Okuma'ya git</button></div>`;
+      }).catch(() => { kaz.innerHTML = '<p class="text-muted">Kazanım özeti yüklenemedi.</p>'; });
     }
 
     function renderClassAverages(list, elId, myClass) {
@@ -1208,13 +1264,18 @@
       if (studentTrendChart) { studentTrendChart.destroy(); studentTrendChart = null; }
       if (studentSubjectChart) { studentSubjectChart.destroy(); studentSubjectChart = null; }
       if (studentScoreRadarChart) { studentScoreRadarChart.destroy(); studentScoreRadarChart = null; }
+      if (studentMasteryChart) { studentMasteryChart.destroy(); studentMasteryChart = null; }
     }
 
     function switchStudentModalTab(tabKey, btn) {
       document.querySelectorAll('.detail-tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.detail-tab-pane').forEach(p => p.classList.remove('active'));
 
-      if (btn) btn.classList.add('active');
+      // Tiklanan öğe sekme çubuğundaki bir buton değilse (ör. "Kazanım
+      // Denemeleri sekmesine bakın" bağlantısı) gerçek sekme butonunu işaretle.
+      const realBtn = (btn && btn.classList.contains('detail-tab-btn'))
+        ? btn : document.querySelector(`.detail-tab-btn[data-tab-switch="${tabKey}"]`);
+      if (realBtn) realBtn.classList.add('active');
       const pane = document.getElementById(`tab-pane-${tabKey}`);
       if (pane) pane.classList.add('active');
 
@@ -1223,7 +1284,34 @@
         if (studentTrendChart) studentTrendChart.resize();
         if (studentSubjectChart) studentSubjectChart.resize();
         if (studentScoreRadarChart) studentScoreRadarChart.resize();
+        if (studentMasteryChart) studentMasteryChart.resize();
       }, 50);
+    }
+
+    // Kazanım Gelişimi grafiği (öğrenci detayı, Kazanım Denemeleri sekmesi) -
+    // veli/öğrenci portalındaki renderMasteryTrendChart ile aynı desen.
+    function renderStudentMasteryChart() {
+      const canvas = document.getElementById('student-mastery-trend-chart');
+      if (!canvas || !studentMasteryTrend.length) return;
+      const group = studentMasteryTrend.find(g => g.kazanimKodu === studentMasteryKazanim) || studentMasteryTrend[0];
+      studentMasteryKazanim = group.kazanimKodu;
+      if (studentMasteryChart) { studentMasteryChart.destroy(); studentMasteryChart = null; }
+      studentMasteryChart = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: group.points.map(p => p.date || p.examName),
+          datasets: [{
+            label: `${group.subjectName} - ${group.kazanimAdi}`, data: group.points.map(p => p.successRate),
+            borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.15)', borderWidth: 3, fill: true, tension: 0.3, pointRadius: 4,
+          }],
+        },
+        options: { ...chartDefaults(), scales: { y: { min: 0, max: 100, ticks: { color: '#64748b', callback: v => v + '%' } } } },
+      });
+    }
+
+    function setStudentMasteryKazanim(code) {
+      studentMasteryKazanim = code;
+      renderStudentMasteryChart();
     }
 
     async function openStudentDetail(studentId, studentName) {
@@ -1250,6 +1338,10 @@
       const generalResults = data.generalResults || results.filter(r => r.examType !== 'optik_kamera');
       const last = generalResults[0];
       const prev = generalResults[1];
+      // Kazanım Denemeleri (Optik Okuma) - ayrı sekmede, Genel'le karışmaz
+      const masteryResults = results.filter(r => r.examType === 'optik_kamera');
+      studentMasteryTrend = data.masteryTrend || [];
+      studentMasteryKazanim = studentMasteryTrend.length ? studentMasteryTrend[0].kazanimKodu : null;
 
       let changeHtml = '<span class="net-neutral">➖</span>';
       if (last && prev) {
@@ -1300,11 +1392,17 @@
           </div>
         </div>
 
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0">
+          <span class="text-muted" style="font-size:12px">📄 Öğrenci Karnesi (Genel + Kazanım):</span>
+          ${_omrDownloadLinks('karne', { studentId })}
+        </div>
+
         <!-- Sekme Çubuğu -->
         <div class="detail-tabs-bar">
           <button type="button" class="detail-tab-btn active" data-tab-switch="overview">📊 1. Genel Bakış & Pusula</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="growth">📈 2. Gelişim & Karşılaştırma</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="exams">📝 3. Tüm Deneme Geçmişi (${generalResults.length})</button>
+          <button type="button" class="detail-tab-btn" data-tab-switch="mastery">🎯 Kazanım Denemeleri (${masteryResults.length})</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="topics">🎯 4. Konu & Kazanım Analizi</button>
           <button type="button" class="detail-tab-btn" data-tab-switch="coaching">🧠 5. Hata Hafızası & Koç</button>
         </div>
@@ -1395,7 +1493,7 @@
         <div class="detail-tab-pane" id="tab-pane-exams">
           <div class="card">
             <div class="card-header"><h4 class="card-title">📝 Katıldığı Tüm Denemeler ve Ders Dökümleri</h4></div>
-            <p class="text-muted" style="font-size:12px;padding:0 16px">📘 Genel Denemeler - Kazanım Denemeleri (Optik Okuma) için "Optik Okuma" sekmesindeki inceleme ekranına bakın.</p>
+            <p class="text-muted" style="font-size:12px;padding:0 16px">📘 Genel Denemeler. Kazanım testleri (Optik Okuma) için <a href="#" data-tab-switch="mastery" onclick="return false" style="color:#2dd4bf">🎯 Kazanım Denemeleri</a> sekmesine bakın.</p>
             ${generalResults.length ? `
             <div class="table-wrapper" style="margin-top:10px">
               <table class="simple-table">
@@ -1438,6 +1536,43 @@
               </table>
             </div>` : '<p class="text-muted" style="padding:20px">Henüz girilmiş bir deneme sonucu bulunmuyor.</p>'}
           </div>
+        </div>
+
+        <!-- ============ SEKME: KAZANIM DENEMELERİ (OPTİK OKUMA) ============ -->
+        <div class="detail-tab-pane" id="tab-pane-mastery">
+          <div class="card">
+            <div class="card-header"><h4 class="card-title">🎯 Kazanım Denemeleri (Optik Okuma)</h4></div>
+            <p class="text-muted" style="font-size:12px;padding:0 16px">Bu netler Genel Deneme ortalamasına KATILMAZ (farklı ölçek).</p>
+            ${masteryResults.length ? `
+            <div class="table-wrapper" style="margin-top:10px">
+              <table class="simple-table">
+                <thead><tr><th>Test</th><th>Tarih</th><th>Doğru</th><th>Yanlış</th><th>Boş</th><th style="text-align:right">Net</th></tr></thead>
+                <tbody>
+                  ${masteryResults.map(r => {
+                    const subs = Object.values(r.subjects || {});
+                    const sum = (k) => subs.reduce((a, x) => a + ((x && x[k]) || 0), 0);
+                    return `<tr>
+                      <td style="font-weight:700">${escapeHtml(r.examName)}</td>
+                      <td style="color:var(--text-muted);font-size:12px">${r.examDate || '-'}</td>
+                      <td>${sum('correct')}</td><td>${sum('wrong')}</td><td>${sum('blank')}</td>
+                      <td style="text-align:right"><span class="badge-net" style="font-size:15px">${r.totalNet}</span></td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>` : '<p class="text-muted" style="padding:20px">Bu öğrenci için henüz onaylanmış bir Kazanım Denemesi yok.</p>'}
+          </div>
+          ${studentMasteryTrend.length ? `
+          <div class="card mt-2">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <h4 class="card-title">📈 Kazanım Gelişimi</h4>
+              ${studentMasteryTrend.length > 1 ? `
+              <select class="form-control" style="max-width:260px" onchange="setStudentMasteryKazanim(this.value)">
+                ${studentMasteryTrend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}">${escapeHtml(g.subjectName)} - ${escapeHtml(g.kazanimAdi)}</option>`).join('')}
+              </select>` : ''}
+            </div>
+            <div class="chart-box" style="height:240px"><canvas id="student-mastery-trend-chart"></canvas></div>
+          </div>` : ''}
         </div>
 
         <!-- ============ SEKME 4: KONU & KAZANIM ANALİZİ ============ -->
@@ -1510,6 +1645,7 @@
 
       body.innerHTML = html;
       destroyStudentCharts();
+      renderStudentMasteryChart();
 
       // Chart 1: Pusula Skoru Radarı
       const scoreRadarCanvas = document.getElementById('student-score-radar-chart');
