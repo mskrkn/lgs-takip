@@ -35,7 +35,7 @@ pdfmetrics.registerFont(TTFont("EduPusulaSans", os.path.join(_FONTS_DIR, "Vera.t
 pdfmetrics.registerFont(TTFont("EduPusulaSans-Bold", os.path.join(_FONTS_DIR, "VeraBd.ttf")))
 
 REPORT_KINDS = ("basic", "detailed", "class_compare", "question", "answer_dist",
-                "kazanim", "subject", "student", "class_tests")
+                "kazanim", "subject", "student", "class_tests", "karne")
 FORMATS = ("json", "pdf", "xlsx", "csv", "txt")
 _EXT = {"pdf": "pdf", "xlsx": "xlsx", "csv": "csv", "txt": "txt"}
 _MIME = {
@@ -438,25 +438,45 @@ def _cell_text(v):
     return "" if v is None else str(v)
 
 
+def _sections(report):
+    """Rapor tek tablolu (columns/rows) ya da cok bolumlu (sections=[{heading,
+    columns, rows}], or. Ogrenci Karnesi) olabilir - donusturuculer hep
+    bolum listesiyle calisir. Tek tablolu raporlar heading=None tek bolumdur."""
+    if report.get("sections"):
+        return report["sections"]
+    return [{"heading": None, "columns": report["columns"], "rows": report["rows"]}]
+
+
 def to_csv(report):
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
-    w.writerow(report["columns"])
-    for row in report["rows"]:
-        w.writerow([_cell_text(v) for v in row])
+    for i, sec in enumerate(_sections(report)):
+        if i:
+            w.writerow([])
+        if sec.get("heading"):
+            w.writerow([sec["heading"]])
+        w.writerow(sec["columns"])
+        for row in sec["rows"]:
+            w.writerow([_cell_text(v) for v in row])
     return b"\xef\xbb\xbf" + buf.getvalue().encode("utf-8")  # BOM: Excel Turkce karakterleri dogru acar
 
 
 def to_txt(report):
-    cols = [_cell_text(c) for c in report["columns"]]
-    body = [[_cell_text(v) for v in row] for row in report["rows"]]
-    widths = [max([len(cols[i])] + [len(r[i]) for r in body if i < len(r)]) for i in range(len(cols))]
+    lines = [report["title"], report.get("subtitle", ""), ""]
+    for i, sec in enumerate(_sections(report)):
+        if i:
+            lines.append("")
+        if sec.get("heading"):
+            lines += [sec["heading"], ""]
+        cols = [_cell_text(c) for c in sec["columns"]]
+        body = [[_cell_text(v) for v in row] for row in sec["rows"]]
+        widths = [max([len(cols[j])] + [len(r[j]) for r in body if j < len(r)]) for j in range(len(cols))]
 
-    def fmt(cells):
-        return "  ".join(_cell_text(c).ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
+        def fmt(cells, widths=widths):
+            return "  ".join(_cell_text(c).ljust(widths[k]) for k, c in enumerate(cells)).rstrip()
 
-    lines = [report["title"], report.get("subtitle", ""), "", fmt(cols), "  ".join("-" * w for w in widths)]
-    lines += [fmt(r) for r in body]
+        lines += [fmt(cols), "  ".join("-" * wd for wd in widths)]
+        lines += [fmt(r) for r in body]
     if report.get("notes"):
         lines += [""] + report["notes"]
     return ("\r\n".join(lines) + "\r\n").encode("utf-8")
@@ -484,26 +504,40 @@ def _xlsx_cell(ref, value, style):
 
 
 def to_xlsx(report):
-    """Minimal OOXML (.xlsx) - stil 0 normal, 1 kalin. Baslik + veri +
-    notlar tek sayfada; sutun genisligi icerige gore."""
+    """Minimal OOXML (.xlsx) - stil 0 normal, 1 kalin, 2 sarmali. Baslik +
+    (bir ya da daha cok) bolum + notlar tek sayfada; sutun genisligi icerige gore."""
+    sections = _sections(report)
     sheet_rows = []  # (satir_no, [(deger, stil)])
     r = 1
     sheet_rows.append((r, [(report["title"], 1)])); r += 1
     if report.get("subtitle"):
         sheet_rows.append((r, [(report["subtitle"], 0)])); r += 1
     r += 1
-    sheet_rows.append((r, [(c, 1) for c in report["columns"]])); header_row = r; r += 1
-    for row in report["rows"]:
-        sheet_rows.append((r, [(v, 2 if isinstance(v, str) and len(v) > 40 else 0) for v in row])); r += 1
-    if report.get("notes"):
+    first_header_row = None
+    for sec in sections:
+        if sec.get("heading"):
+            sheet_rows.append((r, [(sec["heading"], 1)])); r += 1
+        sheet_rows.append((r, [(c, 1) for c in sec["columns"]]))
+        if first_header_row is None:
+            first_header_row = r
         r += 1
+        for row in sec["rows"]:
+            sheet_rows.append((r, [(v, 2 if isinstance(v, str) and len(v) > 40 else 0) for v in row])); r += 1
+        r += 1  # bolumler arasi bos satir
+    if report.get("notes"):
         for n in report["notes"]:
             sheet_rows.append((r, [(n, 0)])); r += 1
 
-    widths = [len(_cell_text(c)) for c in report["columns"]]
-    for row in report["rows"]:
-        for i, v in enumerate(row):
-            if i < len(widths):
+    widths = []
+    for sec in sections:
+        for i, c in enumerate(sec["columns"]):
+            while len(widths) <= i:
+                widths.append(0)
+            widths[i] = max(widths[i], len(_cell_text(c)))
+        for row in sec["rows"]:
+            for i, v in enumerate(row):
+                while len(widths) <= i:
+                    widths.append(0)
                 widths[i] = max(widths[i], len(_cell_text(v)))
     cols_xml = "".join(
         f'<col min="{i + 1}" max="{i + 1}" width="{min(max(w + 2, 6), 45)}" customWidth="1"/>'
@@ -514,12 +548,16 @@ def to_xlsx(report):
         cx = "".join(_xlsx_cell(f"{_col_letter(ci)}{rn}", v, st) for ci, (v, st) in enumerate(cells))
         rows_xml.append(f'<row r="{rn}">{cx}</row>')
 
+    # Baslik satirini dondur SADECE tek bolumlu raporlarda (cok bolumluyse
+    # ilk bolumun basligini dondurmak ikinci bolumu kaydirirken karisik gorunur)
+    pane = ""
+    if len(sections) == 1 and first_header_row:
+        pane = (f'<sheetViews><sheetView workbookViewId="0"><pane ySplit="{first_header_row}" '
+                f'topLeftCell="A{first_header_row + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>')
     sheet = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<sheetViews><sheetView workbookViewId="0"><pane ySplit="{header_row}" topLeftCell="A{header_row + 1}" '
-        'activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
-        f'<cols>{cols_xml}</cols><sheetData>{"".join(rows_xml)}</sheetData></worksheet>'
+        f'{pane}<cols>{cols_xml}</cols><sheetData>{"".join(rows_xml)}</sheetData></worksheet>'
     )
     styles = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -574,38 +612,33 @@ def to_xlsx(report):
     return buf.getvalue()
 
 
-def to_pdf(report):
-    ncols = len(report["columns"])
-    page = landscape(A4) if ncols > 9 else A4
-    margin = 12 * mm
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=page, leftMargin=margin, rightMargin=margin,
-                            topMargin=margin, bottomMargin=margin, title=report["title"])
-    avail = page[0] - 2 * margin
-    font_size = 8 if ncols <= 12 else (6.5 if ncols <= 26 else 5.5)
-
-    title_style = ParagraphStyle("t", fontName="EduPusulaSans-Bold", fontSize=15, leading=19)
-    sub_style = ParagraphStyle("s", fontName="EduPusulaSans", fontSize=10, leading=13, textColor=colors.HexColor("#555555"))
-    note_style = ParagraphStyle("n", fontName="EduPusulaSans", fontSize=8, leading=10, textColor=colors.HexColor("#555555"))
-
+def _pdf_table(columns, rows, avail, font_size):
+    """Bir bolumun PDF tablosu: hucreler Paragraph ile SARILIR, sutun genisligi
+    kelime/icerik uzunlugundan hesaplanir (bkz. uzun kazanim adi duzeltmesi)."""
+    ncols = len(columns)
     cell_style = ParagraphStyle("c", fontName="EduPusulaSans", fontSize=font_size, leading=font_size * 1.25)
     head_style = ParagraphStyle("h", fontName="EduPusulaSans-Bold", fontSize=font_size, leading=font_size * 1.25)
-    cols = [_cell_text(c) for c in report["columns"]]
-    body = [[_cell_text(v) for v in row] for row in report["rows"]]
+    cols = [_cell_text(c) for c in columns]
+    body = [[_cell_text(v) for v in row] for row in rows]
 
-    # Sutun genisligi: hucreler SARILDIGI icin (Paragraph) uzun bir metin
-    # (or. kazanim adi) diger sutunlari ezmez. Her sutunun alt siniri =
-    # basligin/icerigin en uzun KELIMESI, istenen genislik = icerigin
-    # (60 karakterle sinirli) uzunlugu; sigmiyorsa artan pay orantili dagitilir.
-    char_w = font_size * 0.64  # buyuk harf/kalin baslik icin pay birakir
+    # Genislikler GERCEK yazi olcusuyle (stringWidth) hesaplanir - buyuk harfli
+    # ("ORTALAMA") ve kalin basliklar sabit karakter-genisligi tahminiyle
+    # bolunuyordu. alt sinir = en uzun KELIME, istenen = icerik (en fazla ~60 kar.)
     pad = 7
+    reg, bold = "EduPusulaSans", "EduPusulaSans-Bold"
+    cap = pdfmetrics.stringWidth("x" * 60, reg, font_size)
     mins, wants = [], []
     for i in range(ncols):
-        texts = [cols[i]] + [r[i] for r in body if i < len(r)]
-        longest_word = max((len(w) for t in texts for w in t.split()), default=1)
-        longest_text = max((len(t) for t in texts), default=1)
-        mins.append(min(longest_word, 30) * char_w + pad)
-        wants.append(max(min(longest_text, 60) * char_w + pad, mins[-1]))
+        head_words = cols[i].split() or [""]
+        body_texts = [r[i] for r in body if i < len(r)]
+        longest_word = max(
+            [pdfmetrics.stringWidth(w, bold, font_size) for w in head_words]
+            + [pdfmetrics.stringWidth(w, reg, font_size) for t in body_texts for w in t.split()] + [0])
+        longest_text = max(
+            [pdfmetrics.stringWidth(cols[i], bold, font_size)]
+            + [pdfmetrics.stringWidth(t, reg, font_size) for t in body_texts])
+        mins.append(min(longest_word, cap / 2) + pad)
+        wants.append(max(min(longest_text, cap) + pad, mins[-1]))
     if sum(wants) <= avail:
         # Sayfaya sigan raporlar sayfa genisligini doldursun (en fazla 1.5x buyur)
         scale = min(avail / sum(wants), 1.5)
@@ -622,8 +655,7 @@ def to_pdf(report):
 
     data = [[Paragraph(_xml_escape(c), head_style) for c in cols]]
     data += [[Paragraph(_xml_escape(v), cell_style) for v in row] for row in body]
-
-    table = Table(data, colWidths=col_widths, repeatRows=1)
+    table = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E7EB")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9FAFB")]),
@@ -634,11 +666,46 @@ def to_pdf(report):
         ("LEFTPADDING", (0, 0), (-1, -1), 2),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]))
+    return table
+
+
+_NON_BMP = re.compile("[\U00010000-\U0010ffff\u2600-\u27bf\ufe0f\u200d]")
+
+
+def _pdf_text(t):
+    """Vera fontunda emoji YOK (kutucuk basilirdi) - PDF'te basliklardan
+    temizlenir; ekran/Excel'de kalir."""
+    return _NON_BMP.sub("", t or "").strip()
+
+
+def to_pdf(report):
+    sections = _sections(report)
+    max_cols = max(len(sec["columns"]) for sec in sections)
+    page = landscape(A4) if max_cols > 9 else A4
+    margin = 12 * mm
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=page, leftMargin=margin, rightMargin=margin,
+                            topMargin=margin, bottomMargin=margin, title=report["title"])
+    avail = page[0] - 2 * margin
+
+    title_style = ParagraphStyle("t", fontName="EduPusulaSans-Bold", fontSize=15, leading=19)
+    sub_style = ParagraphStyle("s", fontName="EduPusulaSans", fontSize=10, leading=13, textColor=colors.HexColor("#555555"))
+    head_sec_style = ParagraphStyle("hs", fontName="EduPusulaSans-Bold", fontSize=11, leading=14, spaceBefore=10, spaceAfter=3)
+    note_style = ParagraphStyle("n", fontName="EduPusulaSans", fontSize=8, leading=10, textColor=colors.HexColor("#555555"))
 
     story = [Paragraph(_xml_escape(report["title"]), title_style)]
     if report.get("subtitle"):
         story.append(Paragraph(_xml_escape(report["subtitle"]), sub_style))
-    story += [Spacer(1, 6), table]
+    story.append(Spacer(1, 6))
+    for sec in sections:
+        ncols = len(sec["columns"])
+        font_size = 8 if ncols <= 12 else (6.5 if ncols <= 26 else 5.5)
+        if sec.get("heading"):
+            story.append(Paragraph(_xml_escape(_pdf_text(sec["heading"])), head_sec_style))
+        if sec["rows"]:
+            story.append(_pdf_table(sec["columns"], sec["rows"], avail, font_size))
+        else:
+            story.append(Paragraph("Bu bölüm için kayıt yok.", note_style))
     for n in report.get("notes", []):
         story += [Spacer(1, 4), Paragraph(_xml_escape(n), note_style)]
     doc.build(story)

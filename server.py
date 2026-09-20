@@ -5775,12 +5775,151 @@ def api_teacher_omr_class_report():
     return jsonify({"className": class_name, "totalStudents": total_students, "report": report})
 
 
+_KARNE_SUBJECT_NAMES = {
+    "turkce": "Türkçe", "matematik": "Matematik", "fen": "Fen Bilimleri",
+    "inkilap": "T.C. İnkılap Tarihi", "din": "Din Kültürü", "ingilizce": "İngilizce",
+}
+
+
+def _build_karne(db, org_id, student_id):
+    """Öğrenci Karnesi: TEK belgede Genel Denemeler (ortalama/trend özeti) ve
+    Kazanım Testleri (liste + kazanım gelişimi) - ikisi ayrı bölümlerdir,
+    net/ortalamalar ASLA tek sayıda birleştirilmez (bkz. Faz 1 ilkesi).
+    Çok bölümlü omr_reports rapor şekli (sections) döner."""
+    general = _build_student_report(db, student_id)
+    kazanim = omr_reports.build_student(db, org_id, student_id)
+    if not general or not kazanim:
+        return None
+    student = general["student"]
+
+    def subj(key):
+        return _KARNE_SUBJECT_NAMES.get(key, key.title()) if key else "-"
+
+    rank = general.get("classRank")
+    general_results = list(reversed(general.get("generalResults", [])))  # eski -> yeni
+    kazanim_rows = [r for r in kazanim["rows"] if r[1] != "ORTALAMA"]
+    kazanim_avg = round(sum(r[8] for r in kazanim_rows) / len(kazanim_rows)) if kazanim_rows else None
+
+    summary = [
+        ["Genel deneme sayısı", len(general_results)],
+        ["Genel deneme ortalama net", general.get("averageNet") if general.get("averageNet") is not None else "-"],
+        ["Genel deneme en iyi net", general.get("bestNet") if general.get("bestNet") is not None else "-"],
+        ["En güçlü ders", subj(general.get("strongestSubject"))],
+        ["Geliştirilmesi gereken ders", subj(general.get("weakestSubject"))],
+        ["Sınıf sırası (son genel deneme)", f"{rank['rank']} / {rank['classSize']}" if rank else "-"],
+        ["Kazanım testi sayısı", len(kazanim_rows)],
+        ["Kazanım testleri ortalama başarı %", kazanim_avg if kazanim_avg is not None else "-"],
+    ]
+    sections = [
+        {"heading": "Özet", "columns": ["Gösterge", "Değer"], "rows": summary},
+        {"heading": "📘 Genel Denemeler", "columns": ["Tarih", "Deneme", "Toplam Net"],
+         "rows": [[r["examDate"] or "", r["examName"], r["totalNet"]] for r in general_results]},
+        {"heading": "🎯 Kazanım Testleri",
+         "columns": ["Tarih", "Test", "Ders", "Kazanım", "D/Y/B", "Net", "Başarı %", "Sınıf Ort. %"],
+         "rows": [[r[0], r[1], r[2], r[3], f"{r[4]}/{r[5]}/{r[6]}" if r[1] != "ORTALAMA" else "", r[7], r[8], r[9]]
+                  for r in kazanim["rows"]]},
+    ]
+    trend_rows = []
+    for g in _build_mastery_trend(db, student_id):
+        pts = g["points"]
+        trend_rows.append([g["subjectName"], g["kazanimAdi"], len(pts), pts[0]["successRate"],
+                           pts[-1]["successRate"], pts[-1]["successRate"] - pts[0]["successRate"]])
+    if trend_rows:
+        sections.append({"heading": "📈 Kazanım Gelişimi",
+                         "columns": ["Ders", "Kazanım", "Test Sayısı", "İlk %", "Son %", "Değişim (puan)"],
+                         "rows": trend_rows})
+    return {
+        "title": "Öğrenci Karnesi",
+        "subtitle": f"{student['firstName']} {student['lastName']} · No {student['schoolNumber'] or '-'} · {student['className'] or '-'}",
+        "sections": sections,
+        "notes": ["Genel Deneme ve Kazanım Testi netleri farklı ölçeklerdedir; bu yüzden ayrı bölümlerde ve birleştirilmeden gösterilir."],
+    }
+
+
+def _omr_result_success(data_json):
+    """Bir onaylı OMR sonucunun (results.data_json) (net, başarı %)."""
+    subjects = json.loads(data_json).get("subjects", {})
+    correct = sum((v or {}).get("correct", 0) for v in subjects.values())
+    wrong = sum((v or {}).get("wrong", 0) for v in subjects.values())
+    blank = sum((v or {}).get("blank", 0) for v in subjects.values())
+    total = correct + wrong + blank
+    return _omr_net(correct, wrong), (round(correct / total * 100) if total else 0)
+
+
+@app.route("/api/teacher/omr/summary")
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_summary():
+    """Öğretmen Anasayfası'ndaki "🎯 Kazanım Testleri" kartı: onay bekleyen
+    tarama sayısı, son testler (onaylı/bekleyen sayı + ort. net) ve en zayıf
+    kazanımlar. Kapsam, liste ucuyla AYNI görünürlük kuralına (_omr_visibility_
+    filter) ve öğrenci erişimine (get_allowed_student_ids) tabidir."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    frag, fparams = _omr_visibility_filter()
+    allowed = get_allowed_student_ids(db)
+
+    pending = db.execute(
+        "SELECT COUNT(*) c FROM omr_scans sc JOIN omr_exam_definitions e ON e.id = sc.exam_definition_id "
+        "WHERE sc.organization_id = ? AND sc.status = 'needs_review'" + frag,
+        (org_id, *fparams),
+    ).fetchone()["c"]
+
+    exams = db.execute(
+        "SELECT e.id, e.title, e.created_at, e.exam_id, s.name AS subject_name "
+        "FROM omr_exam_definitions e LEFT JOIN subjects s ON s.id = e.subject_id "
+        "WHERE e.organization_id = ?" + frag + " ORDER BY e.created_at DESC LIMIT 5",
+        (org_id, *fparams),
+    ).fetchall()
+    recent = []
+    for e in exams:
+        counts = {r["status"]: r["c"] for r in db.execute(
+            "SELECT status, COUNT(*) c FROM omr_scans WHERE exam_definition_id = ? GROUP BY status", (e["id"],)
+        ).fetchall()}
+        nets = []
+        if e["exam_id"]:
+            for r in db.execute("SELECT student_id, data_json FROM results WHERE exam_id = ? AND organization_id = ?",
+                                (e["exam_id"], org_id)).fetchall():
+                if allowed is None or r["student_id"] in allowed:
+                    nets.append(_omr_result_success(r["data_json"])[0])
+        recent.append({
+            "id": e["id"], "title": e["title"], "subjectName": e["subject_name"], "createdAt": e["created_at"],
+            "approved": counts.get("approved", 0), "pending": counts.get("needs_review", 0),
+            "avgNet": round(sum(nets) / len(nets), 2) if nets else None,
+        })
+
+    groups = {}
+    for r in db.execute(
+        "SELECT r.student_id, r.data_json, e.kazanim_kodu, e.kazanim_adi, s.name AS subject_name "
+        "FROM results r JOIN omr_exam_definitions e ON e.exam_id = r.exam_id "
+        "LEFT JOIN subjects s ON s.id = e.subject_id "
+        "WHERE r.organization_id = ? AND r.source = 'omr_scan' AND e.kazanim_kodu IS NOT NULL" + frag,
+        (org_id, *fparams),
+    ).fetchall():
+        if allowed is not None and r["student_id"] not in allowed:
+            continue
+        g = groups.setdefault(r["kazanim_kodu"], {
+            "kazanim": r["kazanim_adi"] or r["kazanim_kodu"], "subject": r["subject_name"] or "-",
+            "succ": [], "students": set(),
+        })
+        g["succ"].append(_omr_result_success(r["data_json"])[1])
+        g["students"].add(r["student_id"])
+    weak = sorted(
+        ({"kazanim": g["kazanim"], "subject": g["subject"],
+          "avgSuccess": round(sum(g["succ"]) / len(g["succ"])), "students": len(g["students"])}
+         for g in groups.values()),
+        key=lambda x: x["avgSuccess"])[:3]
+
+    return jsonify({"pendingScans": pending, "recentExams": recent, "weakKazanim": weak})
+
+
 @app.route("/api/teacher/omr/reports/<kind>")
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_report(kind):
     """Aşama B: Optik Okuma raporları (basic|detailed|class_compare|question|
     answer_dist: test bazlı `examId`; kazanim|subject|class_tests: sınıf bazlı
-    `className`; student: `studentId`) - `format`=json
+    `className`; student|karne: `studentId`) - `format`=json
     (ekranda göstermek için, varsayılan) ya da pdf|xlsx|csv|txt (indirme).
     Bkz. omr_reports.py. Test bazlı raporlarda test, liste ucuyla AYNI
     görünürlük kuralına (_omr_exam_visible) tabidir ve öğretmen için satırlar
@@ -5810,13 +5949,16 @@ def api_teacher_omr_report(kind):
         builder = {"kazanim": omr_reports.build_kazanim, "subject": omr_reports.build_subject,
                    "class_tests": omr_reports.build_class_tests}[kind]
         report = builder(db, org_id, class_name)
-    elif kind == "student":
-        # Öğrenci bazlı rapor: studentId (erişim can_view_student ile - öğretmen
-        # sadece kendi sınıf(lar)ındaki öğrenciyi görür)
+    elif kind in ("student", "karne"):
+        # Öğrenci bazlı rapor / Karne: studentId (erişim can_view_student ile -
+        # öğretmen sadece kendi sınıf(lar)ındaki öğrenciyi görür)
         student_id = request.args.get("studentId", type=int)
         if not student_id or not can_view_student(db, student_id):
             return jsonify({"error": "Öğrenci bulunamadı."}), 404
-        report = omr_reports.build_student(db, org_id, student_id)
+        if kind == "karne":
+            report = _build_karne(db, org_id, student_id)
+        else:
+            report = omr_reports.build_student(db, org_id, student_id)
         if report is None:
             return jsonify({"error": "Öğrenci bulunamadı."}), 404
         resource_id = student_id
@@ -6834,7 +6976,10 @@ def api_teacher_overview():
     # herhangi bir ogretmen TUM okullarin deneme listesini goruyordu (isim/
     # tarih). Ikinci gercek okul eklenince bu bir sizinti olurdu.
     exams = db.execute(
-        "SELECT id, name, date, exam_type FROM exams WHERE organization_id = ? ORDER BY date DESC",
+        # Genel Denemeler listesi: Kazanım Testleri (Optik Okuma) burada
+        # KARIŞMAZ - onlar Optik Okuma sekmesinde/Kazanım kartında görünür.
+        "SELECT id, name, date, exam_type FROM exams WHERE organization_id = ? "
+        "AND (exam_type IS NULL OR exam_type != 'optik_kamera') ORDER BY date DESC",
         (org_id,),
     ).fetchall()
 
@@ -7074,6 +7219,9 @@ def api_teacher_student_detail(student_id):
     report = _build_student_report(db, student_id, exam_id=exam_id)
     if not report:
         return jsonify({"error": "Öğrenci kaydı bulunamadı."}), 404
+    # Öğrenci detayındaki "🎯 Kazanım Denemeleri" sekmesi (veli/öğrenci
+    # portalıyla aynı veri) - bkz. Genel/Kazanım birleştirme planı.
+    report["masteryTrend"] = _build_mastery_trend(db, student_id)
     return jsonify(report)
 
 
