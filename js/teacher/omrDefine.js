@@ -296,6 +296,8 @@ function _omrRenderExamList(exams) {
       </div>
       <div id="omr-class-report-body" style="margin-top:10px"></div>
       <div id="omr-class-kazanim-body" style="margin-top:14px"></div>
+      <div id="omr-class-subject-body" style="margin-top:14px"></div>
+      <div id="omr-class-student-body" style="margin-top:14px"></div>
     </div>
   ` : '';
 
@@ -333,9 +335,15 @@ function _omrRenderExamList(exams) {
 async function _omrLoadClassReport(className) {
   const body = document.getElementById('omr-class-report-body');
   if (!body) return;
-  const kazanimBody = document.getElementById('omr-class-kazanim-body');
-  if (!className) { body.innerHTML = ''; if (kazanimBody) kazanimBody.innerHTML = ''; return; }
-  _omrLoadKazanimReport(className);
+  const blockIds = ['omr-class-kazanim-body', 'omr-class-subject-body', 'omr-class-student-body'];
+  if (!className) {
+    body.innerHTML = '';
+    blockIds.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+    return;
+  }
+  _omrLoadReportBlock('omr-class-kazanim-body', '🎯 Kazanım Özeti', 'kazanim', { className });
+  _omrLoadReportBlock('omr-class-subject-body', '📚 Ders Bazlı Rapor', 'subject', { className });
+  _omrRenderStudentPicker(className);
   body.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
   const data = await fetch(`/api/teacher/omr/class-report?className=${encodeURIComponent(className)}`).then(r => r.json());
   if (data.error) { body.innerHTML = `<p class="text-muted">❌ ${_omrEsc(data.error)}</p>`; return; }
@@ -344,6 +352,10 @@ async function _omrLoadClassReport(className) {
     return;
   }
   body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+      <strong>🧑‍🏫 Sınıfa Uygulanan Testler</strong>
+      <span>${_omrDownloadLinks('class_tests', { className })}</span>
+    </div>
     <div class="table-wrapper"><table class="simple-table">
       <tr><th>Ders</th><th>Öğretmen</th><th>Test</th><th>Katılım</th><th>Ortalama Net</th></tr>
       ${data.report.map(row => `
@@ -368,6 +380,7 @@ const OMR_REPORT_KINDS = [
   ['detailed', 'Detaylı (soru soru)'],
   ['class_compare', 'Sınıf Karşılaştırma'],
   ['question', 'Soru Analizi (rapor)'],
+  ['answer_dist', 'Cevap Dağılımı (A/B/C/D)'],
 ];
 
 function _omrReportUrl(kind, params, fmt) {
@@ -427,21 +440,56 @@ async function _omrRefreshReportPanel(examDefId) {
   }
 }
 
-async function _omrLoadKazanimReport(className) {
-  const host = document.getElementById('omr-class-kazanim-body');
+// Sınıf kartındaki rapor blokları (kazanım özeti, ders bazlı, öğrenci bazlı)
+// için ortak yükleyici: başlık + indirme bağlantıları + ekranda tablo.
+async function _omrLoadReportBlock(hostId, heading, kind, params) {
+  const host = document.getElementById(hostId);
   if (!host) return;
-  host.innerHTML = '<p class="text-muted">Kazanım özeti yükleniyor...</p>';
-  const params = { className };
+  host.innerHTML = `<p class="text-muted">${_omrEsc(heading)} yükleniyor...</p>`;
   try {
-    const report = await fetch(_omrReportUrl('kazanim', params, 'json')).then(r => r.json());
+    const report = await fetch(_omrReportUrl(kind, params, 'json')).then(r => r.json());
     host.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
-        <strong>🎯 Kazanım Özeti</strong>
-        <span>${_omrDownloadLinks('kazanim', params)}</span>
+        <strong>${_omrEsc(heading)}</strong>
+        <span>${_omrDownloadLinks(kind, params)}</span>
       </div>
       ${report.error ? `<p class="text-muted">❌ ${_omrEsc(report.error)}</p>` : _omrRenderReportTable(report)}`;
   } catch (err) {
-    host.innerHTML = '<p class="text-muted">❌ Kazanım özeti yüklenemedi.</p>';
+    host.innerHTML = `<p class="text-muted">❌ ${_omrEsc(heading)} yüklenemedi.</p>`;
+  }
+}
+
+// Öğrenci bazlı rapor: seçilen sınıfın öğrencilerinden biri seçilince yüklenir.
+function _omrRenderStudentPicker(className) {
+  const host = document.getElementById('omr-class-student-body');
+  if (!host) return;
+  const students = ((_omrOverview && _omrOverview.students) || [])
+    .filter(st => st.class_name === className)
+    .sort((a, b) => (a.first_name + ' ' + a.last_name).localeCompare(b.first_name + ' ' + b.last_name, 'tr'));
+  host.innerHTML = `
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+      <strong>👤 Öğrenci Raporu</strong>
+      <select id="omr-class-student-select" class="form-control" style="max-width:280px" onchange="_omrLoadStudentReport(this.value)">
+        <option value="">Öğrenci seçin...</option>
+        ${students.map(st => `<option value="${st.id}">${_omrEsc(st.first_name)} ${_omrEsc(st.last_name)} (${_omrEsc(st.school_number || '-')})</option>`).join('')}
+      </select>
+    </div>
+    <div id="omr-class-student-report" style="margin-top:8px"></div>`;
+}
+
+async function _omrLoadStudentReport(studentId) {
+  const host = document.getElementById('omr-class-student-report');
+  if (!host) return;
+  if (!studentId) { host.innerHTML = ''; return; }
+  const params = { studentId };
+  host.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  try {
+    const report = await fetch(_omrReportUrl('student', params, 'json')).then(r => r.json());
+    host.innerHTML = `
+      <div style="text-align:right;margin-bottom:6px">${_omrDownloadLinks('student', params)}</div>
+      ${report.error ? `<p class="text-muted">❌ ${_omrEsc(report.error)}</p>` : _omrRenderReportTable(report)}`;
+  } catch (err) {
+    host.innerHTML = '<p class="text-muted">❌ Öğrenci raporu yüklenemedi.</p>';
   }
 }
 

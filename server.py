@@ -5778,8 +5778,9 @@ def api_teacher_omr_class_report():
 @app.route("/api/teacher/omr/reports/<kind>")
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_report(kind):
-    """Aşama B: Optik Okuma raporları (basic|detailed|class_compare|question:
-    test bazlı `examId`; kazanim: sınıf bazlı `className`) - `format`=json
+    """Aşama B: Optik Okuma raporları (basic|detailed|class_compare|question|
+    answer_dist: test bazlı `examId`; kazanim|subject|class_tests: sınıf bazlı
+    `className`; student: `studentId`) - `format`=json
     (ekranda göstermek için, varsayılan) ya da pdf|xlsx|csv|txt (indirme).
     Bkz. omr_reports.py. Test bazlı raporlarda test, liste ucuyla AYNI
     görünürlük kuralına (_omr_exam_visible) tabidir ve öğretmen için satırlar
@@ -5799,13 +5800,26 @@ def api_teacher_omr_report(kind):
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
 
     resource_id = None
-    if kind == "kazanim":
+    if kind in ("kazanim", "subject", "class_tests"):
+        # Sınıf bazlı raporlar: className
         class_name = (request.args.get("className") or "").strip()
         if not class_name:
             return jsonify({"error": "className gerekli."}), 400
         if session.get("role") == "teacher" and not _teacher_can_use_class(class_name):
             return jsonify({"error": "Bu sınıfa erişiminiz yok."}), 403
-        report = omr_reports.build_kazanim(db, org_id, class_name)
+        builder = {"kazanim": omr_reports.build_kazanim, "subject": omr_reports.build_subject,
+                   "class_tests": omr_reports.build_class_tests}[kind]
+        report = builder(db, org_id, class_name)
+    elif kind == "student":
+        # Öğrenci bazlı rapor: studentId (erişim can_view_student ile - öğretmen
+        # sadece kendi sınıf(lar)ındaki öğrenciyi görür)
+        student_id = request.args.get("studentId", type=int)
+        if not student_id or not can_view_student(db, student_id):
+            return jsonify({"error": "Öğrenci bulunamadı."}), 404
+        report = omr_reports.build_student(db, org_id, student_id)
+        if report is None:
+            return jsonify({"error": "Öğrenci bulunamadı."}), 404
+        resource_id = student_id
     else:
         exam_id = request.args.get("examId", type=int)
         if not exam_id or not _omr_exam_visible(db, org_id, exam_id):
@@ -5814,6 +5828,7 @@ def api_teacher_omr_report(kind):
         builder = {
             "basic": omr_reports.build_basic, "detailed": omr_reports.build_detailed,
             "class_compare": omr_reports.build_class_compare, "question": omr_reports.build_question,
+            "answer_dist": omr_reports.build_answer_dist,
         }[kind]
         report = builder(db, org_id, exam_id, get_allowed_student_ids(db))
 

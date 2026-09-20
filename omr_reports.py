@@ -34,7 +34,8 @@ _FONTS_DIR = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
 pdfmetrics.registerFont(TTFont("EduPusulaSans", os.path.join(_FONTS_DIR, "Vera.ttf")))
 pdfmetrics.registerFont(TTFont("EduPusulaSans-Bold", os.path.join(_FONTS_DIR, "VeraBd.ttf")))
 
-REPORT_KINDS = ("basic", "detailed", "class_compare", "question", "kazanim")
+REPORT_KINDS = ("basic", "detailed", "class_compare", "question", "answer_dist",
+                "kazanim", "subject", "student", "class_tests")
 FORMATS = ("json", "pdf", "xlsx", "csv", "txt")
 _EXT = {"pdf": "pdf", "xlsx": "xlsx", "csv": "csv", "txt": "txt"}
 _MIME = {
@@ -276,6 +277,156 @@ def build_kazanim(db, org_id, class_name):
         "title": "Kazanım Özeti Raporu", "subtitle": f"Sınıf: {class_name}",
         "columns": ["Ders", "Kazanım", "Test Sayısı", "Öğrenci", "Ort. Başarı %", "%50 Altı Öğrenci"],
         "rows": out, "notes": [],
+    }
+
+
+def build_answer_dist(db, org_id, exam_def_id, allowed_ids):
+    """Cevap dagilimi: her soruda A/B/C/D siklarini (ve bos/cift-belirsiz)
+    kac ogrencinin isaretledigi - celdirici analizi icin."""
+    exam = _load_exam_def(db, org_id, exam_def_id)
+    rows, notes = _load_student_results(db, org_id, exam_def_id, allowed_ids)
+    key = json.loads(exam["answer_key_json"] or "{}")
+    dist = {}
+    for r in rows:
+        for q in r["questions"]:
+            d = dist.setdefault(q["question"], Counter())
+            outcome = q.get("outcome")
+            if outcome == "blank":
+                d["Boş"] += 1
+            elif outcome in ("multi", "ambiguous"):
+                d["Çift/Belirsiz"] += 1
+            elif q.get("answer"):
+                d[q["answer"]] += 1
+            else:
+                d["Boş"] += 1
+    out = []
+    for no in sorted(dist):
+        d = dist[no]
+        total = sum(d.values())
+        k = key.get(str(no), "")
+        out.append([no, k, d["A"], d["B"], d["C"], d["D"], d["Boş"], d["Çift/Belirsiz"],
+                    round(d[k] / total * 100) if k and total else 0])
+    return {
+        "title": "Cevap Dağılımı Raporu", "subtitle": _base(exam, f"{len(rows)} öğrenci"),
+        "columns": ["Soru", "Anahtar", "A", "B", "C", "D", "Boş", "Çift/Belirsiz", "Doğru %"],
+        "rows": out, "notes": notes + ["Her şık sütunu, o şıkkı işaretleyen öğrenci sayısıdır."],
+    }
+
+
+def _result_stats(data_json):
+    subjects = json.loads(data_json).get("subjects", {})
+    correct = sum((v or {}).get("correct", 0) for v in subjects.values())
+    wrong = sum((v or {}).get("wrong", 0) for v in subjects.values())
+    blank = sum((v or {}).get("blank", 0) for v in subjects.values())
+    total = correct + wrong + blank
+    return correct, wrong, blank, omr_net(correct, wrong), (round(correct / total * 100) if total else 0)
+
+
+def build_subject(db, org_id, class_name):
+    """Ders bazli: sinifin onayli tum Kazanim Denemeleri, ders ve tarihe gore -
+    test basina okuyan ogrenci sayisi, ortalama net ve basari."""
+    rows = db.execute(
+        "SELECT r.student_id, r.exam_id, r.data_json, e.name AS exam_name, e.date, s.name AS subject_name "
+        "FROM results r JOIN students st ON st.id = r.student_id "
+        "JOIN exams e ON e.id = r.exam_id "
+        "JOIN omr_exam_definitions oed ON oed.exam_id = e.id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id "
+        "WHERE st.class_name = ? AND st.organization_id = ? AND r.source = 'omr_scan'",
+        (class_name, org_id),
+    ).fetchall()
+    tests = {}
+    for r in rows:
+        _c, _w, _b, net, success = _result_stats(r["data_json"])
+        t = tests.setdefault(r["exam_id"], {
+            "subject": r["subject_name"] or "-", "name": r["exam_name"], "date": r["date"] or "",
+            "students": set(), "nets": [], "succ": [],
+        })
+        t["students"].add(r["student_id"])
+        t["nets"].append(net)
+        t["succ"].append(success)
+    out = []
+    for t in sorted(tests.values(), key=lambda x: (x["subject"], x["date"], x["name"])):
+        out.append([t["subject"], t["name"], t["date"], len(t["students"]),
+                    round(sum(t["nets"]) / len(t["nets"]), 2), round(sum(t["succ"]) / len(t["succ"]))])
+    return {
+        "title": "Ders Bazlı Rapor", "subtitle": f"Sınıf: {class_name}",
+        "columns": ["Ders", "Test", "Tarih", "Öğrenci", "Ort. Net", "Ort. Başarı %"],
+        "rows": out, "notes": [],
+    }
+
+
+def build_student(db, org_id, student_id):
+    """Ogrenci bazli: ogrencinin onayli tum Kazanim Denemeleri (cok testli),
+    tarih sirasiyla, sinif ortalamasiyla birlikte. Erisim kontrolu cagiran tarafta."""
+    st = db.execute(
+        "SELECT first_name, last_name, school_number, class_name FROM students WHERE id = ? AND organization_id = ?",
+        (student_id, org_id),
+    ).fetchone()
+    if not st:
+        return None
+    rows = db.execute(
+        "SELECT r.exam_id, r.data_json, e.name AS exam_name, e.date, oed.kazanim_adi, s.name AS subject_name "
+        "FROM results r JOIN exams e ON e.id = r.exam_id "
+        "JOIN omr_exam_definitions oed ON oed.exam_id = e.id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id "
+        "WHERE r.student_id = ? AND r.source = 'omr_scan' ORDER BY e.date, e.id",
+        (student_id,),
+    ).fetchall()
+    out, nets, succs = [], [], []
+    for r in rows:
+        c, w, b, net, success = _result_stats(r["data_json"])
+        mates = db.execute(
+            "SELECT r2.data_json FROM results r2 JOIN students s2 ON s2.id = r2.student_id "
+            "WHERE r2.exam_id = ? AND s2.class_name = ? AND s2.organization_id = ?",
+            (r["exam_id"], st["class_name"], org_id),
+        ).fetchall()
+        mate_succ = [_result_stats(m["data_json"])[4] for m in mates]
+        out.append([r["date"] or "", r["exam_name"], r["subject_name"] or "-", r["kazanim_adi"] or "-",
+                    c, w, b, net, success, round(sum(mate_succ) / len(mate_succ)) if mate_succ else ""])
+        nets.append(net)
+        succs.append(success)
+    if out:
+        out.append(["", "ORTALAMA", "", "", "", "", "", round(sum(nets) / len(nets), 2),
+                    round(sum(succs) / len(succs)), ""])
+    name = f"{st['first_name'] or ''} {st['last_name'] or ''}".strip()
+    return {
+        "title": "Öğrenci Raporu",
+        "subtitle": f"{name} · No {st['school_number'] or '-'} · {st['class_name'] or '-'}",
+        "columns": ["Tarih", "Test", "Ders", "Kazanım", "Doğru", "Yanlış", "Boş", "Net", "Başarı %", "Sınıf Ort. Başarı %"],
+        "rows": out, "notes": [],
+    }
+
+
+def build_class_tests(db, org_id, class_name):
+    """Sinifa RESMEN uygulanmis (omr_exam_applications) testler: Ders |
+    Ogretmen | Test | Katilim | Ortalama (ekrandaki 'Sinif Kazanim Raporu'
+    tablosunun disa aktarilabilir hali)."""
+    total_students = db.execute(
+        "SELECT COUNT(*) c FROM students WHERE organization_id = ? AND class_name = ?", (org_id, class_name),
+    ).fetchone()["c"]
+    apps = db.execute(
+        "SELECT oed.title, oed.exam_id, s.name AS subject_name, u.display_name AS teacher_name "
+        "FROM omr_exam_applications oea "
+        "JOIN omr_exam_definitions oed ON oed.id = oea.exam_definition_id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id LEFT JOIN users u ON u.id = oed.created_by "
+        "WHERE oea.class_name = ? AND oea.organization_id = ? ORDER BY oed.created_at DESC",
+        (class_name, org_id),
+    ).fetchall()
+    out = []
+    for a in apps:
+        if not a["exam_id"]:
+            continue
+        res = db.execute(
+            "SELECT r.data_json FROM results r JOIN students st ON st.id = r.student_id "
+            "WHERE r.exam_id = ? AND st.class_name = ? AND st.organization_id = ?",
+            (a["exam_id"], class_name, org_id),
+        ).fetchall()
+        nets = [_result_stats(x["data_json"])[3] for x in res]
+        out.append([a["subject_name"] or "-", a["teacher_name"] or "-", a["title"],
+                    f"{len(nets)}/{total_students}", round(sum(nets) / len(nets), 2) if nets else ""])
+    return {
+        "title": "Sınıf Test Raporu", "subtitle": f"Sınıf: {class_name}",
+        "columns": ["Ders", "Öğretmen", "Test", "Katılım", "Ort. Net"], "rows": out, "notes": [],
     }
 
 
