@@ -72,7 +72,7 @@ const ImportCore = {
           İki akışın sonuçları ayrı tutulur, ortalamalar birbirine karışmaz.
         </p>
         ${canOpen
-          ? '<a class="btn btn-primary" href="/ogretmen.html?page=omr" target="_blank" rel="noopener">📷 Optik Okuma\'yı Aç</a>'
+          ? '<a class="btn btn-primary" href="/ogretmen.html?page=omr">📷 Optik Okuma\'yı Aç</a>'
           : '<p class="text-muted" style="font-size:13px">⚠️ Optik Okuma, giriş yaptığınız hesabın KENDİ okuluna bağlıdır; okulsuz/Aktif Okul modunda buradan açılamaz.</p>'}
       </div>`;
   },
