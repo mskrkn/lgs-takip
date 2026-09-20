@@ -144,6 +144,13 @@
         return;
       }
 
+      // Yönetim panelinden (Kazanım Testleri bağlantısıyla) gelen admin/okul
+      // yöneticisi aynı sekmede geri dönebilsin.
+      if (me.role === 'admin' || me.role === 'super_admin' || me.isDelegateAdmin) {
+        const back = document.getElementById('nav-back-admin');
+        if (back) back.style.display = '';
+      }
+
       document.getElementById('header-sub').innerHTML = `<span class="sync-dot"></span><span>${me.displayName || ''}</span>`;
       document.getElementById('settings-name').textContent = me.displayName || '-';
       document.getElementById('settings-class').textContent = me.className || '-';
