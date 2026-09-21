@@ -288,6 +288,7 @@
     }
 
     function showPage(page) {
+      if (window.NavHistory) NavHistory.record(page);
       document.querySelectorAll('.nav-item[data-page]').forEach(item => item.classList.toggle('active', item.dataset.page === page));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => item.classList.toggle('active', item.dataset.page === page));
       document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
@@ -309,6 +310,7 @@
     }
 
     function setupNav() {
+      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => item.addEventListener('click', () => showPage(item.dataset.page)));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => item.addEventListener('click', () => showPage(item.dataset.page)));
       const toggle = document.getElementById('menu-toggle');
