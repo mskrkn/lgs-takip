@@ -2049,6 +2049,11 @@ def _platform_admin_next_id(db, table, org_id):
     """table icin, org_id'ye ayrilmis rezerve id alt-araliginda bir sonraki
     (kullanilmamis) global-benzersiz id'yi dondurur."""
     org_id = int(org_id)
+    # MAX(id)+1 okuma-sonra-yazma: iki es zamanli istek ayni id'yi alip
+    # birinin "UNIQUE constraint failed" ile 500 vermesini engellemek icin
+    # yazma kilidini simdi al (commit'e kadar tutulur, busy_timeout bekler).
+    if not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
     range_start = _org_scoped_id(org_id, PLATFORM_ADMIN_ID_RESERVE_START)
     range_end = _org_scoped_id(org_id, ORG_ID_BLOCK_SIZE - 1)
     row = db.execute(
@@ -2365,7 +2370,7 @@ def log_audit(db, action, resource_type=None, resource_id=None, user_id=None):
             "INSERT INTO audit_logs (organization_id, user_id, action, resource_type, resource_id, ip_address, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
             (org_id, acting_user_id, action, resource_type, resource_id,
-             request.remote_addr, datetime.now().isoformat()),
+             _client_ip(), datetime.now().isoformat()),
         )
         db.commit()
     except Exception:
@@ -2678,23 +2683,55 @@ def _register_rate_limited(ip):
 # birden fazla kez normal giris yaptiginda yanlislikla kilitlenebilirdi.
 _LOGIN_FAILED_ATTEMPTS = {}
 _LOGIN_WINDOW_SECONDS = 300
-_LOGIN_MAX_ATTEMPTS = 8
+_LOGIN_MAX_ATTEMPTS = 8          # ayni IP + ayni kullanici adi
+_LOGIN_MAX_ATTEMPTS_PER_IP = 60  # ayni IP'den (okul aginin NAT'i olabilir) tum kullanicilar
 
 
-def _login_rate_limited(ip):
+def _client_ip():
+    """Gercek istemci IP'si. Uretimde uygulama Cloudflare Tunnel (cloudflared)
+    arkasinda calisiyor: request.remote_addr HER ZAMAN 127.0.0.1 olur, yani
+    onceki hiz siniri TUM kullanicilari tek bir "IP" sayiyordu - okuldaki
+    herhangi biri 8 yanlis sifre girince 1300 ogrenci + 60 ogretmen 5 dakika
+    kilitleniyordu. Baslik yalnizca istek yerel (loopback) proxy'den geldiyse
+    guvenilir sayilir; disaridan dogrudan gelen istek baslik uyduramaz."""
+    remote = request.remote_addr
+    if remote in ("127.0.0.1", "::1"):
+        fwd = request.headers.get("CF-Connecting-IP") or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        if fwd:
+            return fwd
+    return remote
+
+
+def _login_keys(ip, username):
+    return (f"ip:{ip}", f"u:{ip}|{(username or '').strip().lower()}")
+
+
+def _login_count(key, now):
+    attempts = [t for t in _LOGIN_FAILED_ATTEMPTS.get(key, []) if now - t < _LOGIN_WINDOW_SECONDS]
+    if attempts:
+        _LOGIN_FAILED_ATTEMPTS[key] = attempts
+    else:
+        _LOGIN_FAILED_ATTEMPTS.pop(key, None)
+    return len(attempts)
+
+
+def _login_rate_limited(ip, username=""):
     now = datetime.now().timestamp()
-    attempts = [t for t in _LOGIN_FAILED_ATTEMPTS.get(ip, []) if now - t < _LOGIN_WINDOW_SECONDS]
-    _LOGIN_FAILED_ATTEMPTS[ip] = attempts
-    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+    k_ip, k_user = _login_keys(ip, username)
+    return (_login_count(k_ip, now) >= _LOGIN_MAX_ATTEMPTS_PER_IP
+            or _login_count(k_user, now) >= _LOGIN_MAX_ATTEMPTS)
 
 
-def _login_record_failure(ip):
+def _login_record_failure(ip, username=""):
     now = datetime.now().timestamp()
-    _LOGIN_FAILED_ATTEMPTS.setdefault(ip, []).append(now)
+    for k in _login_keys(ip, username):
+        _LOGIN_FAILED_ATTEMPTS.setdefault(k, []).append(now)
 
 
-def _login_clear_failures(ip):
-    _LOGIN_FAILED_ATTEMPTS.pop(ip, None)
+def _login_clear_failures(ip, username=""):
+    # Yalnizca o kullanicinin sayaci sifirlanir; IP sayaci (kaba kuvvet
+    # korumasi) basarili bir giris ile silinemez.
+    _LOGIN_FAILED_ATTEMPTS.pop(_login_keys(ip, username)[1], None)
 
 
 def _register_record_attempt(ip):
@@ -2956,22 +2993,22 @@ def static_files(filename):
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    ip = request.remote_addr
-    if _login_rate_limited(ip):
-        return jsonify({"error": "Çok fazla başarısız deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyin."}), 429
+    ip = _client_ip()
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
+    if _login_rate_limited(ip, username):
+        return jsonify({"error": "Çok fazla başarısız deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyin."}), 429
     password = data.get("password") or ""
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if not user:
-        _login_record_failure(ip)
+        _login_record_failure(ip, username)
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
     ok, needs_rehash = verify_password(user["password_hash"], password)
     if not ok:
-        _login_record_failure(ip)
+        _login_record_failure(ip, username)
         return jsonify({"error": "Kullanıcı adı veya şifre hatalı."}), 401
-    _login_clear_failures(ip)
+    _login_clear_failures(ip, username)
     if not user["active"]:
         return jsonify({"error": "Bu hesap pasifleştirilmiş. Yöneticinizle iletişime geçin."}), 403
     # Okulun kendisi pasiflestirilmisse (bkz. api_superadmin_toggle_organization_status)
@@ -4312,14 +4349,14 @@ def api_admin_regenerate_teacher_invite():
 
 @app.route("/api/register/teacher/<code>")
 def api_register_teacher_lookup(code):
-    if _register_rate_limited(request.remote_addr):
+    if _register_rate_limited(_client_ip()):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     db = get_db()
     org = db.execute(
         "SELECT id, name FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
-        _register_record_attempt(request.remote_addr)
+        _register_record_attempt(_client_ip())
         return jsonify({"error": "Geçersiz veya süresi dolmuş davet kodu."}), 404
     class_names = [r["class_name"] for r in db.execute(
         "SELECT DISTINCT class_name FROM students WHERE organization_id = ? "
@@ -4331,7 +4368,7 @@ def api_register_teacher_lookup(code):
 
 @app.route("/api/register/teacher", methods=["POST"])
 def api_register_teacher():
-    if _register_rate_limited(request.remote_addr):
+    if _register_rate_limited(_client_ip()):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     data = request.get_json(silent=True) or {}
     code = (data.get("code") or "").strip()
@@ -4355,7 +4392,7 @@ def api_register_teacher():
         "SELECT id FROM organizations WHERE teacher_invite_code = ? AND status IN ('active','trial')", (code,)
     ).fetchone()
     if not org:
-        _register_record_attempt(request.remote_addr)
+        _register_record_attempt(_client_ip())
         return jsonify({"error": "Geçersiz veya süresi dolmuş davet kodu."}), 404
     if not username or not password or not class_name:
         return jsonify({"error": "Kullanıcı adı, şifre ve sınıf gerekli."}), 400
@@ -4452,7 +4489,7 @@ def api_admin_revoke_student_invite(student_id):
 
 @app.route("/api/register/student/<token>")
 def api_register_student_lookup(token):
-    if _register_rate_limited(request.remote_addr):
+    if _register_rate_limited(_client_ip()):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     db = get_db()
     row = db.execute(
@@ -4464,7 +4501,7 @@ def api_register_student_lookup(token):
         (token,),
     ).fetchone()
     if not row:
-        _register_record_attempt(request.remote_addr)
+        _register_record_attempt(_client_ip())
         return jsonify({"error": "Geçersiz veya iptal edilmiş davet linki."}), 404
     last_initial = (row["last_name"] or "").strip()[:1]
     masked_name = f"{row['first_name']} {last_initial}." if last_initial else row["first_name"]
@@ -4480,7 +4517,7 @@ def api_register_student_lookup(token):
 
 @app.route("/api/register/student", methods=["POST"])
 def api_register_student():
-    if _register_rate_limited(request.remote_addr):
+    if _register_rate_limited(_client_ip()):
         return jsonify({"error": "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin."}), 429
     data = request.get_json(silent=True) or {}
     token = (data.get("token") or "").strip()
@@ -4498,7 +4535,7 @@ def api_register_student():
         (token,),
     ).fetchone()
     if not row:
-        _register_record_attempt(request.remote_addr)
+        _register_record_attempt(_client_ip())
         return jsonify({"error": "Geçersiz veya iptal edilmiş davet linki."}), 404
     if not username or not password:
         return jsonify({"error": "Kullanıcı adı ve şifre gerekli."}), 400
