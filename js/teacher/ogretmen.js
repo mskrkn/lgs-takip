@@ -17,6 +17,7 @@
     let currentStudentSort = 'rank-asc';
     let currentStudentSearch = '';
     let currentStudentView = 'table';
+    let currentStudentClass = null; // null = henüz seçilmedi, '__all__' = tüm sınıflar
     let currentStudentDetailData = null;
 
     function subjectName(key) {
@@ -51,6 +52,7 @@
 
     // ---- Sayfa Geçişleri ----
     function showPage(page) {
+      if (window.NavHistory) NavHistory.record(page);
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.classList.toggle('active', item.dataset.page === page);
       });
@@ -84,6 +86,7 @@
     }
 
     function setupNav() {
+      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.addEventListener('click', () => {
           showPage(item.dataset.page);
@@ -927,24 +930,65 @@
       renderStudentRosterEnhanced();
     }
 
+    function setStudentClass(cls) {
+      currentStudentClass = cls;
+      renderStudentRosterEnhanced();
+    }
+
+    // Sınıf seçici: öğretmen birden fazla sınıfa giriyorsa sınıf sınıf liste gösterir.
+    function renderStudentClassPicker() {
+      const host = document.getElementById('student-class-picker');
+      if (!host) return [];
+      const classes = [...new Set(allStudents.map(s => s.class_name).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+      if (classes.length <= 1) {
+        host.style.display = 'none';
+        currentStudentClass = '__all__';
+        return classes;
+      }
+      if (currentStudentClass !== '__all__' && !classes.includes(currentStudentClass)) {
+        currentStudentClass = classes[0];
+      }
+      const chip = (val, label, count) =>
+        `<button type="button" class="filter-pill ${currentStudentClass === val ? 'active' : ''}" data-cls="${escapeHtml(val)}">${escapeHtml(label)} (${count})</button>`;
+      host.innerHTML = '<span class="text-muted" style="font-size:13px;font-weight:600;margin-right:6px">🏫 Sınıf:</span>' +
+        classes.map(c => chip(c, c, allStudents.filter(s => s.class_name === c).length)).join('') +
+        chip('__all__', 'Tüm Sınıflar', allStudents.length);
+      host.style.display = 'flex';
+      host.querySelectorAll('button[data-cls]').forEach(b => {
+        b.addEventListener('click', () => setStudentClass(b.getAttribute('data-cls')));
+      });
+      return classes;
+    }
+
     function renderStudentRosterEnhanced() {
       const container = document.getElementById('student-roster-container');
       if (!container) return;
 
-      if (!allStudents.length) {
+      renderStudentClassPicker();
+      const rosterAll = allStudents;
+      const scopedStudents = (currentStudentClass && currentStudentClass !== '__all__')
+        ? rosterAll.filter(s => s.class_name === currentStudentClass)
+        : rosterAll;
+      const titleEl = document.getElementById('my-class-name-2');
+      if (titleEl && currentStudentClass) {
+        titleEl.textContent = currentStudentClass === '__all__' ? (overviewData?.className || 'Tüm Sınıflar') : currentStudentClass;
+      }
+
+      if (!scopedStudents.length) {
         container.innerHTML = '<p class="text-muted" style="padding:24px;text-align:center">Sınıfınıza kayıtlı öğrenci bulunamadı.</p>';
         return;
       }
 
       // 1) KPI Kartlarını Güncelle
-      const totalCount = allStudents.length;
-      const validNets = allStudents.filter(s => s.latestNet != null).map(s => s.latestNet);
+      const totalCount = scopedStudents.length;
+      const validNets = scopedStudents.filter(s => s.latestNet != null).map(s => s.latestNet);
       const classAvg = validNets.length ? (validNets.reduce((a, b) => a + b, 0) / validNets.length).toFixed(1) : '-';
 
-      const topStudent = [...allStudents].sort((a, b) => ((b.latestNet || 0) - (a.latestNet || 0)))[0];
-      const risingCount = allStudents.filter(s => s.status === 'rising').length;
-      const attentionCount = allStudents.filter(s => s.status === 'attention').length;
-      const fluctuatingCount = allStudents.filter(s => s.status === 'fluctuating').length;
+      const topStudent = [...scopedStudents].sort((a, b) => ((b.latestNet || 0) - (a.latestNet || 0)))[0];
+      const risingCount = scopedStudents.filter(s => s.status === 'rising').length;
+      const attentionCount = scopedStudents.filter(s => s.status === 'attention').length;
+      const fluctuatingCount = scopedStudents.filter(s => s.status === 'fluctuating').length;
 
       document.getElementById('kpi-total-students').textContent = totalCount;
       document.getElementById('kpi-class-avg-net').textContent = classAvg !== '-' ? `${classAvg} Net` : '-';
@@ -960,7 +1004,7 @@
       document.getElementById('count-filter-fluctuating').textContent = fluctuatingCount;
 
       // 2) Filtrele
-      let filtered = allStudents.filter(s => {
+      let filtered = scopedStudents.filter(s => {
         if (currentStudentFilter === 'rising' && s.status !== 'rising') return false;
         if (currentStudentFilter === 'attention' && s.status !== 'attention') return false;
         if (currentStudentFilter === 'fluctuating' && s.status !== 'fluctuating') return false;

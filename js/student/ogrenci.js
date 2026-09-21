@@ -1052,6 +1052,7 @@
     }
 
     function showPage(page) {
+      if (window.NavHistory) NavHistory.record(page);
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
       document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
@@ -1075,6 +1076,7 @@
     }
 
     function setupNav() {
+      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.addEventListener('click', () => {
         showPage(i.dataset.page);
         if (i.dataset.page === 'assignments') renderAssignmentsList();
