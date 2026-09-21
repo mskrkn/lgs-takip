@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Giriş Yap - LGS Deneme Takip Sistemi</title>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
@@ -41,6 +41,15 @@
     }
     .hint { text-align: center; margin-top: 18px; font-size: 12px; color: #64748b; }
   </style>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#070913">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EduPusula">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/platform.css">
+  <script src="js/pwa.js" defer></script>
 </head>
 <body>
   <form class="login-card" id="login-form">
@@ -59,6 +68,7 @@
     <button type="submit" id="login-btn">Giriş Yap</button>
     <div class="error-box" id="error-box"></div>
     <p class="hint">Hesap bilgilerinizi okul yöneticinizden alabilirsiniz.</p>
+    <p class="hint"><a href="#" onclick="EduInstallHelp && EduInstallHelp(); return false;" style="color:#a5b4fc">📲 Uygulama olarak ekle (isteğe bağlı)</a></p>
   </form>
 
   <script>
@@ -84,7 +94,8 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Giriş başarısız.');
 
-        if (data.role === 'admin' || data.role === 'super_admin') window.location.replace('/');
+        if (data.mustChangePassword) window.location.replace('/sifre-degistir.html');
+        else if (data.role === 'admin' || data.role === 'super_admin') window.location.replace('/');
         // Yetki devredilmis (delege) bir ogretmen: hesap ekleme/listeleme
         // icin admin SPA'sina gider (orada sadece "Kullanicilar" sayfasini
         // gorur) - normal /ogretmen.html'e giderse bu yetkiyi kullanamazdi.

@@ -1311,6 +1311,7 @@ const ImportOptical = {
     });
 
     const res = await this.commitBatchResults(examId, rowsToImport);
+    if (res.cancelled) return;
     if (!App.actingSchool) await db.repairAndLinkStudents();
 
     // Excel'den yüklenmiş konu (kazanım) haritası varsa bu denemeye kalıcı

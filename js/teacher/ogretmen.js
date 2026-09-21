@@ -16,7 +16,8 @@
     let currentStudentFilter = 'all';
     let currentStudentSort = 'rank-asc';
     let currentStudentSearch = '';
-    let currentStudentView = 'table';
+    let currentStudentView = (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ? 'cards' : 'table';
+    let homeroomClass = null; // sınıf öğretmeninin kendi sınıfı (yoksa null)
     let currentStudentClass = null; // null = henüz seçilmedi, '__all__' = tüm sınıflar
     let currentStudentDetailData = null;
 
@@ -158,6 +159,7 @@
       document.getElementById('settings-name').textContent = me.displayName || '-';
       document.getElementById('settings-class').textContent = me.className || '-';
 
+      homeroomClass = me.role === 'teacher' ? (me.homeroomClassName || null) : null;
       const greetingName = me.displayName || 'Öğretmenim';
       document.getElementById('greeting-title').textContent = `👋 Hoş Geldiniz, ${greetingName} öğretmenim! 🧭`;
       document.getElementById('greeting-date').textContent = '📅 ' + new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -961,9 +963,79 @@
       return classes;
     }
 
+    // ---- Sınıf öğretmeni: kendi sınıfına öğrenci ekle / sil ----
+    function renderHomeroomActions() {
+      const host = document.getElementById('homeroom-actions');
+      if (!host) return;
+      if (!homeroomClass) { host.style.display = 'none'; return; }
+      host.style.display = '';
+      host.innerHTML = `<button type="button" class="btn btn-primary btn-sm" onclick="openHomeroomAddStudent()">➕ ${escapeHtml(homeroomClass)} sınıfına öğrenci ekle</button>
+        <span class="text-muted" style="font-size:12.5px;margin-left:8px">Sınıf öğretmeni olarak yalnızca ${escapeHtml(homeroomClass)} sınıfında ekleme/silme yapabilirsiniz.</span>`;
+    }
+
+    async function reloadOverviewAfterRosterChange() {
+      const overview = await fetch('/api/teacher/overview').then(r => r.json());
+      overviewData = overview;
+      allStudents = overview.students || [];
+      renderStudentRosterEnhanced();
+    }
+
+    function openHomeroomAddStudent() {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay active';
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:420px">
+          <div class="modal-header"><h2>➕ ${escapeHtml(homeroomClass)} sınıfına öğrenci ekle</h2>
+            <button class="modal-close" id="hr-close">✕</button></div>
+          <div class="modal-body">
+            <label class="form-label">Okul No</label><input class="form-input" id="hr-no" inputmode="numeric">
+            <label class="form-label" style="margin-top:10px">Ad</label><input class="form-input" id="hr-first">
+            <label class="form-label" style="margin-top:10px">Soyad</label><input class="form-input" id="hr-last">
+            <div id="hr-err" style="color:#fb7185;font-size:13px;margin-top:8px"></div>
+          </div>
+          <div class="modal-footer" style="display:flex;justify-content:space-between">
+            <button class="btn btn-ghost" id="hr-cancel">İptal</button>
+            <button class="btn btn-primary" id="hr-save">Ekle</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const close = () => overlay.remove();
+      overlay.querySelector('#hr-close').onclick = close;
+      overlay.querySelector('#hr-cancel').onclick = close;
+      overlay.querySelector('#hr-save').onclick = async () => {
+        const err = overlay.querySelector('#hr-err');
+        err.textContent = '';
+        const body = {
+          schoolNumber: overlay.querySelector('#hr-no').value.trim(),
+          firstName: overlay.querySelector('#hr-first').value.trim(),
+          lastName: overlay.querySelector('#hr-last').value.trim(),
+        };
+        if (!body.schoolNumber || !body.firstName || !body.lastName) { err.textContent = 'Okul no, ad ve soyad zorunlu.'; return; }
+        const res = await fetch('/api/teacher/homeroom/students', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const d = await res.json();
+        if (!res.ok) { err.textContent = d.error || 'Eklenemedi.'; return; }
+        close();
+        await reloadOverviewAfterRosterChange();
+      };
+    }
+
+    async function deleteHomeroomStudent(id, name) {
+      if (!confirm(`${name} adlı öğrenci ve TÜM deneme sonuçları silinecek. Bu işlem geri alınamaz. Emin misiniz?\n(Sınıf değiştiren bir öğrenci için silmeyin; yöneticiden sınıf değişikliği isteyin.)`)) return;
+      const res = await fetch(`/api/teacher/homeroom/students/${id}`, { method: 'DELETE' });
+      const d = await res.json();
+      if (!res.ok) { alert(d.error || 'Silinemedi.'); return; }
+      await reloadOverviewAfterRosterChange();
+    }
+
     function renderStudentRosterEnhanced() {
       const container = document.getElementById('student-roster-container');
       if (!container) return;
+      renderHomeroomActions();
+      const _tb = document.getElementById('btn-view-table'), _cb = document.getElementById('btn-view-cards');
+      if (_tb) _tb.classList.toggle('active', currentStudentView === 'table');
+      if (_cb) _cb.classList.toggle('active', currentStudentView === 'cards');
 
       renderStudentClassPicker();
       const rosterAll = allStudents;
@@ -1120,6 +1192,7 @@
               <td style="text-align:center">${statusHtml}</td>
               <td style="text-align:right">
                 <button type="button" class="btn-detail-sm" data-open-student data-student-id="${s.id}" data-student-name="${escapeHtml(s.first_name + ' ' + s.last_name)}">Detaylar →</button>
+                ${homeroomClass && s.class_name === homeroomClass ? `<button type="button" class="btn-detail-sm" style="color:#f43f5e" title="Öğrenciyi sınıftan sil" onclick="deleteHomeroomStudent(${s.id}, '${escapeHtml(s.first_name + ' ' + s.last_name).replace(/'/g, '&#39;')}')">🗑</button>` : ''}
               </td>
             </tr>
           `;
