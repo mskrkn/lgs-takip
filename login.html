@@ -84,7 +84,8 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Giriş başarısız.');
 
-        if (data.role === 'admin' || data.role === 'super_admin') window.location.replace('/');
+        if (data.mustChangePassword) window.location.replace('/sifre-degistir.html');
+        else if (data.role === 'admin' || data.role === 'super_admin') window.location.replace('/');
         // Yetki devredilmis (delege) bir ogretmen: hesap ekleme/listeleme
         // icin admin SPA'sina gider (orada sadece "Kullanicilar" sayfasini
         // gorur) - normal /ogretmen.html'e giderse bu yetkiyi kullanamazdi.

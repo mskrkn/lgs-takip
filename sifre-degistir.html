@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Şifreni Belirle - EduPusula</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 20% 20%, #1a1f3d 0%, #070913 55%);
+      font-family: 'Plus Jakarta Sans', sans-serif; color: #f8fafc; padding: 20px; }
+    .card { width: 100%; max-width: 420px; background: rgba(17,24,48,0.75); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.09); border-radius: 20px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+    h1 { font-size: 19px; margin: 6px 0 4px; text-align: center; }
+    p.sub { font-size: 13px; color: #94a3b8; margin: 0 0 6px; text-align: center; line-height: 1.5; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: #cbd5e1; }
+    input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(13,18,38,0.85); color: #f8fafc; font-size: 15px; outline: none; }
+    input:focus { border-color: #6366f1; }
+    small { color: #64748b; font-size: 12px; }
+    button { width: 100%; margin-top: 20px; padding: 13px; border: none; border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .err { display: none; margin-top: 14px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+      background: rgba(244,63,94,0.15); border: 1px solid rgba(244,63,94,0.4); color: #fb7185; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align:center;font-size:38px">🔐</div>
+    <h1>Şifreni Belirle</h1>
+    <p class="sub">İlk girişin için geçici şifre verildi. Devam etmek için kendi şifreni belirlemelisin.</p>
+    <form id="f">
+      <label for="cur">Geçici şifre</label>
+      <input type="password" id="cur" autocomplete="current-password" required>
+      <label for="uname">Kullanıcı adın <small>(istersen değiştirebilirsin)</small></label>
+      <input type="text" id="uname" autocomplete="username" autocapitalize="off" autocorrect="off">
+      <small>3-30 karakter: harf, rakam, nokta, tire, alt çizgi. Başkasında varsa uyarı alırsın.</small>
+      <label for="np">Yeni şifre <small>(en az 6 karakter)</small></label>
+      <input type="password" id="np" autocomplete="new-password" minlength="6" required>
+      <label for="np2">Yeni şifre (tekrar)</label>
+      <input type="password" id="np2" autocomplete="new-password" minlength="6" required>
+      <button type="submit" id="btn">Kaydet ve Devam Et</button>
+    </form>
+    <div class="err" id="err"></div>
+  </div>
+  <script>
+    const err = document.getElementById('err');
+    const show = (m) => { err.textContent = m; err.style.display = 'block'; };
+    let role = null, username = '';
+    (async () => {
+      try {
+        const me = await fetch('/api/me').then(r => r.json());
+        if (!me.authenticated) { location.replace('/login.html'); return; }
+        if (!me.mustChangePassword) { go(me.role, me.isDelegateAdmin); return; }
+        role = me.role; username = me.username || '';
+        document.getElementById('uname').value = username;
+      } catch (e) { show('Bağlantı hatası. Sayfayı yenileyin.'); }
+    })();
+    function go(r, delegate) {
+      if (r === 'admin' || r === 'super_admin' || (r === 'teacher' && delegate)) location.replace('/');
+      else if (r === 'teacher') location.replace('/ogretmen.html');
+      else if (r === 'parent') location.replace('/veli.html');
+      else if (r === 'student') location.replace('/ogrenci.html');
+      else location.replace('/');
+    }
+    document.getElementById('f').addEventListener('submit', async (e) => {
+      e.preventDefault(); err.style.display = 'none';
+      const np = document.getElementById('np').value, np2 = document.getElementById('np2').value;
+      if (np !== np2) { show('Yeni şifreler aynı değil.'); return; }
+      const btn = document.getElementById('btn'); btn.disabled = true;
+      try {
+        const nu = document.getElementById('uname').value.trim();
+        const res = await fetch('/api/me/credentials', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword: document.getElementById('cur').value, newPassword: np,
+                                 newUsername: nu && nu !== username ? nu : '' }),
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'Kaydedilemedi.');
+        const me = await fetch('/api/me').then(r => r.json());
+        go(me.role || role, me.isDelegateAdmin);
+      } catch (ex) { show(ex.message); btn.disabled = false; }
+    });
+  </script>
+</body>
+</html>

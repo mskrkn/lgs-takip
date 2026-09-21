@@ -208,6 +208,8 @@ const AdminUsers = {
         <button class="btn btn-primary mt-2" onclick="AdminUsers.createUser()">Hesabı Oluştur</button>
       </div>
 
+      ${(typeof StudentAccounts !== 'undefined' && canManageAccounts) ? StudentAccounts.cardHtml() : ''}
+
       <div class="card mt-2">
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">📑</span> Toplu Hesap Oluştur (Excel/CSV)</h3>
@@ -264,6 +266,7 @@ const AdminUsers = {
 
     this.onRoleChange();
     this._loadTeacherInvite();
+    if (typeof StudentAccounts !== 'undefined' && canManageAccounts) StudentAccounts.mount();
   },
 
   _roleLabel(role) {
