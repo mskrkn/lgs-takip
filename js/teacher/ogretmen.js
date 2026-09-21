@@ -16,7 +16,7 @@
     let currentStudentFilter = 'all';
     let currentStudentSort = 'rank-asc';
     let currentStudentSearch = '';
-    let currentStudentView = 'table';
+    let currentStudentView = (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) ? 'cards' : 'table';
     let homeroomClass = null; // sınıf öğretmeninin kendi sınıfı (yoksa null)
     let currentStudentClass = null; // null = henüz seçilmedi, '__all__' = tüm sınıflar
     let currentStudentDetailData = null;
@@ -1033,6 +1033,9 @@
       const container = document.getElementById('student-roster-container');
       if (!container) return;
       renderHomeroomActions();
+      const _tb = document.getElementById('btn-view-table'), _cb = document.getElementById('btn-view-cards');
+      if (_tb) _tb.classList.toggle('active', currentStudentView === 'table');
+      if (_cb) _cb.classList.toggle('active', currentStudentView === 'cards');
 
       renderStudentClassPicker();
       const rosterAll = allStudents;

@@ -1,0 +1,75 @@
+/* ============================================================
+   Platformlar arası uyumluluk katmanı (iOS Safari/PWA, Android, masaüstü)
+   - Yalnızca EK kurallar; mevcut tasarımı değiştirmez.
+   ============================================================ */
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+img, video, canvas, svg { max-width: 100%; }
+.table-wrapper, .ranked-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ---- Çentik / Dynamic Island / ana ekran çubuğu (safe-area) ---- */
+@supports (padding: env(safe-area-inset-top)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .header {
+    padding-top: env(safe-area-inset-top);
+    height: calc(var(--header-height, 64px) + env(safe-area-inset-top));
+  }
+  .sidebar {
+    padding-top: env(safe-area-inset-top);
+  }
+  .toast-container, #toast-container {
+    top: calc(12px + env(safe-area-inset-top));
+  }
+}
+
+/* ---- Dokunmatik cihazlar ---- */
+@media (pointer: coarse) {
+  /* iOS, 16px'ten küçük inputa odaklanınca sayfayı yakınlaştırır */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; }
+  /* Dokunma hedefi >= 44px (Apple HIG / WCAG 2.5.5) */
+  .btn, .btn-sm, button.btn-detail-sm, .filter-pill, .nav-item, .mobile-nav-item,
+  .modal-close, .tab-btn {
+    min-height: 44px;
+  }
+  .btn-sm, button.btn-detail-sm, .filter-pill { min-width: 44px; padding-top: 10px; padding-bottom: 10px; }
+  input[type="checkbox"], input[type="radio"] { width: 22px; height: 22px; }
+  #omr-scan-close { width: 44px !important; height: 44px !important; }
+  #omr-scan-overlay button { min-height: 44px; }
+  /* Hover'a bağlı gizli öğeler dokunmada takılı kalmasın */
+  * { -webkit-tap-highlight-color: rgba(99, 102, 241, 0.15); }
+}
+
+/* ---- Küçük ekranlar ---- */
+@media (max-width: 768px) {
+  .modal { width: 96%; max-height: 92vh; max-height: 92dvh; }
+  .modal-body { -webkit-overflow-scrolling: touch; }
+  /* Klavye açıkken alttaki butonlar erişilebilir kalsın */
+  .modal-footer { position: sticky; bottom: 0; background: inherit; }
+  table { font-size: 13px; }
+  .page-content { overflow-x: hidden; }
+}
+
+/* ---- Tam ekran kamera katmanı: dinamik viewport + safe-area ---- */
+#omr-scan-overlay {
+  height: 100vh; height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ---- Çevrimdışı şeridi / kalıcı uyarılar (js/pwa.js) ---- */
+#edu-offline-bar {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 2147483000; display: none;
+  background: #b45309; color: #fff; text-align: center; font: 600 13px/1.4 system-ui, sans-serif;
+  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+}
+#edu-offline-bar.on { display: block; }
+.edu-toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(80px + env(safe-area-inset-bottom));
+  max-width: min(92vw, 460px); background: #111827; color: #fff; border: 1px solid #374151; border-radius: 12px;
+  padding: 12px 14px; font: 500 14px/1.45 system-ui, sans-serif; z-index: 2147483001; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  display: flex; gap: 10px; align-items: center;
+}
+.edu-toast button { background: #6366f1; color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 700; min-height: 36px; }
