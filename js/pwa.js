@@ -110,6 +110,45 @@
     setTimeout(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) { el.scrollIntoView(); } }, 350);
   });
 
+  // ---- "Uygulamayı İndir" butonu: tüm panellerde Çıkış'ın hemen üstünde ----
+  let deferredInstall = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; });
+  window.addEventListener('appinstalled', () => {
+    deferredInstall = null;
+    const b = document.getElementById('edu-install-btn');
+    if (b) b.remove();
+  });
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+  window.EduInstall = async function () {
+    if (deferredInstall) {
+      deferredInstall.prompt();
+      try { await deferredInstall.userChoice; } catch (_) { /* yoksay */ }
+      deferredInstall = null;
+      return;
+    }
+    window.EduInstallHelp(); // iOS/Safari vb.: platforma özel yönlendirme
+  };
+
+  function addInstallButton() {
+    if (isStandalone() || document.getElementById('edu-install-btn')) return;
+    const logout = document.querySelector('.sidebar-footer button[onclick*="logout"]');
+    if (!logout) return;
+    const btn = document.createElement('button');
+    btn.id = 'edu-install-btn';
+    btn.type = 'button';
+    btn.className = 'pwa-install-btn';
+    btn.innerHTML = '<span>📲</span> <span>Uygulamayı İndir</span>';
+    btn.addEventListener('click', () => window.EduInstall());
+    logout.parentNode.insertBefore(btn, logout);
+  }
+  // Paneller (özellikle yönetim SPA'sı) menüyü sonradan çizebilir: birkaç kez dene.
+  document.addEventListener('DOMContentLoaded', () => {
+    addInstallButton();
+    let n = 0;
+    const t = setInterval(() => { addInstallButton(); if (document.getElementById('edu-install-btn') || ++n > 10) clearInterval(t); }, 500);
+  });
+
   // ---- Kurulum yönlendirmesi (zorunlu değil; site normal web olarak da tam çalışır) ----
   window.EduInstallHelp = function () {
     const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
