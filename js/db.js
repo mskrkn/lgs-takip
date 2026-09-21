@@ -511,16 +511,28 @@ class Database {
 
           let matchedStudent = null;
 
+          // Eşleştirme incelemesinde (importCore.reviewImportMatches) kullanıcının
+          // onayladığı öğrenci: sınıf/ad/numara ÜZERİNE YAZILMAZ.
+          if (item.matchedStudentId != null) {
+            const forced = allStudents.find(s => s.id === Number(item.matchedStudentId));
+            if (forced) {
+              matchedStudent = forced;
+              item._forced = true;
+            }
+          }
+
           // Match by school number
-          if (!isAuto && cleanSNum && schoolNoMap.has(cleanSNum)) {
+          if (!matchedStudent && !item.createNew && !isAuto && cleanSNum && schoolNoMap.has(cleanSNum)) {
             matchedStudent = schoolNoMap.get(cleanSNum);
-          } else if (cleanName && fullNameMap.has(cleanName)) {
+          } else if (!matchedStudent && !item.createNew && cleanName && fullNameMap.has(cleanName)) {
             // Match by full name
             matchedStudent = fullNameMap.get(cleanName);
           }
 
           let studentId;
-          if (matchedStudent) {
+          if (matchedStudent && item._forced) {
+            studentId = matchedStudent.id;
+          } else if (matchedStudent) {
             studentId = matchedStudent.id;
             const updates = {};
             if (!isAuto && cleanSNum && (!matchedStudent.schoolNumber || matchedStudent.schoolNumber.startsWith('AUTO-'))) {
@@ -638,7 +650,22 @@ class Database {
       if (group.length > 1 && key.length > 1) {
         // Find best primary student: prefer the one with a non-AUTO schoolNumber or most results
         const primary = group.find(s => s.schoolNumber && !s.schoolNumber.startsWith('AUTO-')) || group[0];
-        const secondaryList = group.filter(s => s.id !== primary.id);
+        // GÜVENLİK: aynı ad soyadlı İKİ GERÇEK öğrenci (farklı okul no / farklı
+        // sınıf) asla birleştirilmez - büyük okulda kaçınılmaz (ör. iki "Ali
+        // Yılmaz"); eskiden biri silinip sonuçları diğerine yazılıyordu.
+        // Yalnızca otomatik üretilmiş (AUTO-/boş numaralı) ya da aynı numaralı
+        // kopyalar, sınıfları da çelişmiyorsa birleştirilir.
+        const secondaryList = group.filter(s => {
+          if (s.id === primary.id) return false;
+          const secNo = normalizeSchoolNo(s.schoolNumber);
+          const priNo = normalizeSchoolNo(primary.schoolNumber);
+          const secAuto = !secNo || String(s.schoolNumber).startsWith('AUTO-');
+          const sameNo = secNo && priNo && secNo === priNo;
+          const sc = normalizeClassName(s.className || '');
+          const pc = normalizeClassName(primary.className || '');
+          const classOk = !sc || !pc || sc === pc;
+          return (secAuto || sameNo) && classOk;
+        });
 
         for (const sec of secondaryList) {
           // Re-link all results of secondary to primary

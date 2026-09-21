@@ -290,6 +290,190 @@ const ImportCore = {
     }).slice(0, 30);
   },
 
+  // ---- Dörtlü tarama (okul no + ad + soyad + sınıf) ----
+  _foldTr(text) {
+    return normalizeTrText(text)
+      .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i')
+      .replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u').replace(/i̇/g, 'i');
+  },
+
+  _nameKey(first, last) {
+    return this._foldTr(`${first || ''} ${last || ''}`).split(' ').filter(Boolean).sort().join(' ');
+  },
+
+  // Bir satırı öğrenci listesine göre sınıflandırır:
+  //  exact   -> {kind:'exact', student, classDiff}
+  //  maybe   -> {kind:'maybe', candidates:[...], reason, defaultMatch}
+  //  missing -> {kind:'missing'}
+  classifyImportRow(sd, idx) {
+    const rawNo = String(sd.schoolNumber || '').trim();
+    const no = normalizeSchoolNo(rawNo);
+    const hasNo = !!no && !rawNo.startsWith('AUTO-');
+    const nameKey = this._nameKey(sd.firstName, sd.lastName);
+    const cls = normalizeClassName(sd.className || '');
+    const sameClass = (s) => !cls || normalizeClassName(s.className || '') === cls;
+
+    const byNo = hasNo ? (idx.byNo.get(no) || []) : [];
+    const byName = nameKey ? (idx.byName.get(nameKey) || []) : [];
+
+    if (byNo.length) {
+      const nameMatch = byNo.find(s => nameKey && this._nameKey(s.firstName, s.lastName) === nameKey);
+      if (nameMatch) return { kind: 'exact', student: nameMatch, classDiff: !sameClass(nameMatch) };
+      if (!nameKey) return { kind: 'exact', student: byNo[0], classDiff: !sameClass(byNo[0]) };
+      return { kind: 'maybe', candidates: byNo, reason: 'Okul numarası aynı, ad soyad farklı', defaultMatch: false };
+    }
+    if (byName.length) {
+      const inClass = byName.filter(sameClass);
+      if (!hasNo && inClass.length === 1) return { kind: 'exact', student: inClass[0], classDiff: false };
+      if (hasNo && inClass.length === 1) {
+        return { kind: 'maybe', candidates: inClass, reason: 'Ad soyad ve sınıf aynı, okul numarası farklı', defaultMatch: true };
+      }
+      const pool = inClass.length ? inClass : byName;
+      if (!hasNo && pool.length === 1) {
+        return { kind: 'maybe', candidates: pool, reason: 'Ad soyad aynı, sınıf farklı', defaultMatch: false };
+      }
+      return { kind: 'maybe', candidates: pool, reason: 'Aynı ad soyadlı birden fazla öğrenci', defaultMatch: false };
+    }
+    return { kind: 'missing' };
+  },
+
+  // rows: [{studentData, subjects}] -> onaylanmış satırlar (matchedStudentId /
+  // createNew eklenmiş, atlananlar çıkarılmış) ya da iptal edilirse null.
+  async reviewImportMatches(rows) {
+    const students = await this.resolveAllStudents();
+    // Öğrenci listesi hiç yoksa (ilk kurulum) eski davranış: satırlardan oluştur.
+    if (!students.length) {
+      return rows;
+    }
+    const idx = { byNo: new Map(), byName: new Map() };
+    students.forEach(s => {
+      const no = normalizeSchoolNo(s.schoolNumber);
+      if (no && !String(s.schoolNumber).startsWith('AUTO-')) {
+        if (!idx.byNo.has(no)) idx.byNo.set(no, []);
+        idx.byNo.get(no).push(s);
+      }
+      const k = this._nameKey(s.firstName, s.lastName);
+      if (k) {
+        if (!idx.byName.has(k)) idx.byName.set(k, []);
+        idx.byName.get(k).push(s);
+      }
+    });
+
+    const cls = rows.map(r => this.classifyImportRow(r.studentData || {}, idx));
+    const nExact = cls.filter(c => c.kind === 'exact').length;
+    const nMaybe = cls.filter(c => c.kind === 'maybe').length;
+    const nMissing = cls.filter(c => c.kind === 'missing').length;
+    const nClassDiff = cls.filter(c => c.kind === 'exact' && c.classDiff).length;
+
+    const build = (decisions) => {
+      const out = [];
+      rows.forEach((r, i) => {
+        const c = cls[i];
+        if (c.kind === 'exact') { out.push({ ...r, matchedStudentId: c.student.id }); return; }
+        const d = decisions ? decisions[i] : { action: 'skip' };
+        if (!d || d.action === 'skip') return;
+        if (d.action === 'create') out.push({ ...r, createNew: true });
+        else if (d.action === 'match' && d.studentId != null) out.push({ ...r, matchedStudentId: d.studentId });
+      });
+      return out;
+    };
+
+    if (nMaybe === 0 && nMissing === 0) {
+      if (nClassDiff > 0) UI.toast(`${nClassDiff} öğrencinin dosyadaki sınıfı kayıtlı sınıfından farklı (sınıflar değiştirilmedi).`, 'info');
+      return build(null);
+    }
+
+    return await new Promise((resolve) => {
+      const esc = (t) => String(t ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+      const label = (s) => `${s.schoolNumber || '-'} · ${s.firstName} ${s.lastName} (${s.className || 'sınıfsız'})`;
+      const labelToId = new Map(students.map(s => [label(s), s.id]));
+      const problemIdx = cls.map((c, i) => (c.kind === 'exact' ? -1 : i)).filter(i => i >= 0);
+
+      const rowHtml = problemIdx.map(i => {
+        const sd = rows[i].studentData || {};
+        const c = cls[i];
+        const fileInfo = `<strong>${esc(sd.firstName)} ${esc(sd.lastName)}</strong><br><span class="text-muted" style="font-size:12px">No: ${esc(sd.schoolNumber || '-')} · Sınıf: ${esc(sd.className || '-')}</span>`;
+        let opts = '';
+        if (c.kind === 'maybe') {
+          opts += c.candidates.slice(0, 5).map((s, k) =>
+            `<option value="match:${s.id}" ${c.defaultMatch && k === 0 ? 'selected' : ''}>✔ Eşleştir: ${esc(label(s))}</option>`).join('');
+        }
+        const defaultSkip = !(c.kind === 'maybe' && c.defaultMatch);
+        opts += `<option value="skip" ${defaultSkip ? 'selected' : ''}>⏭ Atla (sonucu yükleme)</option>`;
+        opts += '<option value="create">➕ Yeni öğrenci olarak ekle</option>';
+        opts += '<option value="pick">🔎 Listeden başka öğrenci seç…</option>';
+        return `<tr data-i="${i}">
+          <td style="padding:6px 8px">${fileInfo}</td>
+          <td style="padding:6px 8px;font-size:12px">${c.kind === 'maybe' ? '🟡 ' + esc(c.reason) : '🔴 Listede yok'}</td>
+          <td style="padding:6px 8px"><select class="form-input review-action" style="min-width:230px">${opts}</select>
+            <input class="form-input review-pick" list="review-students-list" placeholder="No / ad yazarak arayın" style="display:none;margin-top:4px"></td>
+        </tr>`;
+      }).join('');
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay active';
+      overlay.innerHTML = `
+        <div class="modal" style="max-width:920px;width:96vw">
+          <div class="modal-header"><h2>🔎 Öğrenci Eşleştirme Kontrolü</h2></div>
+          <div class="modal-body" style="max-height:65vh;overflow:auto">
+            <p style="margin:0 0 10px">Dosyadaki ${rows.length} satır, öğrenci listenizle okul no + ad + soyad + sınıf üzerinden karşılaştırıldı:</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+              <span class="badge">✅ Kesin eşleşme: <b>${nExact}</b></span>
+              <span class="badge">🟡 Kontrol gerekli: <b>${nMaybe}</b></span>
+              <span class="badge">🔴 Listede yok: <b>${nMissing}</b></span>
+              ${nClassDiff ? `<span class="badge">⚠️ Sınıfı farklı (değiştirilmez): <b>${nClassDiff}</b></span>` : ''}
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+              <button type="button" class="btn btn-secondary btn-sm" id="review-all-skip">Hepsini atla</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="review-all-create">Bulunamayanların hepsini yeni öğrenci olarak ekle</button>
+            </div>
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr><th style="text-align:left;padding:6px 8px">Dosyadaki öğrenci</th><th style="text-align:left;padding:6px 8px">Durum</th><th style="text-align:left;padding:6px 8px">Ne yapılsın?</th></tr></thead>
+              <tbody>${rowHtml}</tbody>
+            </table>
+            <datalist id="review-students-list">${students.map(s => `<option value="${esc(label(s))}"></option>`).join('')}</datalist>
+          </div>
+          <div class="modal-footer" style="display:flex;justify-content:space-between">
+            <button type="button" class="btn btn-ghost" id="review-cancel">İptal (hiçbir şey yüklenmez)</button>
+            <button type="button" class="btn btn-primary" id="review-ok">Devam Et</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+
+      overlay.querySelectorAll('.review-action').forEach(sel => {
+        sel.addEventListener('change', () => {
+          sel.parentElement.querySelector('.review-pick').style.display = sel.value === 'pick' ? '' : 'none';
+        });
+      });
+      overlay.querySelector('#review-all-skip').onclick = () => overlay.querySelectorAll('.review-action').forEach(s => { s.value = 'skip'; s.dispatchEvent(new Event('change')); });
+      overlay.querySelector('#review-all-create').onclick = () => overlay.querySelectorAll('tr[data-i]').forEach(tr => {
+        if (cls[Number(tr.dataset.i)].kind === 'missing') { const s = tr.querySelector('.review-action'); s.value = 'create'; s.dispatchEvent(new Event('change')); }
+      });
+      overlay.querySelector('#review-cancel').onclick = () => { overlay.remove(); resolve(null); };
+      overlay.querySelector('#review-ok').onclick = () => {
+        const decisions = {};
+        let bad = 0;
+        overlay.querySelectorAll('tr[data-i]').forEach(tr => {
+          const i = Number(tr.dataset.i);
+          const v = tr.querySelector('.review-action').value;
+          if (v === 'skip') decisions[i] = { action: 'skip' };
+          else if (v === 'create') decisions[i] = { action: 'create' };
+          else if (v.startsWith('match:')) decisions[i] = { action: 'match', studentId: Number(v.slice(6)) };
+          else if (v === 'pick') {
+            const id = labelToId.get(tr.querySelector('.review-pick').value);
+            if (id == null) { bad++; tr.style.outline = '1px solid #f43f5e'; } else decisions[i] = { action: 'match', studentId: id };
+          }
+        });
+        if (bad) { UI.toast(`${bad} satırda listeden öğrenci seçilmedi`, 'warning'); return; }
+        const out = build(decisions);
+        const skipped = rows.length - out.length;
+        overlay.remove();
+        if (skipped > 0) UI.toast(`${skipped} satır atlandı`, 'info');
+        resolve(out);
+      };
+    });
+  },
+
   // db.batchImportResults'ın aktif-okul farkındalıklı hali - okulun kendi
   // admini için AYNEN eskisi gibi çalışır (tek IndexedDB transaction'ı).
   // Aktif okul modunda db.js:473-520'deki AYNI eşleştirme mantığı (okul
@@ -299,6 +483,12 @@ const ImportCore = {
   // yüksek hacimli olmadığı için kabul edilebilir - gerçek bir toplu uç
   // noktası ileride bir optimizasyon).
   async commitBatchResults(examId, rowsToImport) {
+    // Dörtlü tarama: her satır (okul no + ad + soyad + sınıf) mevcut öğrenci
+    // listesine karşı doğrulanır; belirsiz/bulunamayanlar için kullanıcıya sorulur.
+    const reviewed = await this.reviewImportMatches(rowsToImport);
+    if (!reviewed) return { imported: 0, errors: 0, skippedForLimit: 0, cancelled: true };
+    rowsToImport = reviewed;
+
     if (!App.actingSchool) {
       return await db.batchImportResults(examId, rowsToImport);
     }
@@ -331,9 +521,11 @@ const ImportCore = {
         const cleanName = normalizeTrText(`${studentData.firstName || ''} ${studentData.lastName || ''}`);
 
         let studentId = null;
-        if (!isAuto && cleanSNum && schoolNoMap.has(cleanSNum)) {
+        if (item.matchedStudentId != null) {
+          studentId = item.matchedStudentId;
+        } else if (!item.createNew && !isAuto && cleanSNum && schoolNoMap.has(cleanSNum)) {
           studentId = schoolNoMap.get(cleanSNum);
-        } else if (cleanName && fullNameMap.has(cleanName)) {
+        } else if (!item.createNew && cleanName && fullNameMap.has(cleanName)) {
           studentId = fullNameMap.get(cleanName);
         }
         if (!studentId) {
