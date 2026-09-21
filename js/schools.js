@@ -84,12 +84,12 @@ const Schools = {
     this._schools = schools; // Duzenle formunun mevcut degerlerle doldurulmasi icin
 
     container.innerHTML = `
-      ${this._renderAttentionPanel(attentionItems)}
-      ${this._renderQuickActions()}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;align-items:stretch">
+        ${this._renderAttentionPanel(attentionItems)}
+        ${this._renderQuickActions()}
+      </div>
       ${this._renderPusiPanel(pusiInsights)}
       ${this._renderSystemHealthPanel(systemHealth)}
-      ${dashboard ? this._renderDashboardSection(dashboard) : ''}
-      ${rankings ? this._renderRankings(rankings) : ''}
 
       <div class="card mt-2" id="schools-table-card" style="border:1px solid rgba(20,184,166,0.3)">
         <div class="card-header">
@@ -157,6 +157,9 @@ const Schools = {
         <button class="btn btn-primary mt-2" onclick="Schools.createSchool()">Okulu Oluştur</button>
         <div id="new-school-status" class="text-muted" style="margin-top:10px;font-size:13px"></div>
       </div>
+
+      ${dashboard ? this._renderDashboardSection(dashboard) : ''}
+      ${rankings ? this._renderRankings(rankings) : ''}
     `;
 
     if (dashboard) this._renderExamChart(dashboard.examChart);
@@ -167,13 +170,14 @@ const Schools = {
   // gösterilir çünkü asıl cevaplanması gereken soru bu.
   _renderAttentionPanel(items) {
     if (!items.length) {
-      return `<div class="card" style="border:1px solid rgba(74,222,128,0.3)">
+      return `<div class="card" style="margin:0;border:1px solid rgba(74,222,128,0.3)">
+        <div class="card-header"><h3 class="card-title"><span class="card-icon">🚨</span> Dikkat Gerekenler</h3></div>
         <p style="margin:0;color:#4ade80">✅ Şu an dikkat gerektiren bir durum yok.</p>
       </div>`;
     }
     const severityColor = { critical: '#fb7185', warning: '#fbbf24', info: '#60a5fa' };
     return `
-      <div class="card" style="border:1px solid rgba(251,113,133,0.3)">
+      <div class="card" style="margin:0;border:1px solid rgba(251,113,133,0.3)">
         <div class="card-header">
           <h3 class="card-title"><span class="card-icon">🚨</span> Dikkat Gerekenler</h3>
         </div>
@@ -195,7 +199,7 @@ const Schools = {
   _renderQuickActions() {
     const canManageAdmins = App.currentUser?.canManageAdmins;
     return `
-      <div class="card mt-2">
+      <div class="card" style="margin:0">
         <div class="card-header"><h3 class="card-title"><span class="card-icon">⚡</span> Hızlı İşlemler</h3></div>
         <div style="display:flex;flex-wrap:wrap;gap:10px">
           <button class="btn btn-secondary btn-sm" onclick="Schools._scrollToNewSchoolForm()">➕ Yeni Okul Ekle</button>
