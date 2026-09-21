@@ -1068,6 +1068,13 @@ class Database {
   // yerelinde yetim kalirdi.
   async syncPlatformAdminData(payload) {
     if (!payload) return;
+    // Sınıf öğretmeninin sildiği öğrenciler (sunucu mezar taşları) yerelde de silinir.
+    if (Array.isArray(payload.removedStudentIds) && payload.removedStudentIds.length) {
+      for (const sid of payload.removedStudentIds) {
+        await this.db.results.where('studentId').equals(Number(sid)).delete();
+        await this.db.students.delete(Number(sid));
+      }
+    }
     const tables = [
       { table: this.db.students, incoming: payload.students },
       { table: this.db.exams, incoming: payload.exams },

@@ -11,6 +11,8 @@ const ASSETS_TO_CACHE = [
   './ogretmen.html',
   './css/teacher/ogretmen.css',
   './js/navHistory.js',
+  './js/pwGuard.js',
+  './js/studentAccounts.js',
   './js/teacher/ogretmen.js',
   './js/teacher/omrDefine.js',
   './js/teacher/omrScan.js',

@@ -149,6 +149,20 @@ APP_ENV = os.environ.get("EDUPUSULA_ENV", "production")
 app = Flask(__name__, static_folder=None)
 
 
+_PW_CHANGE_ALLOWED = ("/api/login", "/api/logout", "/api/me", "/api/me/credentials", "/api/meta")
+
+
+@app.before_request
+def _enforce_password_change():
+    # Gecici sifreyle (ogrenci hesaplari) giris yapmis kullanici sifresini
+    # degistirmeden HICBIR veri ucunu kullanamaz - kontrol ON YUZE degil
+    # sunucuya konur (frontend gizlemesine guvenilmez).
+    if session.get("must_change_password") and request.path.startswith("/api/") \
+            and request.path not in _PW_CHANGE_ALLOWED and not request.path.startswith("/api/register/"):
+        return jsonify({"error": "Devam etmeden önce şifrenizi değiştirmeniz gerekiyor.",
+                        "passwordChangeRequired": True}), 403
+
+
 @app.after_request
 def _inject_env_banner(resp):
     # KRITIK: /api/* yanitlari HICBIR sekilde (tarayici HTTP cache'i, PWA
@@ -337,6 +351,10 @@ def _migrate_users_table(conn):
         # (bkz. teacher_effective_classes). Bir öğretmen en fazla bir sınıfın
         # sınıf öğretmeni olur, tek değer yeterli.
         conn.execute("ALTER TABLE users ADD COLUMN homeroom_class_name TEXT")
+    if "must_change_password" not in cols:
+        # Toplu acilan ogrenci hesaplari (gecici sifre = 4 haneli okul no) ilk
+        # giriste sifre degistirmek ZORUNDA - bkz. _enforce_password_change.
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
@@ -931,6 +949,14 @@ def _create_v2_tables(conn):
     # icin - IF NOT EXISTS oldugu icin zararsiz/tekrar calistirilabilir.
     for table in ("users", "students", "exams", "results"):
         conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_org ON {table}(organization_id)")
+    # Sinif ogretmeninin sildigi (okulun tarayici senkronundan gelen) ogrenciler:
+    # api_admin_sync bu id'leri yeniden eklemez (yoksa admin'in tarayicisindaki
+    # eski kopya bir sonraki senkronda silinen ogrenciyi geri getirirdi).
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS student_tombstones ("
+        "organization_id INTEGER NOT NULL, student_id INTEGER NOT NULL, "
+        "deleted_by INTEGER, deleted_at TEXT, PRIMARY KEY (organization_id, student_id))"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_results_student ON results(student_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_results_exam ON results(exam_id)")
     # students/exams/results.source: bu satir okulun kendi tarayici senkronundan
@@ -3049,6 +3075,7 @@ def api_login():
     session["class_name"] = user["class_name"]
     session["homeroom_class_name"] = user["homeroom_class_name"]
     session["student_id"] = user["student_id"]
+    session["must_change_password"] = bool(user["must_change_password"])
     session.permanent = True
 
     log_audit(db, "LOGIN_SUCCESS", resource_type="user", resource_id=user["id"], user_id=user["id"])
@@ -3085,6 +3112,7 @@ def api_login():
         "organizationId": user["organization_id"],
         "userLimit": user_limit,
         "dataEntryOnly": data_entry_only,
+        "mustChangePassword": bool(user["must_change_password"]),
     })
 
 
@@ -3137,6 +3165,8 @@ def api_me():
         "organizationId": own_org_id,
         "userLimit": user_limit,
         "dataEntryOnly": data_entry_only,
+        "mustChangePassword": bool(session.get("must_change_password")),
+        "username": (db.execute("SELECT username FROM users WHERE id = ?", (session["user_id"],)).fetchone() or {"username": None})["username"],
     })
 
 
@@ -4638,6 +4668,14 @@ def api_admin_sync():
     def sid(client_id):
         return _org_scoped_id(org_id, client_id)
 
+    # Sinif ogretmeninin sildigi ogrenciler (student_tombstones) tekrar
+    # eklenmez - ogrencileri ve sonuclarini gelen veriden ayikla.
+    tomb_ids = {r[0] for r in db.execute(
+        "SELECT student_id FROM student_tombstones WHERE organization_id=?", (org_id,)).fetchall()}
+    if tomb_ids:
+        students = [s for s in students if sid(s.get("id")) not in tomb_ids]
+        results = [r for r in results if sid(r.get("studentId")) not in tomb_ids]
+
     # parent_students.student_id -> students(id) ON DELETE CASCADE tanimli;
     # asagidaki DELETE FROM students bu yuzden BU OKULUN veli-ogrenci
     # baglantilarini da siler. Ayni id'yle geri gelen ogrenciler icin bu
@@ -5251,7 +5289,11 @@ def api_platform_admin_data():
     exams = [{**json.loads(r["data_json"]), "id": r["id"]} for r in exam_rows if r["data_json"]]
     results = [{**json.loads(r["data_json"]), "id": r["id"]} for r in result_rows if r["data_json"]]
 
-    return jsonify({"students": students, "exams": exams, "results": results})
+    offset = (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
+    removed = [r[0] - offset for r in db.execute(
+        "SELECT student_id FROM student_tombstones WHERE organization_id=?", (org_id,)).fetchall()]
+    return jsonify({"students": students, "exams": exams, "results": results,
+                    "removedStudentIds": removed})
 
 
 # ============================================================
@@ -6747,6 +6789,285 @@ def api_admin_set_homeroom(user_id):
     log_audit(db, "HOMEROOM_CLASS_SET" if class_name else "HOMEROOM_CLASS_CLEARED",
               resource_type="user", resource_id=user_id)
     return jsonify({"ok": True, "homeroomClassName": class_name})
+
+
+import re as _re
+
+_USERNAME_RE = _re.compile(r"^[A-Za-z0-9._-]{3,30}$")
+
+
+@app.route("/api/me/credentials", methods=["POST"])
+@login_required()
+def api_change_own_credentials():
+    """Sifre (ve istege bagli kullanici adi) degistirme - gecici sifreyle giren
+    ogrencinin ilk giris adimi. Basarili olunca zorunlu-degistirme bayragi kalkar."""
+    data = request.get_json(silent=True) or {}
+    current = data.get("currentPassword") or ""
+    new_password = data.get("newPassword") or ""
+    new_username = (data.get("newUsername") or "").strip()
+    if len(new_password) < 6:
+        return jsonify({"error": "Yeni şifre en az 6 karakter olmalı."}), 400
+    if new_password == current:
+        return jsonify({"error": "Yeni şifre geçici şifreyle aynı olamaz."}), 400
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
+    if not user or not verify_password(user["password_hash"], current)[0]:
+        return jsonify({"error": "Mevcut (geçici) şifre yanlış."}), 401
+    username = user["username"]
+    if new_username and new_username != username:
+        if not _USERNAME_RE.match(new_username):
+            return jsonify({"error": "Kullanıcı adı 3-30 karakter olmalı; harf, rakam, nokta, tire ve alt çizgi kullanılabilir."}), 400
+        clash = db.execute(
+            "SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?", (new_username, user["id"])
+        ).fetchone()
+        if clash:
+            return jsonify({"error": "Bu kullanıcı adı başka bir hesapta kullanılıyor. Lütfen farklı bir ad seçin."}), 409
+        username = new_username
+    db.execute(
+        "UPDATE users SET password_hash = ?, username = ?, must_change_password = 0 WHERE id = ?",
+        (hash_password(new_password), username, user["id"]),
+    )
+    db.commit()
+    session["must_change_password"] = False
+    log_audit(db, "CREDENTIALS_CHANGED", resource_type="user", resource_id=user["id"])
+    return jsonify({"ok": True, "username": username})
+
+
+# ============================================================
+# API: Ogrenci hesaplarini toplu ac (kullanici adi = onek + okul no,
+# gecici sifre = 4 haneli okul no, ilk giriste zorunlu degistirme)
+# ============================================================
+
+def _student_account_credentials(prefix, school_number):
+    """(username, temp_password) ya da None (numara rakamdan olusmuyorsa)."""
+    raw = str(school_number or "").strip()
+    if not raw or raw.upper().startswith("AUTO-"):
+        return None
+    if raw.endswith(".0"):
+        raw = raw[:-2]
+    if not raw.isdigit():
+        return None
+    n = int(raw)
+    if n <= 0:
+        return None
+    return f"{prefix}{n}", f"{n:04d}"
+
+
+def _clean_prefix(value):
+    p = _re.sub(r"[^a-z0-9]", "", (value or "").lower())
+    return p if 2 <= len(p) <= 10 else None
+
+
+@app.route("/api/admin/student-accounts", methods=["GET"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
+def api_admin_student_accounts_summary():
+    """Ozet + hala gecici sifresi gecerli olan hesaplarin giris listesi."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    total_students = db.execute("SELECT COUNT(*) FROM students WHERE organization_id=?", (org_id,)).fetchone()[0]
+    accounts = db.execute(
+        "SELECT COUNT(*) FROM users WHERE organization_id=? AND role='student'", (org_id,)).fetchone()[0]
+    rows = db.execute(
+        "SELECT u.username, u.display_name, s.class_name, s.school_number FROM users u "
+        "JOIN students s ON s.id = u.student_id "
+        "WHERE u.organization_id=? AND u.role='student' AND u.must_change_password=1 "
+        "ORDER BY s.class_name, s.school_number+0", (org_id,)).fetchall()
+    sheet = []
+    for r in rows:
+        creds = _student_account_credentials("", r["school_number"])
+        sheet.append({
+            "className": r["class_name"], "name": r["display_name"], "username": r["username"],
+            "tempPassword": creds[1] if creds else "",
+        })
+    return jsonify({"totalStudents": total_students, "accounts": accounts,
+                    "pendingFirstLogin": len(sheet), "sheet": sheet})
+
+
+@app.route("/api/admin/student-accounts/generate", methods=["POST"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
+def api_admin_student_accounts_generate():
+    """Hesabi olmayan ogrenciler icin hesap acar. dryRun=true ise yalniz
+    on izleme dondurur. Argon2 (~40ms/hesap) nedeniyle istemci `limit`'li
+    partilerle tekrar tekrar cagirir; `remaining` 0 olana kadar."""
+    data = request.get_json(silent=True) or {}
+    prefix = _clean_prefix(data.get("prefix"))
+    if not prefix:
+        return jsonify({"error": "Okul kodu 2-10 karakter (harf/rakam) olmalı, örn: dho"}), 400
+    dry_run = bool(data.get("dryRun"))
+    limit = max(1, min(int(data.get("limit") or 100), 200))
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    students = db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students "
+        "WHERE organization_id=? ORDER BY id", (org_id,)).fetchall()
+    has_account = {r[0] for r in db.execute(
+        "SELECT student_id FROM users WHERE organization_id=? AND role='student' AND student_id IS NOT NULL",
+        (org_id,)).fetchall()}
+    taken = {r[0].lower() for r in db.execute("SELECT username FROM users").fetchall()}
+
+    pending, no_number, conflicts = [], [], []
+    seen_new = set()
+    for s in students:
+        if s["id"] in has_account:
+            continue
+        creds = _student_account_credentials(prefix, s["school_number"])
+        label = f'{s["first_name"] or ""} {s["last_name"] or ""}'.strip()
+        if not creds:
+            no_number.append({"id": s["id"], "name": label, "className": s["class_name"], "schoolNumber": s["school_number"]})
+            continue
+        uname = creds[0]
+        if uname.lower() in taken or uname.lower() in seen_new:
+            conflicts.append({"id": s["id"], "name": label, "className": s["class_name"], "username": uname})
+            continue
+        seen_new.add(uname.lower())
+        pending.append((s, uname, creds[1], label))
+
+    # Ayni ad soyadli ogrenciler (uyari amacli - kullanici adlari numaradan geldigi icin cakismaz)
+    by_name = {}
+    for s in students:
+        k = f'{(s["first_name"] or "").strip().lower()} {(s["last_name"] or "").strip().lower()}'.strip()
+        if k:
+            by_name.setdefault(k, []).append(s)
+    same_names = [[{"name": f'{x["first_name"]} {x["last_name"]}', "className": x["class_name"],
+                    "schoolNumber": x["school_number"]} for x in grp]
+                  for grp in by_name.values() if len(grp) > 1]
+
+    result = {
+        "willCreate": len(pending), "alreadyHaveAccount": len(has_account & {s["id"] for s in students}),
+        "noValidNumber": no_number, "usernameConflicts": conflicts, "sameNameGroups": same_names,
+    }
+    if dry_run:
+        return jsonify({"ok": True, "dryRun": True, **result})
+
+    batch = pending[:limit]
+    created = []
+    now = datetime.now().isoformat()
+    for s, uname, temp_pw, label in batch:
+        db.execute(
+            "INSERT INTO users (username, password_hash, role, display_name, class_name, student_id, "
+            "organization_id, must_change_password, created_at) VALUES (?,?,?,?,?,?,?,1,?)",
+            (uname, hash_password(temp_pw), "student", label, s["class_name"], s["id"], org_id, now),
+        )
+        created.append({"className": s["class_name"], "name": label, "username": uname, "tempPassword": temp_pw})
+    db.commit()
+    if created:
+        run_v2_migration(db)
+        log_audit(db, "STUDENT_ACCOUNTS_GENERATED", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "created": created, "createdCount": len(created),
+                    "remaining": len(pending) - len(batch), **result})
+
+
+@app.route("/api/admin/student-accounts/reset", methods=["POST"])
+@login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
+def api_admin_student_accounts_reset():
+    """Sifreyi 4 haneli okul numarasina dondurur ve ilk giriste degistirmeyi
+    zorunlu kilar. Body: {userId} ya da {className}."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if data.get("userId"):
+        rows = db.execute(
+            "SELECT u.id, s.school_number FROM users u JOIN students s ON s.id=u.student_id "
+            "WHERE u.id=? AND u.organization_id=? AND u.role='student'", (int(data["userId"]), org_id)).fetchall()
+    elif data.get("className"):
+        rows = db.execute(
+            "SELECT u.id, s.school_number FROM users u JOIN students s ON s.id=u.student_id "
+            "WHERE s.class_name=? AND u.organization_id=? AND u.role='student'",
+            (str(data["className"]), org_id)).fetchall()
+    else:
+        return jsonify({"error": "userId ya da className gerekli."}), 400
+    done, skipped = 0, 0
+    for r in rows[:300]:
+        creds = _student_account_credentials("", r["school_number"])
+        if not creds:
+            skipped += 1
+            continue
+        db.execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?",
+                   (hash_password(creds[1]), r["id"]))
+        done += 1
+    db.commit()
+    log_audit(db, "STUDENT_PASSWORDS_RESET", resource_type="organization", resource_id=org_id)
+    return jsonify({"ok": True, "reset": done, "skipped": skipped})
+
+
+# ============================================================
+# API: Sinif ogretmeni - kendi sinifi icin ogrenci ekle / sil
+# ============================================================
+
+def _homeroom_class_for_session(db):
+    """Oturumdaki ogretmenin (DB'den taze okunan) sinif ogretmenligi sinifi."""
+    if session.get("role") != "teacher":
+        return None
+    row = db.execute("SELECT homeroom_class_name FROM users WHERE id=?", (session.get("user_id"),)).fetchone()
+    return ((row["homeroom_class_name"] if row else None) or "").strip() or None
+
+
+@app.route("/api/teacher/homeroom/students", methods=["POST"])
+@login_required(role="teacher")
+def api_homeroom_add_student():
+    db = get_db()
+    hc = _homeroom_class_for_session(db)
+    if not hc:
+        return jsonify({"error": "Sınıf öğretmeni olarak atanmadığınız için öğrenci ekleyemezsiniz."}), 403
+    org_id = _current_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul bulunamadı."}), 400
+    data = request.get_json(silent=True) or {}
+    school_number = str(data.get("schoolNumber") or "").strip()
+    first_name = (data.get("firstName") or "").strip()
+    last_name = (data.get("lastName") or "").strip()
+    if not school_number or not first_name or not last_name:
+        return jsonify({"error": "Okul no, ad ve soyad zorunlu."}), 400
+    wanted = school_number.lstrip("0") or "0"
+    for r in db.execute("SELECT school_number FROM students WHERE organization_id=?", (org_id,)).fetchall():
+        have = str(r[0] or "").strip()
+        if have and (have.lstrip("0") or "0") == wanted:
+            return jsonify({"error": "Bu okul numarası okulda zaten kayıtlı."}), 409
+    new_id = _platform_admin_next_id(db, "students", org_id)
+    db.execute(
+        "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+        "VALUES (?,?,?,?,?,?,'platform_admin')",
+        (new_id, org_id, school_number, first_name, last_name, hc),
+    )
+    db.commit()
+    run_v2_migration(db)
+    log_audit(db, "STUDENT_ADDED_BY_HOMEROOM", resource_type="student", resource_id=new_id)
+    return jsonify({"ok": True, "id": new_id, "className": hc})
+
+
+@app.route("/api/teacher/homeroom/students/<int:student_id>", methods=["DELETE"])
+@login_required(role="teacher")
+def api_homeroom_delete_student(student_id):
+    db = get_db()
+    hc = _homeroom_class_for_session(db)
+    if not hc:
+        return jsonify({"error": "Sınıf öğretmeni olarak atanmadığınız için öğrenci silemezsiniz."}), 403
+    org_id = _current_org_id(db)
+    row = db.execute(
+        "SELECT id, class_name, source FROM students WHERE id=? AND organization_id=?", (student_id, org_id)
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Öğrenci bulunamadı."}), 404
+    if (row["class_name"] or "").strip() != hc:
+        return jsonify({"error": "Yalnızca kendi sınıfınızdaki öğrencileri silebilirsiniz."}), 403
+    db.execute("DELETE FROM results WHERE student_id=?", (student_id,))
+    db.execute("DELETE FROM users WHERE student_id=? AND role='student' AND organization_id=?", (student_id, org_id))
+    if row["source"] == "browser_sync":
+        db.execute(
+            "INSERT OR IGNORE INTO student_tombstones (organization_id, student_id, deleted_by, deleted_at) "
+            "VALUES (?,?,?,?)", (org_id, student_id, session.get("user_id"), datetime.now().isoformat()))
+    db.execute("DELETE FROM students WHERE id=?", (student_id,))
+    db.commit()
+    run_v2_migration(db)
+    log_audit(db, "STUDENT_DELETED_BY_HOMEROOM", resource_type="student", resource_id=student_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/me/password", methods=["POST"])
