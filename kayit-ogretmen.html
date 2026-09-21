@@ -55,8 +55,11 @@
       <label for="displayName">Görünen İsim</label>
       <input type="text" id="displayName" required>
 
-      <label for="className">Sınıfınız</label>
-      <select id="className" required></select>
+      <label>Girdiğiniz Sınıflar <span style="font-weight:400;color:#94a3b8">(birden fazla seçebilirsiniz)</span></label>
+      <div id="class-checks" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+
+      <label for="homeroomClass">Sınıf Öğretmenliği <span style="font-weight:400;color:#94a3b8">(varsa)</span></label>
+      <select id="homeroomClass"><option value="">Sınıf öğretmeni değilim</option></select>
 
       <label for="username">Kullanıcı Adı</label>
       <input type="text" id="username" autocomplete="username" required>
@@ -89,22 +92,21 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Davet kodu geçersiz.');
         orgLine.textContent = `${data.organizationName} okuluna öğretmen olarak katılıyorsunuz`;
-        const classSelect = document.getElementById('className');
-        classSelect.innerHTML = '<option value="">Sınıf seçin...</option>' +
-          (data.classNames || []).map(c => `<option value="${c}">${c}</option>`).join('') +
-          '<option value="__other__">Diğer / listede yok</option>';
-        classSelect.addEventListener('change', () => {
-          if (classSelect.value === '__other__') {
-            const custom = prompt('Sınıfınızı yazın (örn: 8/A):');
-            if (custom) {
-              const opt = document.createElement('option');
-              opt.value = custom; opt.textContent = custom; opt.selected = true;
-              classSelect.insertBefore(opt, classSelect.firstChild.nextSibling);
-            } else {
-              classSelect.value = '';
-            }
-          }
-        });
+        const checks = document.getElementById('class-checks');
+        const homeroom = document.getElementById('homeroomClass');
+        const esc = (t) => String(t).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        checks.innerHTML = (data.classNames || []).map(c =>
+          `<label style="display:inline-flex;align-items:center;gap:6px;margin:0;padding:6px 10px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;font-weight:500;cursor:pointer">` +
+          `<input type="checkbox" class="class-check" value="${esc(c)}" style="width:auto;padding:0"> ${esc(c)}</label>`).join('') ||
+          '<span style="font-size:13px;color:#94a3b8">Okulda henüz sınıf tanımlı değil.</span>';
+        const syncHomeroom = () => {
+          const sel = [...document.querySelectorAll('.class-check:checked')].map(x => x.value);
+          const cur = homeroom.value;
+          homeroom.innerHTML = '<option value="">Sınıf öğretmeni değilim</option>' +
+            sel.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+          if (sel.includes(cur)) homeroom.value = cur;
+        };
+        checks.addEventListener('change', syncHomeroom);
         form.style.display = 'block';
       } catch (err) {
         orgLine.textContent = err.message;
@@ -114,6 +116,11 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errorBox.style.display = 'none';
+      if (!document.querySelector('.class-check:checked')) {
+        errorBox.textContent = 'En az bir sınıf seçin.';
+        errorBox.style.display = 'block';
+        return;
+      }
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;
       btn.textContent = 'Oluşturuluyor...';
@@ -126,7 +133,8 @@
             username: document.getElementById('username').value.trim(),
             password: document.getElementById('password').value,
             displayName: document.getElementById('displayName').value.trim(),
-            className: document.getElementById('className').value,
+            classNames: [...document.querySelectorAll('.class-check:checked')].map(x => x.value),
+            homeroomClass: document.getElementById('homeroomClass').value,
           }),
         });
         const data = await res.json();

@@ -4338,7 +4338,17 @@ def api_register_teacher():
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     display_name = (data.get("displayName") or "").strip() or username
-    class_name = (data.get("className") or "").strip()
+    # Coklu sinif: "classNames" listesi; eski istemciler icin tek "className".
+    raw_classes = data.get("classNames")
+    if not isinstance(raw_classes, list):
+        raw_classes = [data.get("className") or ""]
+    selected_classes = []
+    for c in raw_classes:
+        c = str(c or "").strip()
+        if c and c not in selected_classes:
+            selected_classes.append(c)
+    class_name = ",".join(selected_classes)
+    homeroom_class = (data.get("homeroomClass") or "").strip()
 
     db = get_db()
     org = db.execute(
@@ -4363,21 +4373,27 @@ def api_register_teacher():
     # SADECE o okulda GERCEKTEN var olan TEK bir sinifa izin vermeli; coklu
     # sinif/"*" erisimi yalnizca admin'in bilerek verdigi bir yetki devri
     # olabilir (bkz. /api/admin/users/<id>/delegate), self-servis degil.
-    if "*" in class_name or "," in class_name:
+    # Guvenlik: "*" (tum siniflar) self-servis VERILEMEZ; secilen her sinif o
+    # okulda GERCEKTEN var olmali. Sinif ogretmenligi (homeroom) secilen
+    # siniflardan biri olmak zorunda. Tum siniflara erisim yalnizca admin'in
+    # bilerek verdigi yetki devri (bkz. /api/admin/users/<id>/delegate).
+    if any("*" in c or "," in c for c in selected_classes):
         return jsonify({"error": "Geçersiz sınıf adı."}), 400
     valid_classes = {r["class_name"] for r in db.execute(
         "SELECT DISTINCT class_name FROM students WHERE organization_id = ? "
         "AND class_name IS NOT NULL AND class_name != ''",
         (org["id"],),
     ).fetchall()}
-    if class_name not in valid_classes:
-        return jsonify({"error": "Geçersiz sınıf. Lütfen listeden bir sınıf seçin."}), 400
+    if any(c not in valid_classes for c in selected_classes):
+        return jsonify({"error": "Geçersiz sınıf. Lütfen listeden sınıf seçin."}), 400
+    if homeroom_class and homeroom_class not in selected_classes:
+        return jsonify({"error": "Sınıf öğretmenliği, seçtiğiniz sınıflardan biri olmalı."}), 400
 
     cur = db.execute(
         "INSERT INTO users (username, password_hash, role, display_name, class_name, "
-        "organization_id, created_at) VALUES (?,?,?,?,?,?,?)",
+        "organization_id, created_at, homeroom_class_name) VALUES (?,?,?,?,?,?,?,?)",
         (username, hash_password(password), "teacher", display_name, class_name,
-         org["id"], datetime.now().isoformat()),
+         org["id"], datetime.now().isoformat(), homeroom_class or None),
     )
     db.commit()
     run_v2_migration(db)
@@ -7067,8 +7083,13 @@ def api_teacher_overview():
         key=lambda x: (x["latestNet"] is not None, x["latestNet"] or 0, x["avgNet"] or 0),
         reverse=True
     )
-    for idx, s_item in enumerate(sorted_by_net, 1):
-        s_item["rank"] = idx if s_item["latestNet"] is not None else None
+    # Sira, ogrencinin KENDI sinifi icinde hesaplanir (ogretmen birden fazla
+    # sinifa giriyorsa sinif sinif liste gosterilir).
+    _rank_counter = {}
+    for s_item in sorted_by_net:
+        _cls = s_item.get("class_name") or ""
+        _rank_counter[_cls] = _rank_counter.get(_cls, 0) + 1
+        s_item["rank"] = _rank_counter[_cls] if s_item["latestNet"] is not None else None
 
     exams_with_stats = []
     for e in exams:
