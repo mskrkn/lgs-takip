@@ -64,13 +64,14 @@ async function _omrQueueCount() {
   return (await _omrQueueGetAll()).length;
 }
 
-async function _omrUploadScan(examDefId, blob) {
+async function _omrUploadScan(examDefId, blob, extra) {
   const fd = new FormData();
   fd.append('examDefinitionId', examDefId);
-  fd.append('image', blob, 'scan.jpg');
+  fd.append('image', blob, (extra && extra.filename) || 'scan.jpg');
+  if (extra && extra.page) fd.append('page', extra.page);
   // Takili bir istek "busy" kilidini sonsuza kadar acik tutmasin diye zaman asimi.
   const opts = { method: 'POST', body: fd };
-  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(30000);
+  if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(extra && extra.page ? 60000 : 30000);
   const res = await fetch('/api/teacher/omr/scans', opts);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -129,8 +130,11 @@ function _omrOpenScanView(examDefId, examTitle) {
     <div style="padding:14px;background:#111;display:flex;align-items:center;justify-content:space-between;gap:10px">
       <span id="omr-scan-counter" style="font-size:13px;color:#ccc">0 tarandı</span>
       <button id="omr-scan-capture" style="width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid #888"></button>
-      <span style="width:60px"></span>
+      <button id="omr-scan-file-btn" type="button" title="Fotoğraf / PDF dosyası yükle" style="width:60px;background:transparent;border:1px solid #555;border-radius:10px;color:#ddd;font-size:22px">📁</button>
     </div>
+    <div id="omr-cam-fallback" style="display:none;position:absolute;inset:0;background:#0b1220;z-index:6;padding:20px;overflow-y:auto;text-align:center;flex-direction:column;align-items:center;justify-content:center;gap:12px"></div>
+    <input type="file" id="omr-file-camera" accept="image/*" capture="environment" style="display:none">
+    <input type="file" id="omr-file-pick" accept="image/jpeg,image/png,image/webp,application/pdf,.pdf,.jpg,.jpeg,.png" multiple style="display:none">
     <canvas id="omr-scan-canvas" style="display:none"></canvas>
     <canvas id="omr-scan-analysis-canvas" width="80" height="112" style="display:none"></canvas>
   `;
@@ -151,30 +155,113 @@ function _omrOpenScanView(examDefId, examTitle) {
   // .getUserMedia cagirmak senkron bir TypeError firlatip ekranin sessizce
   // siyah kalmasina yol acardi - bunun yerine acik bir Turkce aciklama
   // gosteriyoruz (gercek bir olayla dogrulandi: Android Chrome + LAN IP).
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    document.getElementById('omr-scan-hint').textContent =
-      '⚠️ Kamera bu bağlantıda kullanılamıyor. Tarayıcılar kamerayı sadece ' +
-      'HTTPS üzerinden (ya da bilgisayarda "localhost" ile) açmaya izin verir. ' +
-      'Telefondan LAN IP (http://192.168...) ile test ediyorsanız, staging ' +
-      'ortamının HTTPS adresini kullanın.';
-    return;
-  }
+  _omrStartCamera();
 
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } })
-    .then(stream => {
-      _omrScanState.stream = stream;
-      document.getElementById('omr-scan-video').srcObject = stream;
-      _omrScanAnalysisLoop();
-    })
-    .catch(err => {
-      document.getElementById('omr-scan-hint').textContent = 'Kamera açılamadı: ' + err.message;
-    });
-
+  document.getElementById('omr-file-camera').addEventListener('change', (e) => { _omrHandleFiles(e.target.files); e.target.value = ''; });
+  document.getElementById('omr-file-pick').addEventListener('change', (e) => { _omrHandleFiles(e.target.files); e.target.value = ''; });
+  document.getElementById('omr-scan-file-btn').addEventListener('click', () => document.getElementById('omr-file-pick').click());
   document.getElementById('omr-scan-close').addEventListener('click', _omrCloseScanView);
   document.getElementById('omr-scan-capture').addEventListener('click', _omrCaptureFrame);
 
   _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
   _omrQueueCount().then(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
+}
+
+// Kamera açılamazsa (desteklenmiyor / izin reddedildi / kullanımda / HTTPS yok)
+// sistem kullanılamaz hale gelmez: fotoğraf çek/yükle, dosya seç, tekrar dene.
+function _omrStartCamera() {
+  const fb = document.getElementById('omr-cam-fallback');
+  if (fb) fb.style.display = 'none';
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    _omrShowCameraFallback(window.isSecureContext
+      ? 'Bu tarayıcı kamera erişimini desteklemiyor.'
+      : 'Kamera yalnızca güvenli (HTTPS) bağlantıda açılır.');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } })
+    .then(stream => {
+      if (!_omrScanState) { stream.getTracks().forEach(t => t.stop()); return; }
+      _omrScanState.stream = stream;
+      const v = document.getElementById('omr-scan-video');
+      v.srcObject = stream;
+      const p = v.play && v.play();
+      if (p && p.catch) p.catch(() => {});
+      _omrScanAnalysisLoop();
+    })
+    .catch(err => {
+      const name = err && err.name;
+      const why = name === 'NotAllowedError' || name === 'SecurityError'
+        ? 'Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamerayı etkinleştirin.'
+        : name === 'NotFoundError' || name === 'OverconstrainedError'
+          ? 'Bu cihazda kamera bulunamadı.'
+          : name === 'NotReadableError'
+            ? 'Kamera başka bir uygulama tarafından kullanılıyor.'
+            : 'Kamera açılamadı' + (err && err.message ? ': ' + err.message : '.');
+      _omrShowCameraFallback(why);
+    });
+}
+
+function _omrShowCameraFallback(reason) {
+  const fb = document.getElementById('omr-cam-fallback');
+  if (!fb) return;
+  const btn = 'width:100%;max-width:320px;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;color:#fff;cursor:pointer;background:#4f46e5';
+  fb.innerHTML = `
+    <div style="font-size:40px">📷</div>
+    <div style="font-size:18px;font-weight:700">Kamera kullanılamıyor</div>
+    <div style="font-size:14px;color:#9ca3af;max-width:340px">${_omrEsc(reason || '')}</div>
+    <div style="font-size:13px;color:#9ca3af;max-width:340px">Kağıdı fotoğraflayıp ya da tarayıcıdan aldığınız JPEG/PNG/PDF dosyasını yükleyerek devam edebilirsiniz.</div>
+    <button type="button" id="omr-fb-photo" style="${btn}">📸 Fotoğraf Yükle</button>
+    <button type="button" id="omr-fb-file" style="${btn};background:#0f766e">📁 Dosya Seç (JPEG / PNG / PDF)</button>
+    <button type="button" id="omr-fb-retry" style="${btn};background:#374151">🔄 Tekrar Dene</button>
+    <button type="button" id="omr-fb-close" style="${btn};background:transparent;border:1px solid #555">✕ Kapat</button>`;
+  fb.style.display = 'flex';
+  fb.querySelector('#omr-fb-photo').onclick = () => document.getElementById('omr-file-camera').click();
+  fb.querySelector('#omr-fb-file').onclick = () => document.getElementById('omr-file-pick').click();
+  fb.querySelector('#omr-fb-retry').onclick = () => _omrStartCamera();
+  fb.querySelector('#omr-fb-close').onclick = _omrCloseScanView;
+}
+
+// Dosyadan yükleme (fotoğraf / JPEG / PNG / PDF - PDF'de her sayfa ayrı kağıt).
+async function _omrHandleFiles(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length || !_omrScanState) return;
+  const st = _omrScanState;
+  const hint = document.getElementById('omr-scan-hint');
+  const say = (t) => { if (hint) hint.textContent = t; };
+  if (st.busy) { say('⏳ Önceki yükleme sürüyor, lütfen bekleyin.'); return; }
+  st.busy = true;
+  let okCount = 0;
+  const failed = [];
+  const MAX_MB = 20;
+  try {
+    for (const file of files) {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      const isImg = /^image\/(jpeg|png|webp)$/.test(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
+      if (!isPdf && !isImg) { failed.push(`${file.name}: desteklenmeyen tür (JPEG, PNG veya PDF olmalı)`); continue; }
+      if (file.size > MAX_MB * 1024 * 1024) { failed.push(`${file.name}: dosya ${MAX_MB} MB'tan büyük`); continue; }
+      try {
+        let pages = isPdf ? 1 : 0; // 0: tek görsel
+        for (let page = 1; !pages || page <= pages; page++) {
+          say(isPdf ? `⏳ ${file.name} — sayfa ${page}${pages > 1 ? '/' + pages : ''} okunuyor…` : `⏳ ${file.name} okunuyor…`);
+          const data = await _omrUploadScan(st.examDefId, file, isPdf ? { page, filename: file.name } : { filename: file.name });
+          if (isPdf && page === 1) pages = data.pageCount || 1;
+          if (_omrScanState) _omrHandleScanResponse(data);
+          okCount++;
+          if (!isPdf) break;
+        }
+      } catch (err) {
+        const net = err instanceof TypeError || err.name === 'TimeoutError' || err.name === 'AbortError';
+        failed.push(`${file.name}: ${net ? 'bağlantı hatası — internet bağlantınızı kontrol edip tekrar deneyin' : (err.message || 'yüklenemedi')}`);
+      }
+    }
+  } finally {
+    if (_omrScanState) _omrScanState.busy = false;
+  }
+  say(failed.length
+    ? `⚠️ ${okCount} kağıt okundu, ${failed.length} dosya başarısız: ${failed.join(' | ')}`
+    : `✅ ${okCount} kağıt okundu — aşağıdaki karttan onaylayın.`);
+  const fb = document.getElementById('omr-cam-fallback');
+  if (fb && okCount) fb.style.display = 'none';
 }
 
 function _omrCloseScanView() {

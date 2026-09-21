@@ -6114,6 +6114,28 @@ def _omr_net(correct, wrong):
     return max(0, round(correct - wrong / 3, 2))
 
 
+def _render_pdf_page_to_png(pdf_bytes, page_no):
+    """PDF'in page_no. sayfasini (1'den baslar) 200 dpi PNG'ye cevirir.
+    Doner: (png_bytes, toplam_sayfa). Gecersiz sayfa -> ValueError."""
+    try:
+        import pymupdf as fitz_mod
+    except ImportError:
+        import fitz as fitz_mod
+    doc = fitz_mod.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        total = doc.page_count
+        if total < 1:
+            raise ValueError("PDF'de sayfa bulunamadı.")
+        if total > 500:
+            raise ValueError("PDF çok büyük (en fazla 500 sayfa).")
+        if page_no < 1 or page_no > total:
+            raise ValueError("Geçersiz PDF sayfası.")
+        pix = doc.load_page(page_no - 1).get_pixmap(dpi=200)
+        return pix.tobytes("png"), total
+    finally:
+        doc.close()
+
+
 def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
     """Kamera ekranindaki anlik sonuc karti icin bir omr_scans satirinin ozeti
     (ogrenci adi/no/sinif, D/Y/B, net, durum). Yukleme yaniti ve 'zaten
@@ -6174,9 +6196,26 @@ def api_teacher_omr_upload_scan():
         ext = ".jpg"
 
     os.makedirs(OMR_SCANS_DIR, exist_ok=True)
+    image_bytes = image.read()
+    pdf_page_count = None
+    # Masaustu/dosya yukleme yolu: PDF ise secilen sayfa gorsele cevrilir
+    # (form 'page' alani, 1'den baslar); istemci pageCount ile diger sayfalari
+    # sirayla gonderir. Dosya turu UZANTIYA DEGIL icerige (magic bytes) bakilarak
+    # dogrulanir.
+    if image_bytes[:5] == b"%PDF-":
+        try:
+            image_bytes, pdf_page_count = _render_pdf_page_to_png(image_bytes, request.form.get("page", 1, type=int) or 1)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception:
+            traceback.print_exc()
+            return jsonify({"error": "PDF dosyası okunamadı. Dosya bozuk ya da şifreli olabilir."}), 400
+        ext = ".png"
+    elif not (image_bytes[:3] == b"\xff\xd8\xff" or image_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+              or (image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP")):
+        return jsonify({"error": "Desteklenmeyen dosya türü. JPEG, PNG veya PDF yükleyin."}), 400
     filename = f"{secrets.token_hex(16)}{ext}"
     image_path = os.path.join(OMR_SCANS_DIR, filename)
-    image_bytes = image.read()
     with open(image_path, "wb") as f:
         f.write(image_bytes)
 
@@ -6250,7 +6289,10 @@ def api_teacher_omr_upload_scan():
                 os.remove(image_path)
             except OSError:
                 pass
-            return jsonify(_omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)), 200
+            card = _omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)
+            if pdf_page_count:
+                card["pageCount"] = pdf_page_count
+            return jsonify(card), 200
 
     now = datetime.now().isoformat()
     cur = db.execute(
@@ -6263,7 +6305,10 @@ def api_teacher_omr_upload_scan():
     db.commit()
     log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
     new_scan = db.execute("SELECT * FROM omr_scans WHERE id = ?", (cur.lastrowid,)).fetchone()
-    return jsonify(_omr_scan_card(db, new_scan, warnings, duplicate=False, processing_ms=pipeline_ms)), 201
+    card = _omr_scan_card(db, new_scan, warnings, duplicate=False, processing_ms=pipeline_ms)
+    if pdf_page_count:
+        card["pageCount"] = pdf_page_count
+    return jsonify(card), 201
 
 
 # ============================================================
