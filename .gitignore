@@ -62,3 +62,9 @@ form Okutma Ayarlar#U0131 ve #U00f6rnet formatlar/
 
 # Eski sunucu koduna ait yedek dosyalar
 *.bak
+
+# SQLite calisma dosyalari - ASLA surum kontrolune girmemeli (canli veritabanini bozabilir)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite

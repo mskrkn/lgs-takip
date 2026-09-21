@@ -149,6 +149,29 @@ APP_ENV = os.environ.get("EDUPUSULA_ENV", "production")
 app = Flask(__name__, static_folder=None)
 
 
+# Cloudflare tarayici onbellek suresini (Browser Cache TTL) origin basligindan
+# bagimsiz olarak ~4 saate cikariyor: yeni bir deploy'dan sonra kullanicilar
+# saatlerce ESKI js/css dosyalarini goruyordu ("sert yenileme" bile yetmiyordu).
+# HTML yanitlarinda js/css baglantilarina surec-baslangic surumu eklenir
+# (?v=...) - her deploy/yeniden baslatmada URL degisir, eski onbellek atlanir.
+_ASSET_VERSION = str(int(time.time()))
+_ASSET_LINK_RE = re.compile(r'((?:src|href)=")((?:\./)?(?:js|css)/[^"?#]+\.(?:js|css))(")')
+
+
+@app.after_request
+def _version_static_assets(resp):
+    try:
+        if resp.status_code == 200 and resp.content_type and resp.content_type.startswith("text/html"):
+            resp.direct_passthrough = False
+            body = resp.get_data(as_text=True)
+            new_body = _ASSET_LINK_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}?v={_ASSET_VERSION}{m.group(3)}", body)
+            if new_body != body:
+                resp.set_data(new_body)
+    except Exception:
+        pass
+    return resp
+
+
 _PW_CHANGE_ALLOWED = ("/api/login", "/api/logout", "/api/me", "/api/me/credentials", "/api/meta")
 
 
