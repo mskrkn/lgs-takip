@@ -1751,6 +1751,10 @@ const App = {
 
   buildStudentsTable(students, rankMap, latestExam) {
     const columns = [
+      { label: '<input type="checkbox" title="Görünenlerin hepsini seç" onclick="event.stopPropagation(); App.toggleAllStudentSelection(this.checked)">',
+        align: 'center', render: (row) => row.source === 'platform_admin'
+          ? ''
+          : `<input type="checkbox" class="student-select-cb" data-id="${row.id}" ${this._selStudents.has(row.id) ? 'checked' : ''} onclick="event.stopPropagation(); App.toggleStudentSelection(${row.id}, this.checked)">` },
       { label: '#', render: (row, idx) => idx + 1, align: 'center' },
       { label: 'Okul No', key: 'schoolNumber' },
       { label: 'Ad Soyad', render: (row) => `
@@ -1781,6 +1785,7 @@ const App = {
         <div style="display:flex;gap:4px;justify-content:center;align-items:center">
           <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); App.showAddStudentResultModal(${row.id})" title="Bu öğrenciye deneme sonucu gir">➕ Sonuç Gir</button>
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); App.navigateTo('student-profile', { studentId: ${row.id} })">Profil</button>
+          ${row.source === 'platform_admin' ? '' : `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); App.showEditStudentModal(${row.id})" title="Sınıfı / bilgileri düzenle">✏️</button>`}
           ${row.source === 'platform_admin' ? '' : `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); App.deleteStudent(${row.id})" title="Öğrenciyi Sil">🗑</button>`}
         </div>
       `
@@ -1794,6 +1799,7 @@ const App = {
   // Serbest metin arama + sınıf kademesi + şube filtrelerini birlikte
   // uygular, sonuçları isim sırasına göre listeler.
   async filterStudentsManual() {
+    this._selStudents = new Set();
     const query = (document.getElementById('students-filter')?.value || '').trim();
     const grade = document.getElementById('students-grade-filter')?.value || '';
     const branch = document.getElementById('students-branch-filter')?.value || '';
@@ -1824,12 +1830,170 @@ const App = {
 
     const backBtn = this._cameFromHierarchy ? `<button class="btn btn-secondary btn-sm mb-2" onclick="App.resetStudentsHierarchy()">◀ Kademelere Dön</button>` : '';
     container.innerHTML = backBtn + (students.length
-      ? this.buildStudentsTable(students, rankMap, latestExam)
+      ? '<div id="students-bulk-bar"></div>' + this.buildStudentsTable(students, rankMap, latestExam)
       : '<p class="text-muted" style="text-align:center;padding:20px 0">Eşleşen öğrenci bulunamadı.</p>');
   },
 
   goToStudentProfile(studentId) {
     App.navigateTo('student-profile', { studentId });
+  },
+
+  // ---- Sınıf yönetimi: düzenle / toplu sınıfa taşı / toplu sil ----
+  _selStudents: new Set(),
+
+  toggleStudentSelection(id, checked) {
+    if (checked) this._selStudents.add(Number(id)); else this._selStudents.delete(Number(id));
+    this._renderStudentBulkBar();
+  },
+
+  toggleAllStudentSelection(checked) {
+    document.querySelectorAll('.student-select-cb').forEach(cb => {
+      cb.checked = checked;
+      const id = Number(cb.dataset.id);
+      if (checked) this._selStudents.add(id); else this._selStudents.delete(id);
+    });
+    this._renderStudentBulkBar();
+  },
+
+  _renderStudentBulkBar() {
+    const bar = document.getElementById('students-bulk-bar');
+    if (!bar) return;
+    const n = this._selStudents.size;
+    bar.innerHTML = n ? `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;margin-bottom:10px;border-radius:10px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.35)">
+        <strong>${n} öğrenci seçildi</strong>
+        <button class="btn btn-primary btn-sm" onclick="App.showMoveStudentsModal()">🔀 Sınıfa Taşı</button>
+        <button class="btn btn-danger btn-sm" onclick="App.deleteSelectedStudents()">🗑 Seçilenleri Sil</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.toggleAllStudentSelection(false)">Seçimi Temizle</button>
+      </div>` : '';
+  },
+
+  _classOptionsHtml(selected = '') {
+    const classes = [...new Set((this._allStudentsCache || []).map(s => s.className).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+    return classes.map(c => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
+  },
+
+  showEditStudentModal(id) {
+    const s = (this._allStudentsCache || []).find(x => x.id === Number(id));
+    if (!s) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.id = 'edit-student-modal';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h2>✏️ Öğrenciyi Düzenle</h2>
+          <button class="modal-close" onclick="document.getElementById('edit-student-modal')?.remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Okul No</label>
+              <input type="text" class="form-input" id="edit-student-number" value="${(s.schoolNumber || '').replace(/"/g, '&quot;')}"></div>
+            <div class="form-group"><label class="form-label">Sınıf</label>
+              <input type="text" class="form-input" id="edit-student-class" list="edit-student-class-list" value="${(s.className || '').replace(/"/g, '&quot;')}" placeholder="Örn: 8/A">
+              <datalist id="edit-student-class-list">${this._classOptionsHtml()}</datalist></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Ad</label>
+              <input type="text" class="form-input" id="edit-student-firstname" value="${(s.firstName || '').replace(/"/g, '&quot;')}"></div>
+            <div class="form-group"><label class="form-label">Soyad</label>
+              <input type="text" class="form-input" id="edit-student-lastname" value="${(s.lastName || '').replace(/"/g, '&quot;')}"></div>
+          </div>
+          <p class="text-muted" style="font-size:12.5px">Sınıf değiştirmek öğrencinin geçmiş deneme sonuçlarını korur; yalnızca sınıfı güncellenir.</p>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:space-between">
+          <button class="btn btn-ghost" onclick="document.getElementById('edit-student-modal')?.remove()">İptal</button>
+          <button class="btn btn-primary" onclick="App.saveEditedStudent(${s.id})">💾 Kaydet</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  },
+
+  async saveEditedStudent(id) {
+    const schoolNumber = document.getElementById('edit-student-number')?.value?.trim();
+    const firstName = document.getElementById('edit-student-firstname')?.value?.trim();
+    const lastName = document.getElementById('edit-student-lastname')?.value?.trim();
+    const className = document.getElementById('edit-student-class')?.value?.trim();
+    if (!schoolNumber || !firstName || !lastName) {
+      UI.toast('Okul no, ad ve soyad zorunludur', 'warning');
+      return;
+    }
+    const dup = (this._allStudentsCache || []).find(x => x.id !== Number(id) && String(x.schoolNumber) === schoolNumber);
+    if (dup) {
+      UI.toast(`Bu okul numarası başka bir öğrencide var (${dup.firstName} ${dup.lastName}).`, 'warning');
+      return;
+    }
+    await db.updateStudent(id, { schoolNumber, firstName, lastName, className });
+    document.getElementById('edit-student-modal')?.remove();
+    UI.toast('Öğrenci güncellendi', 'success');
+    await this._refreshStudentsKeepFilters();
+  },
+
+  showMoveStudentsModal() {
+    const n = this._selStudents.size;
+    if (!n) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.id = 'move-students-modal';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h2>🔀 ${n} Öğrenciyi Sınıfa Taşı</h2>
+          <button class="modal-close" onclick="document.getElementById('move-students-modal')?.remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">Hedef sınıf</label>
+            <input type="text" class="form-input" id="move-target-class" list="move-target-class-list" placeholder="Listeden seçin ya da yeni yazın (örn: 8/C)">
+            <datalist id="move-target-class-list">${this._classOptionsHtml()}</datalist></div>
+          <p class="text-muted" style="font-size:12.5px">Öğrencilerin geçmiş deneme sonuçları korunur; yalnızca sınıfları değişir.</p>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:space-between">
+          <button class="btn btn-ghost" onclick="document.getElementById('move-students-modal')?.remove()">İptal</button>
+          <button class="btn btn-primary" onclick="App.applyMoveStudents()">Taşı</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  },
+
+  async applyMoveStudents() {
+    const target = document.getElementById('move-target-class')?.value?.trim();
+    if (!target) { UI.toast('Hedef sınıfı yazın veya seçin', 'warning'); return; }
+    let moved = 0;
+    for (const id of this._selStudents) {
+      const s = (this._allStudentsCache || []).find(x => x.id === id);
+      if (!s || s.source === 'platform_admin') continue;
+      await db.updateStudent(id, { className: target });
+      moved++;
+    }
+    document.getElementById('move-students-modal')?.remove();
+    UI.toast(`${moved} öğrenci ${target} sınıfına taşındı`, 'success');
+    await this._refreshStudentsKeepFilters();
+  },
+
+  async deleteSelectedStudents() {
+    const ids = [...this._selStudents];
+    if (!ids.length) return;
+    const ok = await UI.confirm(`${ids.length} öğrenci ve TÜM deneme sonuçları silinecek. Bu işlem geri alınamaz. Emin misiniz?\n(Sınıf değiştiren öğrenciler için silmek yerine "Sınıfa Taşı"yı kullanın.)`);
+    if (!ok) return;
+    for (const id of ids) {
+      const s = (this._allStudentsCache || []).find(x => x.id === id);
+      if (s && s.source === 'platform_admin') continue;
+      await db.deleteStudent(id);
+    }
+    UI.toast(`${ids.length} öğrenci silindi`, 'success');
+    await this._refreshStudentsKeepFilters();
+  },
+
+  async _refreshStudentsKeepFilters() {
+    const q = document.getElementById('students-filter')?.value || '';
+    const g = document.getElementById('students-grade-filter')?.value || '';
+    const b = document.getElementById('students-branch-filter')?.value || '';
+    await this.renderStudents();
+    const qi = document.getElementById('students-filter'); if (qi) qi.value = q;
+    const gi = document.getElementById('students-grade-filter'); if (gi) gi.value = g;
+    const bi = document.getElementById('students-branch-filter'); if (bi) bi.value = b;
+    if (q || g || b) await this.filterStudentsManual();
   },
 
   async deleteStudent(id) {
