@@ -52,6 +52,7 @@
 
     // ---- Sayfa Geçişleri ----
     function showPage(page) {
+      if (window.NavHistory) NavHistory.record(page);
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.classList.toggle('active', item.dataset.page === page);
       });
@@ -85,6 +86,7 @@
     }
 
     function setupNav() {
+      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.addEventListener('click', () => {
           showPage(item.dataset.page);

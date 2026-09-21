@@ -447,6 +447,13 @@ const App = {
 
   // ---- Navigation ----
   setupNavigation() {
+    // Android/tarayıcı geri tuşu: önceki uygulama sayfasına dön
+    if (window.NavHistory) {
+      NavHistory.init((page, data) => {
+        if (this._navHistory.length && this._navHistory[this._navHistory.length - 1].page === page) this._navHistory.pop();
+        return this.navigateTo(page, data, true);
+      });
+    }
     // Sidebar items
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
       item.addEventListener('click', () => {
@@ -473,6 +480,7 @@ const App = {
       this._navHistory.push({ page: this.currentPage, data: this._currentPageData || {} });
     }
     this._currentPageData = data;
+    if (window.NavHistory) NavHistory.record(page, data);
 
     // Update active nav in sidebar and mobile bottom nav
     document.querySelectorAll('.nav-item[data-page]').forEach(item => {
