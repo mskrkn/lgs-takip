@@ -50,7 +50,7 @@ self.addEventListener('message', async (ev) => {
   if (msg.type === 'align') {
     try {
       const imageData = { data: new Uint8ClampedArray(msg.buffer), width: msg.width, height: msg.height };
-      const qr = OmrWorkerCore.detectQr(jsQR, imageData);
+      const qr = OmrWorkerCore.detectQr(jsQR, imageData, cvReady);
       self.postMessage({
         type: 'alignResult',
         qrFound: !!qr,

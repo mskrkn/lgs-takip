@@ -582,18 +582,18 @@ function _omrManualCapture() {
   _omrCaptureFrame();
 }
 
+// Onizlemede "hazir" (QR bulundu) sinyali gelir gelmez tam cozunurluklu
+// kareyi HEMEN cekmek yerine, kisa bir "yerlesme" suresi bekleyip DAHA SONRA
+// cekilen kareyi kullaniyoruz - el titremesi/otofokus, "hazir" ani ile tam
+// cekim ani arasindaki en yaygin bulanikligi bu kadarcik bir gecikmeyle
+// buyuk olcude azaltiyor (bkz. gercek kullanici raporu: onizleme QR'i
+// buluyor ama hemen ardindan tam cozunurluklu cekimde bulamiyordu).
+const OMR_CAPTURE_SETTLE_MS = 150;
+
 function _omrCaptureFrame() {
   if (!_omrScanState || _omrScanState.busy || _omrWorkerState !== 'ready') return;
-  const video = document.getElementById('omr-scan-video');
-  const canvas = document.getElementById('omr-scan-canvas');
-  if (!video || !video.videoWidth) return;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-
-  // Ayni kagidi tekrar tekrar cekmemek icin: yukleme bitene kadar (busy) ve
-  // kagit kadrajdan cikana kadar (awaitingRemoval) otomatik cekim kilitli.
+  // busy'i HEMEN isaretle - "yerlesme" beklerken ayni kagit icin ikinci bir
+  // cekim tetiklenmesin (align dongusu 180ms'de bir calismaya devam ediyor).
   _omrScanState.busy = true;
   _omrScanState.awaitingRemoval = true;
   _omrScanState.notReadySince = 0;
@@ -608,6 +608,15 @@ function _omrCaptureFrame() {
 
   (async () => {
     const hintEl = document.getElementById('omr-scan-hint');
+    await new Promise((r) => setTimeout(r, OMR_CAPTURE_SETTLE_MS));
+    if (!_omrScanState) return;
+    const video = document.getElementById('omr-scan-video');
+    const canvas = document.getElementById('omr-scan-canvas');
+    if (!video || !video.videoWidth) { _omrScanState.busy = false; _omrScanState.awaitingRemoval = false; return; }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0); // yerlesme suresinden SONRAKI (guncel) kare
     let imageData;
     try {
       imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
