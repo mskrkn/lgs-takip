@@ -271,7 +271,7 @@ async function _omrOpenScanView(examDefId, examTitle) {
     uploaded: 0, queued: 0, ready: false, readySince: 0,
     // Cift okuma engeli: cekimden sonra kagit kadrajdan CIKANA kadar otomatik
     // cekim kilitli (awaitingRemoval); yukleme surerken (busy) de yeni cekim yok.
-    awaitingRemoval: false, notReadySince: 0, busy: false,
+    awaitingRemoval: false, notReadySince: 0, readyDropoutSince: 0, busy: false,
     approved: 0, pendingIds: new Set(), card: null,
   };
 
@@ -459,10 +459,17 @@ function _omrUpdateCounter() {
   el.textContent = parts.join(' · ');
 }
 
-// Hafif önizleme döngüsü: küçük (480px) bir kareyi periyodik olarak Worker'a
+// Hafif önizleme döngüsü: küçük bir kareyi periyodik olarak Worker'a
 // gönderip GERÇEK QR tespitiyle 🔴🟡🟢 durumunu günceller (bkz.
 // omrWorker.js 'align' mesajı) - ağır balon okuma/perspektif düzeltme burada
 // YAPILMAZ, sadece "kağıt kadrajda mı" sorusuna hızlı cevap.
+// GENİŞLİK 480 DEĞİL 720: gerçek bir kullanıcı raporuyla ("hazır" yazısı
+// çıkıyor ama otomatik çekim hiç tetiklenmiyor) doğrulandı - jsQR, kağıt
+// TÜM kareyi doldurduğu EN İYİ senaryoda bile 480px'te QR'ı ancak sınırda
+// buluyor (bkz. omr_node_test/test_align_res.js); gerçek kullanımda kağıt
+// karenin sadece bir kısmını kapladığından bu çok daha sık başarısız olup
+// "hazır" durumunu SÜREKLİ sıfırlıyordu (aşağıdaki HOLD döngüsü hiçbir
+// zaman gerekli süreye ulaşamıyordu). 720px'te tespit güvenilir.
 function _omrScanAnalysisLoop() {
   if (!_omrScanState) return;
   if (_omrWorkerState === 'ready' && !_omrAlignInFlight) {
@@ -471,7 +478,7 @@ function _omrScanAnalysisLoop() {
     if (video && video.videoWidth && canvas) {
       try {
         const vw = video.videoWidth, vh = video.videoHeight;
-        const targetW = 480, targetH = Math.max(1, Math.round(vh * (targetW / vw)));
+        const targetW = 720, targetH = Math.max(1, Math.round(vh * (targetW / vw)));
         if (canvas.width !== targetW || canvas.height !== targetH) { canvas.width = targetW; canvas.height = targetH; }
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(video, 0, 0, targetW, targetH);
@@ -489,6 +496,9 @@ function _omrScanAnalysisLoop() {
 }
 
 const OMR_AUTO_CAPTURE_HOLD_MS = 300;
+// Bkz. _omrApplyReadyState - "hazir" durumundayken TEK bir kotu align
+// karesi butun HOLD ilerlemesini sifirlamasin diye kisa tolerans.
+const OMR_READY_DROPOUT_GRACE_MS = 500;
 // Kagit bu kadar sure kadrajdan CIKMIS (hazir degil) gorunmeden ayni kagit
 // yeniden otomatik okunmaz.
 const OMR_REARM_ABSENT_MS = 300;
@@ -533,16 +543,29 @@ function _omrApplyReadyState(ready, hint) {
   if (!frame) return;
   frame.style.borderColor = ready ? '#22c55e' : 'rgba(255,255,255,0.7)';
 
+  // TEK bir "hazır değil" karesi (el titremesi, anlık odak kayması, jsQR'ın
+  // arada bir kaçırması) tüm ilerlemeyi SIFIRLAMAZ - kısa bir tolerans
+  // penceresi (OMR_READY_DROPOUT_GRACE_MS) var; bu olmadan "hazır" durumu
+  // gerçek kullanımda neredeyse hiç HOLD süresine ulaşamıyordu (bkz.
+  // yukarısı, kullanıcı raporu: "hazır çıktıktan sonra çekim olmuyor").
   if (ready) {
+    _omrScanState.readyDropoutSince = 0;
     if (!_omrScanState.ready) {
       _omrScanState.ready = true;
       _omrScanState.readySince = now;
     } else if (now - _omrScanState.readySince > OMR_AUTO_CAPTURE_HOLD_MS) {
       _omrScanState.ready = false; // tekrar tetiklenmeden once yeniden "hazir" olmali
+      _omrScanState.readyDropoutSince = 0;
       _omrCaptureFrame();
     }
-  } else {
-    _omrScanState.ready = false;
+  } else if (_omrScanState.ready) {
+    if (!_omrScanState.readyDropoutSince) {
+      _omrScanState.readyDropoutSince = now;
+    } else if (now - _omrScanState.readyDropoutSince > OMR_READY_DROPOUT_GRACE_MS) {
+      _omrScanState.ready = false;
+      _omrScanState.readyDropoutSince = 0;
+    }
+    // Tolerans penceresi icindeyken readySince'e DOKUNULMAZ - HOLD ilerlemesi korunur.
   }
 }
 
