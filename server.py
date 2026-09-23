@@ -5593,6 +5593,135 @@ def api_teacher_omr_get_exam(exam_def_id):
     return jsonify(result)
 
 
+def _omr_regrade_exam(db, exam_def, org_id, new_answer_key):
+    """Cevap anahtari degistiginde, bu teste ait TUM taramalari (needs_review
+    ve approved) yeni anahtarla yeniden degerlendirir. Onayli olanlarin sonucu
+    (results tablosu) da guncellenir - aksi halde ogretmen hatayi duzeltse
+    bile ogrenciler eski/yanlis notu gormeye devam ederdi. Rejected taramalara
+    dokunulmaz (zaten sayilmiyorlar). Doner: (regraded_count, results_updated)."""
+    scans = db.execute(
+        "SELECT * FROM omr_scans WHERE exam_definition_id = ? AND organization_id = ? "
+        "AND status IN ('needs_review','approved') AND per_question_json IS NOT NULL",
+        (exam_def["id"], org_id),
+    ).fetchall()
+    if not scans:
+        return 0, 0
+
+    subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (exam_def["subject_id"],)).fetchone()
+    subject_key = subject_row["code"] if subject_row else "optik_genel"
+    _outcome_to_code = {"correct": "D", "wrong": "Y", "blank": "B", "multi": "B", "ambiguous": "B"}
+
+    results_updated = 0
+    for scan in scans:
+        payload = json.loads(scan["per_question_json"])
+        graded, summary = _grade_omr_questions(payload["questions"], new_answer_key)
+        payload["questions"] = graded
+        payload["summary"] = summary
+        db.execute(
+            "UPDATE omr_scans SET per_question_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), datetime.now().isoformat(), scan["id"]),
+        )
+        if scan["status"] == "approved" and scan["student_id"] and exam_def["exam_id"]:
+            correct, wrong = summary["correct"], summary["wrong"]
+            blank = summary["blank"] + summary["flagged"]
+            net = _omr_net(correct, wrong)
+            answers = [_outcome_to_code[q["outcome"]] for q in graded]
+            existing = db.execute(
+                "SELECT id, source, data_json FROM results WHERE student_id = ? AND exam_id = ?",
+                (scan["student_id"], exam_def["exam_id"]),
+            ).fetchone()
+            # Yalnizca bu taramanin kendi yazdigi ('omr_scan') sonuc guncellenir -
+            # okulun kendi senkronundan (browser_sync) gelen bir kayda asla
+            # dokunulmaz (bkz. api_teacher_omr_approve_scan'daki ayni koruma).
+            if existing and existing["source"] == "omr_scan":
+                result_payload = json.loads(existing["data_json"] or "{}")
+                result_payload.setdefault("subjects", {})[subject_key] = {
+                    "correct": correct, "wrong": wrong, "blank": blank, "net": net, "answers": answers,
+                }
+                db.execute("UPDATE results SET data_json = ? WHERE id = ?",
+                           (json.dumps(result_payload, ensure_ascii=False), existing["id"]))
+                results_updated += 1
+    return len(scans), results_updated
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>", methods=["PUT"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_update_exam(exam_def_id):
+    """Kaydedilmis bir Kazanim Testi tanimi UZERINDE duzeltme - ozellikle
+    yanlis girilmis cevap anahtarinin duzeltilmesi (bkz. kullanici bildirimi:
+    'test olusturduktan sonra hatalar duzeltilemiyordu'). Soru sayisi ve ders
+    BILEREK degistirilemez - fiziksel form (omr_form.py) ve zaten yazilmis
+    Konu/Kazanim analiz anahtarlari (topicMap) bu ikisine sabitlenmis; sinav
+    bicimi degismesi gerekiyorsa yeni bir test tanimlanmali."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT * FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    is_admin = session.get("role") in ("admin", "super_admin")
+    if not is_admin and exam_def["created_by"] != session.get("user_id"):
+        return jsonify({"error": "Bu testi yalnızca oluşturan öğretmen ya da yönetici düzenleyebilir."}), 403
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "Test adı gerekli."}), 400
+    question_count = exam_def["question_count"]
+    answer_key = data.get("answerKey")
+    if not isinstance(answer_key, dict) or not answer_key:
+        return jsonify({"error": "Cevap anahtarı gerekli."}), 400
+    for q_no in range(1, question_count + 1):
+        ans = answer_key.get(str(q_no))
+        if ans not in ("A", "B", "C", "D"):
+            return jsonify({"error": f"{q_no}. sorunun cevabı eksik ya da geçersiz."}), 400
+    grade_level = (data.get("gradeLevel") or "").strip() or None
+    topic = (data.get("topic") or "").strip() or None
+    kazanim_kodu = (data.get("kazanimKodu") or "").strip() or None
+    kazanim_adi = (data.get("kazanimAdi") or "").strip() or None
+    curriculum_range = data.get("curriculumRange")
+    if curriculum_range is not None and not isinstance(curriculum_range, list):
+        return jsonify({"error": "Geçersiz kazanım aralığı."}), 400
+
+    old_answer_key = json.loads(exam_def["answer_key_json"] or "{}")
+    answer_key_changed = old_answer_key != answer_key
+
+    db.execute(
+        "UPDATE omr_exam_definitions SET title=?, grade_level=?, topic=?, kazanim_kodu=?, kazanim_adi=?, "
+        "answer_key_json=?, curriculum_range_json=? WHERE id=?",
+        (title, grade_level, topic, kazanim_kodu, kazanim_adi, json.dumps(answer_key, ensure_ascii=False),
+         json.dumps(curriculum_range, ensure_ascii=False) if curriculum_range is not None else None, exam_def_id),
+    )
+    # exams.data_json.topicMap'teki kazanim etiketi de guncellensin (ogrenci
+    # detayindaki Konu & Kazanim Analizi bu etiketi gosterir) - subject_id
+    # sabit oldugu icin anahtar (ders kodu) degismiyor, sadece etiket metni.
+    if exam_def["exam_id"]:
+        exam_row = db.execute("SELECT data_json FROM exams WHERE id = ?", (exam_def["exam_id"],)).fetchone()
+        if exam_row and exam_row["data_json"]:
+            exam_data = json.loads(exam_row["data_json"])
+            kazanim_label = kazanim_adi or topic or title
+            for entries in (exam_data.get("topicMap") or {}).values():
+                for entry in entries:
+                    entry["kazanim"] = kazanim_label
+            exam_data["name"] = title
+            db.execute("UPDATE exams SET name=?, data_json=? WHERE id=?",
+                       (title, json.dumps(exam_data, ensure_ascii=False), exam_def["exam_id"]))
+
+    regraded, results_updated = (0, 0)
+    if answer_key_changed:
+        exam_def = db.execute("SELECT * FROM omr_exam_definitions WHERE id = ?", (exam_def_id,)).fetchone()
+        regraded, results_updated = _omr_regrade_exam(db, exam_def, org_id, answer_key)
+
+    db.commit()
+    log_audit(db, "OMR_EXAM_DEFINITION_UPDATED", resource_type="omr_exam_definition", resource_id=exam_def_id)
+    return jsonify({"ok": True, "answerKeyChanged": answer_key_changed,
+                    "regradedScans": regraded, "updatedResults": results_updated})
+
+
 @app.route("/api/teacher/omr/exams", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_create_exam():
