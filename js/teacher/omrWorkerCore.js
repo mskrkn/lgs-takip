@@ -215,7 +215,7 @@
   // bolgesini (varsa onceki bir tahminden) 4x buyutup tekrar dener
   // (bkz. omr_pipeline.py _detect_qr/_decode_qr_cropped_upscale ile ayni
   // gerekce: kucuk/uzak QR bazen dogrudan cozulmuyor).
-  function detectQr(jsQRFn, imageData) {
+  function _tryDecodeQr(jsQRFn, imageData) {
     const result = jsQRFn(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
     if (!result) return null;
     const L = result.location;
@@ -228,6 +228,40 @@
         [L.bottomLeftCorner.x, L.bottomLeftCorner.y],
       ],
     };
+  }
+
+  // cv verilirse ve ham karede QR bulunamazsa 1.6x büyütüp tekrar dener -
+  // omr_pipeline.py'nin (Python) AYNI bulgusuna dayanır (bkz. o dosyanın
+  // docstring'i: "QR kucuk kalinca cogu zaman HIC bulamiyordu"). Gerçek bir
+  // kullanıcı raporuyla doğrulandı: 720px önizleme QR'ı buluyor (yeşil
+  // çerçeve) ama el titremesi/az ışıkta tam çözünürlüklü çekimde jsQR'ın TEK
+  // denemesi çoğu zaman başarısız oluyordu. Sadece ilk deneme başarısız
+  // olunca çalıştığından çoğu (başarılı) durumda ek maliyeti yok.
+  function detectQr(jsQRFn, imageData, cv) {
+    const direct = _tryDecodeQr(jsQRFn, imageData);
+    if (direct) return direct;
+    if (!cv) return null;
+    let src = null, up = null;
+    try {
+      const scale = 1.6;
+      src = cv.matFromImageData(imageData);
+      up = new cv.Mat();
+      cv.resize(src, up, new cv.Size(Math.round(imageData.width * scale), Math.round(imageData.height * scale)), 0, 0, cv.INTER_CUBIC);
+      const upImageData = { data: new Uint8ClampedArray(up.data), width: up.cols, height: up.rows };
+      const found = _tryDecodeQr(jsQRFn, upImageData);
+      if (found) {
+        // Buyutulmus koordinatlari orijinal (rectify()'in bekledigi) olcege
+        // geri getir - noktalar HER ZAMAN orijinal imageData uzayinda olmali.
+        found.points = found.points.map(([x, y]) => [x / scale, y / scale]);
+        return found;
+      }
+    } catch (err) {
+      // sessizce basarisiz - null donulur, cagiran "okunamadi" olarak ele alir.
+    } finally {
+      if (src) src.delete();
+      if (up) up.delete();
+    }
+    return null;
   }
 
   // Supheli/dusuk guvenli sonuclarda ogretmenin "Duzenle" ekraninda kagidi
@@ -277,7 +311,7 @@
     const template = G.TEMPLATES[templateId] || G.TEMPLATES.compact;
     const warnings = [];
 
-    const qr = detectQr(jsQRFn, imageData);
+    const qr = detectQr(jsQRFn, imageData, cv);
     if (!qr) {
       return { readable: false, matchStatus: 'unmatched', paperToken: null,
         warnings: ["Kağıdın QR kodu bulunamadı - kağıt kadraja tam girmiyor olabilir."] };
