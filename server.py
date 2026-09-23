@@ -5723,6 +5723,67 @@ def api_teacher_omr_update_exam(exam_def_id):
                     "regradedScans": regraded, "updatedResults": results_updated})
 
 
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>", methods=["DELETE"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_delete_exam(exam_def_id):
+    """Ogretmenin yanlislikla/deneme amacli olusturdugu bir Kazanim Testi
+    tanimini TAMAMEN siler: taramalar (fotograf dosyalari dahil), basilan
+    kagit kayitlari, ve onaylanmis olanlarin sonuc (results) satirlari.
+    Yalnizca testi olusturan ogretmen ya da admin silebilir (edit ucuyla
+    AYNI yetki kurali) - sinif ogretmenligi sayesinde goren baska bir
+    ogretmen silemez."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT * FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    is_admin = session.get("role") in ("admin", "super_admin")
+    if not is_admin and exam_def["created_by"] != session.get("user_id"):
+        return jsonify({"error": "Bu testi yalnızca oluşturan öğretmen ya da yönetici silebilir."}), 403
+
+    # Taramalarin gorsel dosyalarini (varsa - istemci-tarafi motoruyla
+    # okunan yuksek guvenli sonuclarda gorsel hic olmayabilir) diskten sil;
+    # DB satirlari asagida omr_exam_definitions silinince FK CASCADE ile
+    # (omr_scans/omr_papers) otomatik temizlenir.
+    image_paths = [r["image_path"] for r in db.execute(
+        "SELECT image_path FROM omr_scans WHERE exam_definition_id = ? AND organization_id = ? "
+        "AND image_path IS NOT NULL AND image_path != ''",
+        (exam_def_id, org_id),
+    ).fetchall()]
+    for fname in image_paths:
+        try:
+            os.remove(os.path.join(OMR_SCANS_DIR, fname))
+        except OSError:
+            pass
+
+    scan_count = db.execute(
+        "SELECT COUNT(*) FROM omr_scans WHERE exam_definition_id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()[0]
+    result_count = 0
+    if exam_def["exam_id"]:
+        result_count = db.execute(
+            "SELECT COUNT(*) FROM results WHERE exam_id = ? AND organization_id = ?",
+            (exam_def["exam_id"], org_id),
+        ).fetchone()[0]
+        db.execute("DELETE FROM results WHERE exam_id = ? AND organization_id = ?", (exam_def["exam_id"], org_id))
+    # omr_exam_definitions.exam_id -> exams(id) CASCADE'siz bir FK (bkz. sema) -
+    # exams satirini silmeden ONCE bu satiri silmek gerekir, aksi halde
+    # "FOREIGN KEY constraint failed" alinir. omr_scans/omr_papers ON DELETE
+    # CASCADE oldugu icin bu satirla birlikte kendiliginden temizlenir.
+    db.execute("DELETE FROM omr_exam_definitions WHERE id = ? AND organization_id = ?", (exam_def_id, org_id))
+    if exam_def["exam_id"]:
+        db.execute("DELETE FROM exams WHERE id = ? AND organization_id = ?", (exam_def["exam_id"], org_id))
+    db.commit()
+    log_audit(db, "OMR_EXAM_DEFINITION_DELETED", resource_type="omr_exam_definition", resource_id=exam_def_id)
+    return jsonify({"ok": True, "deletedScans": scan_count, "deletedResults": result_count})
+
+
 @app.route("/api/teacher/omr/exams", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_create_exam():
