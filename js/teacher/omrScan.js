@@ -230,6 +230,50 @@ function _omrWorkerDecode(imageData, questionCount, templateId) {
 }
 
 // ============================================================
+// Ses geri bildirimi - basarili/basarisiz okumada oğretmen ekrana bakmadan
+// (kagidi kameraya tutarken) sonucu duyabilsin (bkz. 2026-09-23 kullanici
+// talebi: "seri okuma" onerileri). AudioContext bazi tarayicilarda gercek
+// bir kullanici jestinden (tiklama) turetilmeyince 'suspended' baslar - bu
+// yuzden kamera ekrani acilirken (buton tiklamasinin HEMEN sonrasinda,
+// hala ayni "kullanici jesti" penceresindeyken) bir kere olusturup resume
+// ediyoruz, her bip'te YENIDEN olusturmuyoruz.
+let _omrAudioCtx = null;
+function _omrWarmUpBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!_omrAudioCtx) _omrAudioCtx = new Ctx();
+    if (_omrAudioCtx.state === 'suspended') _omrAudioCtx.resume().catch(() => {});
+  } catch (err) { /* ses olmadan devam - kritik degil */ }
+}
+
+function _omrBeep(kind) {
+  try {
+    if (!_omrAudioCtx) return;
+    if (_omrAudioCtx.state === 'suspended') _omrAudioCtx.resume().catch(() => {});
+    const ctx = _omrAudioCtx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    if (kind === 'error') {
+      osc.frequency.setValueAtTime(240, now);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      osc.start(now);
+      osc.stop(now + 0.22);
+    } else {
+      osc.frequency.setValueAtTime(880, now);
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+      osc.start(now);
+      osc.stop(now + 0.11);
+    }
+  } catch (err) { /* ses olmadan devam - kritik degil */ }
+}
+
+// ============================================================
 // Kamera ekranı
 // ============================================================
 
@@ -251,9 +295,10 @@ async function _omrOpenScanView(examDefId, examTitle) {
       <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
+      <div id="omr-scan-queue" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
     </div>
     <div style="padding:14px;background:#111;display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <span id="omr-scan-counter" style="font-size:13px;color:#ccc">0 tarandı</span>
+      <button id="omr-scan-counter" type="button" style="font-size:13px;color:#ccc;background:transparent;border:1px solid #374151;border-radius:20px;padding:7px 12px;cursor:pointer">📋 0 tarandı</button>
       <button id="omr-scan-capture" style="width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid #888"></button>
       <button id="omr-scan-file-btn" type="button" title="Fotoğraf / PDF dosyası yükle" style="width:60px;background:transparent;border:1px solid #555;border-radius:10px;color:#ddd;font-size:22px">📁</button>
     </div>
@@ -284,6 +329,9 @@ async function _omrOpenScanView(examDefId, examTitle) {
     // 2026-09-23 kullanici geri bildirimi: "daha iyi ama yine bekledim").
     attemptCount: 0, firstAttemptAt: 0,
     approved: 0, pendingIds: new Set(), card: null,
+    // Bu oturumda okunan HER kagidin kucuk bir ozeti (isim/durum/net) - kapanis
+    // ozeti ve dokunulabilir "kuyruk" listesi (bkz. _omrRenderQueuePanel) icin.
+    queueItems: [], queueOpen: false, startedAt: Date.now(),
   };
 
   document.getElementById('omr-file-camera').addEventListener('change', (e) => { _omrHandleFiles(e.target.files); e.target.value = ''; });
@@ -291,6 +339,8 @@ async function _omrOpenScanView(examDefId, examTitle) {
   document.getElementById('omr-scan-file-btn').addEventListener('click', () => document.getElementById('omr-file-pick').click());
   document.getElementById('omr-scan-close').addEventListener('click', _omrCloseScanView);
   document.getElementById('omr-scan-capture').addEventListener('click', _omrManualCapture);
+  document.getElementById('omr-scan-counter').addEventListener('click', _omrToggleQueuePanel);
+  _omrWarmUpBeep();
 
   _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
   _omrQueueCount().then(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
@@ -450,7 +500,10 @@ async function _omrHandleFiles(fileList) {
   if (fb && okCount) fb.style.display = 'none';
 }
 
-function _omrCloseScanView() {
+// Gercek kaynak temizligi (kamera akisi + Worker + overlay DOM'u). ✕
+// dogrudan bunu cagirmaz - once _omrCloseScanView bu oturumda bir sey
+// okunup okunmadigina bakar (bkz. asagisi).
+function _omrTeardownScanView() {
   if (_omrScanState && _omrScanState.stream) {
     _omrScanState.stream.getTracks().forEach(t => t.stop());
   }
@@ -460,6 +513,66 @@ function _omrCloseScanView() {
   _omrScanState = null;
 }
 
+// ✕'e basilinca: bu oturumda en az bir kagit okunduysa once kisa bir ozet
+// goster (kac basarili/bekleyen/okunamayan, ne kadar surdu) - "kac tane
+// okudum, hepsi tamam mi" sorusuna kamerayi tekrar acmadan cevap versin.
+// Hic okuma yapilmadiysa (ör. yanlislikla acilip hemen kapatildi) ozeni
+// atlayip direkt kapatir.
+function _omrCloseScanView() {
+  const st = _omrScanState;
+  if (st && st.queueItems.length > 0) {
+    _omrShowSessionSummary(st);
+    return;
+  }
+  _omrTeardownScanView();
+}
+
+function _omrShowSessionSummary(st) {
+  // Kategoriler BIRBIRINI DISLAR (her tarama tam olarak birine sayilir) -
+  // "silinen" (rejected) kagitlar ogretmen bilincli olarak attigindan
+  // toplama dahil edilmez (bkz. asagisi, sadece approved+unreadable+pending).
+  let approved = 0, unreadable = 0, pending = 0;
+  for (const it of st.queueItems) {
+    if (it.status === 'rejected') continue;
+    if (it.status === 'approved') approved++;
+    else if (!it.readable) unreadable++;
+    else pending++;
+  }
+  const total = approved + unreadable + pending;
+  const secs = Math.max(0, Math.round((Date.now() - st.startedAt) / 1000));
+  const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, '0');
+  const examDefId = st.examDefId, examTitle = st.examTitle;
+
+  const modal = document.createElement('div');
+  modal.id = 'omr-session-summary';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px';
+  const btn = 'width:100%;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;color:#fff;cursor:pointer';
+  modal.innerHTML = `
+    <div style="background:#111827;border-radius:16px;padding:22px;max-width:340px;width:100%;text-align:center;color:#fff">
+      <div style="font-size:20px;font-weight:800;margin-bottom:14px">🎯 Optik Okuma Tamamlandı</div>
+      <div style="font-size:34px;font-weight:800;margin-bottom:2px">${total} <span style="font-size:16px;font-weight:600;color:#9ca3af">form</span></div>
+      <div style="display:flex;justify-content:center;gap:14px;margin:14px 0;font-size:13px">
+        <div><div style="color:#4ade80;font-size:20px;font-weight:700">${approved}</div>Onaylı</div>
+        <div><div style="color:#fbbf24;font-size:20px;font-weight:700">${pending}</div>Bekliyor</div>
+        <div><div style="color:#f87171;font-size:20px;font-weight:700">${unreadable}</div>Okunamadı</div>
+      </div>
+      <div style="font-size:12px;color:#9ca3af;margin-bottom:18px">⏱ Süre ${mm}:${ss}</div>
+      <button type="button" id="omr-summary-results" style="${btn};background:#4f46e5;margin-bottom:8px">📊 Sonuçları Gör</button>
+      <button type="button" id="omr-summary-close" style="${btn};background:#374151">Kapat</button>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('omr-summary-close').onclick = () => { modal.remove(); _omrTeardownScanView(); };
+  document.getElementById('omr-summary-results').onclick = () => {
+    modal.remove();
+    _omrTeardownScanView();
+    if (typeof _omrOpenReviewPanel === 'function') {
+      _omrOpenReviewPanel(examDefId, examTitle);
+      const panel = document.getElementById(`omr-review-panel-${examDefId}`);
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+}
+
 function _omrUpdateCounter() {
   const el = document.getElementById('omr-scan-counter');
   if (!el || !_omrScanState) return;
@@ -467,7 +580,7 @@ function _omrUpdateCounter() {
   const parts = [`${uploaded} okundu`, `${approved} onaylı`];
   if (pendingIds.size > 0) parts.push(`${pendingIds.size} onay bekliyor`);
   if (queued > 0) parts.push(`${queued} kuyrukta`);
-  el.textContent = parts.join(' · ');
+  el.textContent = '📋 ' + parts.join(' · ');
 }
 
 // Hafif önizleme döngüsü: küçük bir kareyi periyodik olarak Worker'a
@@ -705,8 +818,91 @@ function _omrHandleScanResponse(data) {
   if (!st) return;
   if (!data.duplicate) st.uploaded++;
   if (data.status === 'needs_review') st.pendingIds.add(data.scanId);
+  if (!data.duplicate) {
+    _omrBeep(data.readable === false ? 'error' : 'ok');
+    _omrQueueUpsert(data);
+  }
   _omrUpdateCounter();
   _omrShowCard(data);
+}
+
+// Bu oturumdaki okuma kuyruğu - her kağıt icin TEK satır (aynı scanId tekrar
+// gelirse (ör. Duzenle'den sonra kart yenilenmesi) günceller, çoğaltmaz).
+// En yeni en üstte - öğretmen az önce okuttuğunu aramadan görsün diye.
+function _omrQueueUpsert(data) {
+  const st = _omrScanState;
+  if (!st) return;
+  const entry = {
+    scanId: data.scanId, studentName: data.studentName || null,
+    schoolNumber: data.schoolNumber || null, className: data.className || null,
+    status: data.status, readable: data.readable !== false, net: data.net,
+  };
+  const i = st.queueItems.findIndex((it) => it.scanId === entry.scanId);
+  if (i >= 0) st.queueItems[i] = entry;
+  else st.queueItems.unshift(entry);
+  if (st.queueOpen) _omrRenderQueuePanel();
+}
+
+function _omrToggleQueuePanel() {
+  const st = _omrScanState;
+  const panel = document.getElementById('omr-scan-queue');
+  if (!st || !panel) return;
+  st.queueOpen = !st.queueOpen;
+  if (st.queueOpen) { _omrRenderQueuePanel(); panel.style.display = 'block'; }
+  else panel.style.display = 'none';
+}
+
+function _omrQueueRowLabel(item) {
+  if (!item.readable) return { emoji: '⚠️', text: 'Okunamadı' };
+  if (item.status === 'approved') return { emoji: '✅', text: `Onaylı${item.net != null ? ' · Net ' + item.net : ''}` };
+  if (item.status === 'rejected') return { emoji: '🚫', text: 'Silindi' };
+  if (!item.studentName) return { emoji: '🟡', text: 'Eşleşmedi - atama bekliyor' };
+  return { emoji: '🟡', text: `Onay bekliyor${item.net != null ? ' · Net ' + item.net : ''}` };
+}
+
+function _omrRenderQueuePanel() {
+  const st = _omrScanState;
+  const panel = document.getElementById('omr-scan-queue');
+  if (!st || !panel) return;
+  const esc = _omrEsc;
+  const rows = st.queueItems.map((item) => {
+    const { emoji, text } = _omrQueueRowLabel(item);
+    const name = item.studentName ? esc(item.studentName) : '<em>Öğrenci atanmadı</em>';
+    const sub = [item.schoolNumber, item.className].filter(Boolean).map(esc).join(' · ');
+    return `
+      <button type="button" onclick="_omrQueueOpenScan(${item.scanId})" style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;background:#111827;border:1px solid #1f2937;border-radius:10px;padding:10px 12px;margin-bottom:6px;color:#fff;cursor:pointer">
+        <span>
+          <div style="font-size:14px;font-weight:600">${emoji} ${name}</div>
+          ${sub ? `<div style="font-size:11px;color:#9ca3af">${sub}</div>` : ''}
+        </span>
+        <span style="font-size:12px;color:#9ca3af;white-space:nowrap;margin-left:8px">${esc(text)}</span>
+      </button>`;
+  }).join('');
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:15px;font-weight:700">📋 Bu oturumda okunanlar (${st.queueItems.length})</div>
+      <button type="button" onclick="_omrToggleQueuePanel()" style="background:rgba(255,255,255,0.1);color:#fff;border:none;border-radius:50%;width:32px;height:32px;font-size:16px">✕</button>
+    </div>
+    ${st.queueItems.length ? rows : '<p style="color:#9ca3af;font-size:13px">Henüz bir şey okunmadı.</p>'}`;
+}
+
+// Kuyruk listesinden bir satira dokununca ayni Duzenle/Incele panelini acar
+// (bkz. omrDefine.js _omrOpenScanDetail) - kagidi kadraja tekrar sokmaya
+// gerek kalmadan az once okunani gozden gecirip duzeltebilsin diye.
+function _omrQueueOpenScan(scanId) {
+  const st = _omrScanState;
+  if (!st) return;
+  st.card = { scanId };
+  _omrToggleQueuePanel();
+  const sheet = document.getElementById('omr-scan-sheet');
+  if (!sheet) return;
+  sheet.style.display = 'block';
+  sheet.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <button style="${_OMR_CARD_BTN};background:#4b5563" onclick="_omrCloseSheet(true)">✕ Kapat</button>
+    </div>
+    <div id="omr-sheet-host"></div>`;
+  _omrOpenScanDetail(scanId, st.examDefId, st.examTitle, document.getElementById('omr-sheet-host'));
 }
 
 const _OMR_CARD_BTN = 'border:none;border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;color:#fff;cursor:pointer';
@@ -860,6 +1056,12 @@ window._omrOnScanChanged = function (scanId, status, net) {
   if (st.pendingIds.has(scanId)) {
     st.pendingIds.delete(scanId);
     if (status === 'approved') st.approved++;
+  }
+  const qItem = st.queueItems.find((it) => it.scanId === scanId);
+  if (qItem) {
+    qItem.status = status;
+    if (net !== undefined) qItem.net = net;
+    if (st.queueOpen) _omrRenderQueuePanel();
   }
   _omrUpdateCounter();
   _omrCloseSheet(false);
