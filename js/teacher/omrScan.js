@@ -246,8 +246,9 @@ async function _omrOpenScanView(examDefId, examTitle) {
       <video id="omr-scan-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
       <div id="omr-scan-frame" style="position:absolute;top:10%;left:20%;width:60%;height:75%;border:3px dashed rgba(255,255,255,0.7);border-radius:8px;pointer-events:none;transition:border-color .15s"></div>
       <div style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:13px;text-shadow:0 1px 3px #000">
-        <span id="omr-scan-hint">⏳ Optik motor yükleniyor...</span>
+        <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
+      <div id="omr-engine-badge" style="position:absolute;top:38px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
       <button id="omr-scan-close" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
@@ -278,7 +279,7 @@ async function _omrOpenScanView(examDefId, examTitle) {
   document.getElementById('omr-file-pick').addEventListener('change', (e) => { _omrHandleFiles(e.target.files); e.target.value = ''; });
   document.getElementById('omr-scan-file-btn').addEventListener('click', () => document.getElementById('omr-file-pick').click());
   document.getElementById('omr-scan-close').addEventListener('click', _omrCloseScanView);
-  document.getElementById('omr-scan-capture').addEventListener('click', _omrCaptureFrame);
+  document.getElementById('omr-scan-capture').addEventListener('click', _omrManualCapture);
 
   _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
   _omrQueueCount().then(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
@@ -301,16 +302,40 @@ async function _omrOpenScanView(examDefId, examTitle) {
   // sürebilir) - hangisi önce biterse öbürünü beklemeden devam eder.
   _omrStartCamera();
   _omrEnsureWorker().then(() => {
-    if (_omrScanState) { document.getElementById('omr-scan-hint').textContent = 'Kağıdı çerçeveye hizalayın'; _omrScanAnalysisLoop(); }
+    if (_omrScanState) { _omrSetEngineBadge('ready'); _omrScanAnalysisLoop(); }
   }).catch((err) => {
     if (_omrScanState) _omrShowEngineError(err.message);
   });
+}
+
+// Motor durumu (yükleniyor/hazır/hata) HER ZAMAN ayrı, kalıcı bir rozette
+// gösterilir - hizalama ipucunun ("Kağıdı çerçeveye hizalayın" vb.) üzerine
+// yazılıp kaybolmasın diye; öğretmen "otomatik çekim neden olmuyor?"
+// sorusuna kendi başına cevap bulabilsin (bkz. 2026-09-23 destek talebi -
+// motor durumu belirsiz olduğu için ne olduğu anlaşılamamıştı).
+function _omrSetEngineBadge(state, detail) {
+  const el = document.getElementById('omr-engine-badge');
+  if (!el) return;
+  if (state === 'ready') {
+    el.textContent = '✅ Motor hazır';
+    el.style.color = '#4ade80';
+    setTimeout(() => { if (el.textContent === '✅ Motor hazır') el.style.display = 'none'; }, 2500);
+  } else if (state === 'error') {
+    el.style.display = '';
+    el.textContent = '❌ Motor hatası' + (detail ? ': ' + detail : '');
+    el.style.color = '#f87171';
+  } else {
+    el.style.display = '';
+    el.textContent = '⏳ Optik motor yükleniyor...';
+    el.style.color = '#fbbf24';
+  }
 }
 
 // İstemci motoru (WASM) hiç başlamazsa (eski tarayıcı, ağ engeli vb.) canlı
 // kamera OKUMASI çalışmaz - ama sistem KULLANILAMAZ hale gelmez: dosya/PDF
 // yükleme yolu (sunucu tarafı pipeline) bağımsız çalışmaya devam eder.
 function _omrShowEngineError(reason) {
+  _omrSetEngineBadge('error', reason);
   const hint = document.getElementById('omr-scan-hint');
   if (hint) hint.textContent = '⚠️ Otomatik okuma motoru başlatılamadı - fotoğraf/dosya yükleyerek devam edebilirsiniz.';
   _omrShowCameraFallback((reason || 'Optik motor başlatılamadı.') + ' Kağıdı fotoğraflayıp yükleyerek devam edebilirsiniz.', true);
@@ -521,6 +546,22 @@ function _omrApplyReadyState(ready, hint) {
   }
 }
 
+// Elle çekim butonu: motor henüz hazır değilse (yükleniyor/hata) SESSİZCE
+// hiçbir şey yapmak yerine öğretmene NEDEN diyerek açıkça bildirir - bu
+// olmadan buton "bozuk" gibi görünüyordu (bkz. 2026-09-23 destek talebi).
+function _omrManualCapture() {
+  if (!_omrScanState) return;
+  if (_omrWorkerState === 'loading' || _omrWorkerState === 'idle') {
+    if (typeof window.EduToast === 'function') window.EduToast('⏳ Optik motor henüz yükleniyor, birkaç saniye bekleyin.', null, null, 3000);
+    return;
+  }
+  if (_omrWorkerState === 'error') {
+    if (typeof window.EduToast === 'function') window.EduToast('❌ Otomatik okuma motoru başlatılamadı - 📸/📁 ile fotoğraf/dosya yükleyin.', null, null, 4000);
+    return;
+  }
+  _omrCaptureFrame();
+}
+
 function _omrCaptureFrame() {
   if (!_omrScanState || _omrScanState.busy || _omrWorkerState !== 'ready') return;
   const video = document.getElementById('omr-scan-video');
@@ -682,7 +723,7 @@ function _omrShowCard(data) {
   el.innerHTML = `${header}${body}${picker}
     <div id="omr-card-msg" style="font-size:12px;color:#f87171;min-height:14px;margin-top:4px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${buttons}</div>
-    ${data.timing ? `<div style="font-size:10px;color:#6b7280;margin-top:6px">⏱ toplam ${data.timing.totalMs} ms (tarayıcıda okundu) · sunucu ${data.processingMs ?? '-'} ms</div>` : ''}`;
+    ${data.timing ? `<div style="font-size:11px;color:#9ca3af;margin-top:6px">📱 ${data.timing.totalMs} ms'de telefonda okundu</div>` : ''}`;
   el.style.display = 'block';
 }
 
