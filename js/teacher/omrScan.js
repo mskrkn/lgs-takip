@@ -94,7 +94,6 @@ async function _omrSubmitDecoded(examDefId, decoded) {
     examDefinitionId: examDefId,
     matchStatus: decoded.matchStatus,
     paperToken: decoded.paperToken || null,
-    idDigits: decoded.idDigits || null,
     questions: decoded.questions.map((q) => ({ question: q.question, answer: q.answer, status: q.status })),
     warnings: decoded.warnings || [],
   };

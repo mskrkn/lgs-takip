@@ -34,13 +34,6 @@
     return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   }
 
-  function idBubbleCenterMm(t, digitCol, digitRow) {
-    const [x0, y0] = t.idBlockOriginMm;
-    const x = x0 + digitRow * t.idDigitColSpacingMm;
-    const y = y0 + (digitCol + 1) * t.idDigitRowSpacingMm;
-    return [x, y];
-  }
-
   function answerRowHMm(t) {
     return (t.answerGridBottomMm - t.answerGridTopMm) / t.answerRowsPerCol;
   }
@@ -54,14 +47,23 @@
     return [x, y];
   }
 
-  // ---- Şablonlar - omr_form.py TEMPLATE_COMPACT/QUARTER50/QUARTER100 ile
-  // BİREBİR aynı sayısal değerler ----
+  // ---- Şablonlar - omr_form.py TEMPLATE_COMPACT/COMPACT20/QUARTER50/QUARTER100
+  // ile BİREBİR aynı sayısal değerler ----
+  // 2026-09-23: "Okul No" yedek kimlik bloğu (idDigit*) kaldırıldı - hiç
+  // kullanılmıyordu, QR tek başına yeterliydi (bkz. omr_form.py docstring'i).
   const TEMPLATE_COMPACT = {
     id: 'compact', formWMm: 70.0, formHMm: 148.5, questionCountMax: 25,
     fiducialSizeMm: 5.0, fiducialMarginMm: 5.0, qrBoxMm: [11.0, 10.5, 27.0, 26.5],
-    idDigitCount: 5, idDigitRows: 10, idBlockOriginMm: [12.0, 29.0],
-    idDigitColSpacingMm: 5.0, idDigitRowSpacingMm: 4.5, idBubbleDMm: 3.4,
     answerGridTopMm: 57.0, answerGridBottomMm: 135.0, answerRowsPerCol: 13,
+    answerColXMm: { 1: 9.0, 2: 41.0 },
+    answerChoiceOffsetsMm: [4.5, 10.5, 16.5, 22.5],
+    answerBubbleDMm: 4.4,
+  };
+
+  const TEMPLATE_COMPACT20 = {
+    id: 'compact20', formWMm: 70.0, formHMm: 148.5, questionCountMax: 20,
+    fiducialSizeMm: 5.0, fiducialMarginMm: 5.0, qrBoxMm: [11.0, 10.5, 27.0, 26.5],
+    answerGridTopMm: 32.0, answerGridBottomMm: 135.0, answerRowsPerCol: 10,
     answerColXMm: { 1: 9.0, 2: 41.0 },
     answerChoiceOffsetsMm: [4.5, 10.5, 16.5, 22.5],
     answerBubbleDMm: 4.4,
@@ -70,8 +72,6 @@
   const TEMPLATE_QUARTER50 = {
     id: 'quarter50', formWMm: 105.0, formHMm: 148.5, questionCountMax: 50,
     fiducialSizeMm: 5.0, fiducialMarginMm: 5.0, qrBoxMm: [11.0, 10.5, 27.0, 26.5],
-    idDigitCount: 5, idDigitRows: 10, idBlockOriginMm: [12.0, 29.0],
-    idDigitColSpacingMm: 5.0, idDigitRowSpacingMm: 4.5, idBubbleDMm: 3.4,
     answerGridTopMm: 57.0, answerGridBottomMm: 135.0, answerRowsPerCol: 13,
     answerColXMm: { 1: 9.0, 2: 34.0, 3: 59.0, 4: 84.0 },
     answerChoiceOffsetsMm: [2.8, 7.1, 11.4, 15.7],
@@ -81,8 +81,6 @@
   const TEMPLATE_QUARTER100 = {
     id: 'quarter100', formWMm: 105.0, formHMm: 148.5, questionCountMax: 100,
     fiducialSizeMm: 5.0, fiducialMarginMm: 5.0, qrBoxMm: [11.0, 10.5, 27.0, 26.5],
-    idDigitCount: 5, idDigitRows: 10, idBlockOriginMm: [12.0, 29.0],
-    idDigitColSpacingMm: 5.0, idDigitRowSpacingMm: 4.5, idBubbleDMm: 3.4,
     answerGridTopMm: 57.0, answerGridBottomMm: 135.0, answerRowsPerCol: 20,
     answerColXMm: { 1: 7.0, 2: 26.0, 3: 45.0, 4: 64.0, 5: 83.0 },
     answerChoiceOffsetsMm: [2.2, 5.6, 9.0, 12.4],
@@ -91,13 +89,14 @@
 
   const TEMPLATES = {
     compact: TEMPLATE_COMPACT,
+    compact20: TEMPLATE_COMPACT20,
     quarter50: TEMPLATE_QUARTER50,
     quarter100: TEMPLATE_QUARTER100,
   };
 
   const OmrGeometry = {
     CHOICES, PX_PER_MM, TEMPLATES,
-    fiducialCentersMm, qrMmCorners, idBubbleCenterMm, questionBubbleCenterMm, answerRowHMm,
+    fiducialCentersMm, qrMmCorners, questionBubbleCenterMm, answerRowHMm,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = OmrGeometry; // Node testleri icin

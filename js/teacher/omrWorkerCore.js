@@ -196,24 +196,6 @@
     return results;
   }
 
-  function readIdDigits(grayData, width, height, template) {
-    const G = root.OmrGeometry;
-    const digits = []; const statuses = [];
-    const rPx = (template.idBubbleDMm / 2) * G.PX_PER_MM;
-    for (let col = 0; col < template.idDigitCount; col++) {
-      const means = [];
-      for (let row = 0; row < template.idDigitRows; row++) {
-        const [xMm, yMm] = G.idBubbleCenterMm(template, col, row);
-        means.push(diskMean(grayData, width, height, xMm * G.PX_PER_MM, yMm * G.PX_PER_MM, rPx));
-      }
-      const labels = Array.from({ length: template.idDigitRows }, (_, i) => String(i));
-      const cls = classifyGroup(means, labels);
-      digits.push(cls.value); statuses.push(cls.status);
-    }
-    if (statuses.some((s) => s !== 'single')) return null;
-    return digits.join('');
-  }
-
   // jsQR ile QR tespiti - once ham karede, bulunamazsa QR'in beklenen
   // bolgesini (varsa onceki bir tahminden) 4x buyutup tekrar dener
   // (bkz. omr_pipeline.py _detect_qr/_decode_qr_cropped_upscale ile ayni
@@ -334,7 +316,6 @@
     const width = warpedGray.cols, height = warpedGray.rows;
 
     const questions = readQuestions(grayData, width, height, questionCount, template);
-    const idDigits = readIdDigits(grayData, width, height, template);
     if (questions.some((q) => q.status === 'multi')) warnings.push('Bazı sorularda belirsiz işaretleme tespit edildi.');
     warpedGray.delete();
 
@@ -361,7 +342,7 @@
 
     const resultBase = {
       readable: true, matchStatus: 'matched_qr', paperToken: qr.data,
-      idDigits, questions, confidenceAvg, warnings, refinedFiducials: refined,
+      questions, confidenceAvg, warnings, refinedFiducials: refined,
     };
     if (needsPreview(resultBase) && typeof OffscreenCanvas !== 'undefined') {
       try {
@@ -374,7 +355,7 @@
   }
 
   const OmrWorkerCore = {
-    decodeFrame, detectQr, rectify, readQuestions, readIdDigits, classifyGroup, diskMean,
+    decodeFrame, detectQr, rectify, readQuestions, classifyGroup, diskMean,
     BLANK_VS_MARKED_GAP, MULTI_MARK_CLOSE_GAP, MULTI_MARK_MIN_PROMINENCE, BUBBLE_SAMPLE_R_MM,
     OMR_MIN_CONFIDENCE_AVG,
   };

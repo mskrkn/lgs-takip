@@ -2,7 +2,9 @@
 Optik Okuma (Kamera OMR) - sunucu taraflı görüntü işleme pipeline'ı.
 
 Telefon kamerasıyla çekilen ham form fotoğrafını işler: perspektif düzeltme,
-QR/4-haneli-no ile kimlik çözümü, bubble doluluk analizi. Geometri sabitleri
+QR ile kimlik çözümü, bubble doluluk analizi (2026-09-23: yedek "4 haneli
+okul no" kimlik yöntemi kaldırıldı, gerçek kullanımda hiç kullanılmıyordu -
+bkz. omr_form.py docstring'i). Geometri sabitleri
 `omr_form.py`'den alınır - form NASIL BASILDIYSA burada AYNI koordinatlarla
 okunur, iki yerde ayrı ayrı tanımlanıp birbirinden sapmaz (bkz. omr_form.py
 docstring'i).
@@ -271,26 +273,6 @@ def _read_questions(gray, question_count, template):
     return results
 
 
-def _read_id_digits(gray, template):
-    """4 haneli okul-no bubble blogu - QR okunamadiginda yedek kimlik
-    dogrulama. NOT: gercek ornek fotograflarda ogrenci bu alani hic
-    doldurmadi (QR zaten kimligi tasiyordu) - bu fonksiyon ayni GORECELI
-    karsilastirma yontemiyle yazildi ama gercek ISARETLENMIS bir haneyle
-    henuz DOGRULANMADI, ileride gercek veriyle kontrol edilmeli."""
-    digits = []
-    statuses = []
-    for col in range(template.id_digit_count):
-        means = [_disk_mean(gray, *_mm_to_px(*template.id_bubble_center_mm(col, row)),
-                             template.id_bubble_d_mm / 2 * PX_PER_MM)
-                 for row in range(template.id_digit_rows)]
-        cls = _classify_group(means, [str(d) for d in range(template.id_digit_rows)])
-        digits.append(cls["value"])
-        statuses.append(cls["status"])
-    if any(s != "single" for s in statuses):
-        return None
-    return "".join(digits)
-
-
 def process_scan_image(image_bytes, question_count, template_id="compact"):
     """Ana giris noktasi. image_bytes: yuklenen fotografin ham byte'lari.
     question_count: bu sinavin soru sayisi (ogretmen serbestce girer,
@@ -301,8 +283,7 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
 
     Doner: {
       'paper_token': str|None,
-      'id_digits': str|None (4 haneli, QR yoksa/basarisizsa yedek),
-      'match_status': 'matched_qr'|'matched_id_digits'|'unmatched',
+      'match_status': 'matched_qr'|'unmatched',
       'questions': [{'question','answer','status','means'}, ...],
       'warnings': [str, ...],
     }
@@ -334,16 +315,10 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
         paper_token = _data  # duzeltme once basarisiz olup ham goruntude basarili oldugu nadir durum
 
     match_status = "unmatched"
-    id_digits = None
     if paper_token:
         match_status = "matched_qr"
     else:
-        warnings.append("QR kodu okunamadı, 4 haneli numara alanına düşülüyor.")
-        id_digits = _read_id_digits(gray, template)
-        if id_digits:
-            match_status = "matched_id_digits"
-        else:
-            warnings.append("4 haneli numara alanı da okunamadı/boş - manuel atama gerekiyor.")
+        warnings.append("QR kodu okunamadı - manuel atama gerekiyor.")
 
     if not isinstance(question_count, int) or question_count < F.QUESTION_COUNT_MIN:
         question_count = 20
@@ -354,7 +329,6 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
 
     return {
         "paper_token": paper_token,
-        "id_digits": id_digits,
         "match_status": match_status,
         "questions": questions,
         "warnings": warnings,

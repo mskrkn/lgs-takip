@@ -26,7 +26,20 @@ BASILDIGI (form_template) sunucuda kalici olarak saklanir (bkz.
 server.py omr_exam_definitions.form_template) - select_template()
 sadece OLUSTURMA anında bir kere cagrilir, okuma sirasinda ASLA
 yeniden turetilmez (sinirlar ileride degisirse eski taramalar bozulmasin
-diye)."""
+diye).
+
+2026-09-23: kullanici karari uzerine iki degisiklik yapildi: (1) QR
+okunamadiginda yedek kimlik yontemi olan "Okul No" balon blogu tamamen
+KALDIRILDI (gercek kullanimda hic doldurulmuyordu, QR tek basina yeterli) -
+bu blogun kapladigi dikey alan artik bos; (2) yeni varsayilan kucuk-kagit
+standardi 25 yerine 20 soru oldu ("compact20", answer_grid_top_mm=32.0 -
+Okul No blogunun bosalttigi alani da kullanarak 10mm'lik cok daha ferah
+satir araligi saglar). ESKI 'compact' (25 soru, 6mm satir araligi, Okul No
+blogu HALA cizilmiyor ama alani bos kalir) DEGISTIRILMEDI ve TEMPLATES'te
+kaldi - bugune kadar bu sablonla basilmis kagitlar (staging test kagitlari
+dahil) okunabilir kalsin diye. select_template() artik YENI sinavlar icin
+25'lik 'compact'i hic secmiyor, sadece gecmis kayitlari okumak icin
+sozlukte duruyor."""
 
 import io
 import os
@@ -73,13 +86,6 @@ class FormTemplate:
     fiducial_margin_mm: float
     qr_box_mm: tuple  # (x0, y0, x1, y1)
 
-    id_digit_count: int      # hane sayisi (satir)
-    id_digit_rows: int       # rakam degeri 0-9 (sutun)
-    id_block_origin_mm: tuple
-    id_digit_col_spacing_mm: float
-    id_digit_row_spacing_mm: float
-    id_bubble_d_mm: float
-
     answer_grid_top_mm: float
     answer_grid_bottom_mm: float
     answer_rows_per_col: int  # 1. sutunun satir sayisi (son sutun daha kisa olabilir)
@@ -109,17 +115,6 @@ class FormTemplate:
             "BL": (half, self.form_h_mm - half),
             "BR": (self.form_w_mm - half, self.form_h_mm - half),
         }
-
-    def id_bubble_center_mm(self, digit_col, digit_row):
-        """digit_col: 0..id_digit_count-1 (soldan saga hane sirasi/SATIR),
-        digit_row: 0..id_digit_rows-1 (o hanenin rakam degeri/SUTUN) -
-        isimler eski (dikey) tasarimdan kalma ama omr_pipeline.py bu
-        fonksiyonu semantik olarak degil sadece (index, deger) ciftinden
-        piksel uretmek icin cagirdigindan degismesine gerek yok."""
-        x0, y0 = self.id_block_origin_mm
-        x = x0 + digit_row * self.id_digit_col_spacing_mm
-        y = y0 + (digit_col + 1) * self.id_digit_row_spacing_mm  # +1: baslik satirini atla
-        return (x, y)
 
     def question_bubble_center_mm(self, question_number, choice_index):
         """question_number: 1..question_count_max, choice_index: 0-3 (A-D)."""
@@ -151,10 +146,23 @@ TEMPLATE_COMPACT = FormTemplate(
     page_cols=3, page_rows=2,
     fiducial_size_mm=5.0, fiducial_margin_mm=5.0,
     qr_box_mm=(11.0, 10.5, 27.0, 26.5),
-    id_digit_count=5, id_digit_rows=10,
-    id_block_origin_mm=(12.0, 29.0),
-    id_digit_col_spacing_mm=5.0, id_digit_row_spacing_mm=4.5, id_bubble_d_mm=3.4,
     answer_grid_top_mm=57.0, answer_grid_bottom_mm=135.0, answer_rows_per_col=13,
+    answer_col_x_mm={1: 9.0, 2: 41.0},
+    answer_choice_offsets_mm=(4.5, 10.5, 16.5, 22.5),
+    answer_bubble_d_mm=4.4, answer_num_offset_mm=3.0,
+    title_font_size=8, name_font_size=7, class_font_size=6,
+    num_font_size=8, num_baseline_dy=2.5,
+    choice_font_size=6, choice_baseline_dy=2.0,
+)
+
+TEMPLATE_COMPACT20 = FormTemplate(
+    id="compact20",
+    form_w_mm=70.0, form_h_mm=148.5,
+    question_count_max=20,
+    page_cols=3, page_rows=2,
+    fiducial_size_mm=5.0, fiducial_margin_mm=5.0,
+    qr_box_mm=(11.0, 10.5, 27.0, 26.5),
+    answer_grid_top_mm=32.0, answer_grid_bottom_mm=135.0, answer_rows_per_col=10,
     answer_col_x_mm={1: 9.0, 2: 41.0},
     answer_choice_offsets_mm=(4.5, 10.5, 16.5, 22.5),
     answer_bubble_d_mm=4.4, answer_num_offset_mm=3.0,
@@ -170,9 +178,6 @@ TEMPLATE_QUARTER50 = FormTemplate(
     page_cols=2, page_rows=2,
     fiducial_size_mm=5.0, fiducial_margin_mm=5.0,
     qr_box_mm=(11.0, 10.5, 27.0, 26.5),
-    id_digit_count=5, id_digit_rows=10,
-    id_block_origin_mm=(12.0, 29.0),
-    id_digit_col_spacing_mm=5.0, id_digit_row_spacing_mm=4.5, id_bubble_d_mm=3.4,
     answer_grid_top_mm=57.0, answer_grid_bottom_mm=135.0, answer_rows_per_col=13,
     answer_col_x_mm={1: 9.0, 2: 34.0, 3: 59.0, 4: 84.0},
     answer_choice_offsets_mm=(2.8, 7.1, 11.4, 15.7),
@@ -189,9 +194,6 @@ TEMPLATE_QUARTER100 = FormTemplate(
     page_cols=2, page_rows=2,
     fiducial_size_mm=5.0, fiducial_margin_mm=5.0,
     qr_box_mm=(11.0, 10.5, 27.0, 26.5),
-    id_digit_count=5, id_digit_rows=10,
-    id_block_origin_mm=(12.0, 29.0),
-    id_digit_col_spacing_mm=5.0, id_digit_row_spacing_mm=4.5, id_bubble_d_mm=3.4,
     answer_grid_top_mm=57.0, answer_grid_bottom_mm=135.0, answer_rows_per_col=20,
     answer_col_x_mm={1: 7.0, 2: 26.0, 3: 45.0, 4: 64.0, 5: 83.0},
     answer_choice_offsets_mm=(2.2, 5.6, 9.0, 12.4),
@@ -201,16 +203,18 @@ TEMPLATE_QUARTER100 = FormTemplate(
     choice_font_size=5, choice_baseline_dy=1.4,
 )
 
-TEMPLATES = {t.id: t for t in (TEMPLATE_COMPACT, TEMPLATE_QUARTER50, TEMPLATE_QUARTER100)}
+TEMPLATES = {t.id: t for t in (TEMPLATE_COMPACT, TEMPLATE_COMPACT20, TEMPLATE_QUARTER50, TEMPLATE_QUARTER100)}
 
 
 def select_template(question_count):
     """SADECE test tanimi OLUSTURULURKEN bir kere cagrilir, sonucu
     (template.id) kalici olarak saklanir - bkz. modul docstring'i.
-    En kucuk yeterli sabloni secer: 1-25 -> compact, 26-50 -> quarter50,
-    51-100 -> quarter100."""
-    if question_count <= TEMPLATE_COMPACT.question_count_max:
-        return TEMPLATE_COMPACT
+    En kucuk yeterli sabloni secer: 1-20 -> compact20, 21-50 -> quarter50,
+    51-100 -> quarter100. Eski 'compact' (25 soru) artik YENI test icin
+    SECILMIYOR - sadece daha once bu sablonla basilmis eski sinavlari
+    okuyabilmek icin TEMPLATES sozlugunde tutuluyor (2026-09-23)."""
+    if question_count <= TEMPLATE_COMPACT20.question_count_max:
+        return TEMPLATE_COMPACT20
     if question_count <= TEMPLATE_QUARTER50.question_count_max:
         return TEMPLATE_QUARTER50
     return TEMPLATE_QUARTER100
@@ -265,22 +269,6 @@ def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, template, paper, exam_title
     c.drawString(text_x, text_y - 10, (paper.get("student_name") or "")[:26])
     c.setFont("EduPusulaSans", t.class_font_size)
     c.drawString(text_x, text_y - 19, f"Sınıf: {paper.get('class_name') or '-'}")
-
-    # Okul No bloğu: BAŞLIK satırı "0 1 2 ... 9" + altında hane satirlari
-    label_x, label_y = pt(t.id_block_origin_mm[0] - 8, t.id_block_origin_mm[1])
-    c.setFont("EduPusulaSans-Bold", 8)
-    c.drawString(label_x, label_y - 2, "No")
-    c.setFont("EduPusulaSans-Bold", 7)
-    for value in range(t.id_digit_rows):
-        hx, hy = pt(t.id_block_origin_mm[0] + value * t.id_digit_col_spacing_mm, t.id_block_origin_mm[1])
-        c.drawCentredString(hx, hy - 2, str(value))
-    for digit_col in range(t.id_digit_count):
-        for digit_row in range(t.id_digit_rows):
-            cx_mm, cy_mm = t.id_bubble_center_mm(digit_col, digit_row)
-            cx, cy = pt(cx_mm, cy_mm)
-            r = t.id_bubble_d_mm / 2 * mm
-            c.setLineWidth(1.0)
-            c.circle(cx, cy, r, stroke=1, fill=0)
 
     # Cevap grid'i - buyuk, kalin hatli daireler
     for q in range(1, t.question_count_max + 1):

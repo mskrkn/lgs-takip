@@ -20,9 +20,10 @@ let _omrEditQuestionCount = 0;   // duzenlemede soru sayisi SABITTIR (fiziksel k
 // bulamaz, o yuzden ust sinir burada da uygulanir. Girilen sayiya gore
 // sunucu HANGI FIZIKSEL SABLONU (bkz. omr_form.py select_template)
 // kullanacagini kendisi secer - ogretmen sadece soru sayisini girer:
-// 1-25 -> "compact" (70mm, 6 kagit/A4), 26-50 -> "quarter50" (ceyrek A4,
-// 4 kagit/A4, kucuk balon), 51-100 -> "quarter100" (ceyrek A4, en kucuk
-// balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
+// 1-20 -> "compact20" (70mm, 6 kagit/A4, standart kucuk kagit - 2026-09-23'te
+// eski 25'lik "compact"in yerini aldi, "Okul No" bloğu da kaldırıldı),
+// 21-50 -> "quarter50" (ceyrek A4, 4 kagit/A4, kucuk balon), 51-100 ->
+// "quarter100" (ceyrek A4, en kucuk balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
 // kac sutuna bolunecegini belirler (gorsel), gercek PDF geometrisiyle
 // birebir ayni olmasi gerekmez.
 const OMR_QUESTION_COUNT_MAX = 100;
@@ -553,7 +554,7 @@ async function _omrRefreshReviewList(examDefId, examTitle) {
     needs_review: '🟡 İncelenmedi', approved: '✅ Onaylandı', rejected: '🚫 Reddedildi',
   }[s.status] || s.status);
   const matchLabel = (s) => ({
-    matched_qr: 'QR', matched_id_digits: 'No', manual: 'Elle', unmatched: '❌ Eşleşmedi', pending: '-',
+    matched_qr: 'QR', manual: 'Elle', unmatched: '❌ Eşleşmedi', pending: '-',
   }[s.match_status] || s.match_status);
 
   container.innerHTML = `

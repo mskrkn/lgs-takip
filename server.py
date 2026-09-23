@@ -6376,12 +6376,14 @@ def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
     }
 
 
-def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token, id_digits):
-    """omr_pipeline/istemci-tarafi motorunun coz(du)gu kimlik bilgisinden
-    (QR paper_token ya da 4 haneli okul no) ogrenci/kagit eslestirir. Hem
-    multipart yukleme (api_teacher_omr_upload_scan) hem istemci-tarafi JSON
-    sonuc ucu (api_teacher_omr_client_decoded_scan) AYNI bu fonksiyonu
-    kullanir - eslestirme mantigi TEK YERDE, iki uc birbirinden sapmaz.
+def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token):
+    """omr_pipeline/istemci-tarafi motorunun coz(du)gu QR paper_token'dan
+    ogrenci/kagit eslestirir. Hem multipart yukleme
+    (api_teacher_omr_upload_scan) hem istemci-tarafi JSON sonuc ucu
+    (api_teacher_omr_client_decoded_scan) AYNI bu fonksiyonu kullanir -
+    eslestirme mantigi TEK YERDE, iki uc birbirinden sapmaz.
+    (2026-09-23: yedek "4 haneli okul no" eslestirme yontemi kaldirildi -
+    gercek kullanimda hic doldurulmuyordu, QR tek basina yeterliydi.)
     Doner: (student_id, paper_id, match_status, warnings)."""
     student_id, paper_id = None, None
     warnings = []
@@ -6395,21 +6397,6 @@ def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token, id_di
             paper_id, student_id = paper["id"], paper["student_id"]
         else:
             warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
-            match_status = "unmatched"
-    elif match_status == "matched_id_digits" and id_digits:
-        norm_no = _normalize_school_no_py(id_digits)
-        candidates = db.execute(
-            "SELECT id, school_number FROM students WHERE organization_id = ?", (org_id,)
-        ).fetchall()
-        matches = [c["id"] for c in candidates
-                   if norm_no and _normalize_school_no_py(c["school_number"]) == norm_no]
-        if len(matches) == 1:
-            student_id = matches[0]
-        elif len(matches) > 1:
-            warnings.append("4 haneli numara birden fazla öğrenciyle eşleşti - manuel seçim gerekiyor.")
-            match_status = "unmatched"
-        else:
-            warnings.append("4 haneli numara okulda kayıtlı bir öğrenciyle eşleşmedi.")
             match_status = "unmatched"
     else:
         match_status = "unmatched"
@@ -6444,8 +6431,8 @@ def _omr_duplicate_card(db, org_id, paper_id, image_path_to_cleanup, pipeline_ms
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_upload_scan():
     """Kamera ile cekilen ham form fotografini kabul edip gercek OMR
-    pipeline'iyla (omr_pipeline.py) isler: perspektif duzeltme, QR/4-haneli-no
-    ile kimlik cozumu, bubble okuma, cevap anahtariyla notlandirma. Sonuc
+    pipeline'iyla (omr_pipeline.py) isler: perspektif duzeltme, QR ile
+    kimlik cozumu, bubble okuma, cevap anahtariyla notlandirma. Sonuc
     HER ZAMAN 'needs_review' olarak kaydedilir - ogretmen onayi (Faz 4)
     olmadan hicbir sonuc kalici sayilmaz. Mobil taraftaki offline kuyruk,
     baglanti gelince bu ucu tekrar tekrar deneyerek bosaltilir (bkz.
@@ -6521,7 +6508,7 @@ def api_teacher_omr_upload_scan():
         graded_questions, summary = _grade_omr_questions(result["questions"], answer_key)
 
         student_id, paper_id, match_status, match_warnings = _omr_match_student(
-            db, org_id, exam_def_id, result["match_status"], result["paper_token"], result["id_digits"])
+            db, org_id, exam_def_id, result["match_status"], result["paper_token"])
         warnings.extend(match_warnings)
 
         per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
@@ -6677,14 +6664,13 @@ def api_teacher_omr_client_decoded_scan():
     if len(raw_questions) != exam_def["question_count"]:
         return jsonify({"error": "Tüm soruların okuma verisi gönderilmeli."}), 400
 
-    match_status = data.get("matchStatus") if data.get("matchStatus") in ("matched_qr", "matched_id_digits") else "unmatched"
+    match_status = data.get("matchStatus") if data.get("matchStatus") == "matched_qr" else "unmatched"
     paper_token = (data.get("paperToken") or "").strip() or None
-    id_digits = (data.get("idDigits") or "").strip() or None
     client_warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
     warnings = [str(w) for w in client_warnings][:10]
 
     student_id, paper_id, match_status, match_warnings = _omr_match_student(
-        db, org_id, exam_def_id, match_status, paper_token, id_digits)
+        db, org_id, exam_def_id, match_status, paper_token)
     warnings.extend(match_warnings)
 
     answer_key = json.loads(exam_def["answer_key_json"] or "{}")
