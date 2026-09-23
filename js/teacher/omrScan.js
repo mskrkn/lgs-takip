@@ -596,7 +596,16 @@ function _omrUpdateCounter() {
 // zaman gerekli süreye ulaşamıyordu). 720px'te tespit güvenilir.
 function _omrScanAnalysisLoop() {
   if (!_omrScanState) return;
-  if (_omrWorkerState === 'ready' && !_omrAlignInFlight) {
+  // busy (tam cozunurluklu 'decode' Worker'da islenirken) bu hafif onizleme
+  // taramasini ATLA - Worker TEK ES PARCACIKLI oldugundan, decode surerken
+  // gonderilen 'align' mesaji kuyruga girip decode BITENE KADAR islenmiyor;
+  // decode bitince de o mesaji (ve olasi bir sonrakini) once tuketmesi
+  // gerektiginden HER okuma bir onceki onizlemenin "kuyruk borcunu" tasiyip
+  // sureyi kumulatif olarak uzatabiliyordu (bkz. 2026-09-24 kullanici raporu:
+  // ardisik okumalarda sure duzenli artiyordu). busy iken hic gondermemek bu
+  // rekabeti tamamen ortadan kaldirir - decode zaten kendi icinde QR/hizalama
+  // kontrolu yapiyor, bu onizlemenin o sirada calismasina hic gerek yok.
+  if (_omrWorkerState === 'ready' && !_omrAlignInFlight && !_omrScanState.busy) {
     const video = document.getElementById('omr-scan-video');
     const canvas = document.getElementById('omr-scan-analysis-canvas');
     if (video && video.videoWidth && canvas) {
@@ -709,11 +718,15 @@ const OMR_CAPTURE_SETTLE_MS = 150;
 function _omrCaptureFrame() {
   if (!_omrScanState || _omrScanState.busy || _omrWorkerState !== 'ready') return;
   // busy'i HEMEN isaretle - "yerlesme" beklerken ayni kagit icin ikinci bir
-  // cekim tetiklenmesin (align dongusu 180ms'de bir calismaya devam ediyor).
+  // cekim tetiklenmesin; ayrica align dongusu busy iken hic mesaj gondermez
+  // (bkz. _omrScanAnalysisLoop) - Worker'in TEK is parcaciginda decode ile
+  // rekabet etmesin diye.
   _omrScanState.busy = true;
   _omrScanState.awaitingRemoval = true;
   _omrScanState.notReadySince = 0;
   _omrScanState.lockedAt = Date.now();
+  const hintElNow = document.getElementById('omr-scan-hint');
+  if (hintElNow) hintElNow.textContent = '⏳ Okunuyor...';
   const tCapture = performance.now();
   // Bu kagit icin ILK deneme miyiz (bkz. yukarisi) - basarili olana kadar
   // sayac sifirlanmaz, boylece "kacinci denemede/kac saniyede okundu"
