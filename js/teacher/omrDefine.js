@@ -324,6 +324,7 @@ function _omrRenderExamList(exams) {
           <button type="button" class="btn btn-sm" onclick="_omrOpenReviewPanel(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🔍 İncele</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenQuestionReport(${e.id})">📊 Soru Analizi</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenReportPanel(${e.id})">📑 Raporlar</button>
+          <button type="button" class="btn btn-sm" style="color:#f43f5e" onclick="_omrDeleteExam(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🗑 Sil</button>
         </div>
       </div>
       <div id="omr-edit-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
@@ -832,6 +833,32 @@ async function _omrSaveEditExam(examDefId) {
     _omrRenderExamList(examsResp.exams || []);
   } catch (err) {
     statusEl.textContent = '❌ ' + err.message;
+  }
+}
+
+// Ogretmenin yanlislikla/deneme amacli olusturdugu bir testi TAMAMEN
+// siler - basilan kagitlar, taramalar (gorselleri dahil) ve onaylanmis
+// sonuclar birlikte gider (bkz. server.py api_teacher_omr_delete_exam).
+async function _omrDeleteExam(examDefId, examTitle) {
+  const ok = confirm(
+    `"${examTitle}" testini silmek istediğinize emin misiniz?\n\n` +
+    `Bu testle ilgili TÜM taramalar, basılan kağıt kayıtları ve (varsa) onaylanmış öğrenci sonuçları da SİLİNİR. ` +
+    `Bu işlem GERİ ALINAMAZ.\n\nSadece yanlışlıkla/deneme amaçlı oluşturduğunuz gereksiz testler için kullanın.`
+  );
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/teacher/omr/exams/${examDefId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Silinemedi.');
+    const parts = [];
+    if (data.deletedScans) parts.push(`${data.deletedScans} tarama`);
+    if (data.deletedResults) parts.push(`${data.deletedResults} onaylı sonuç`);
+    const msg = parts.length ? `🗑 Test silindi (${parts.join(', ')} dahil).` : '🗑 Test silindi.';
+    if (typeof window.EduToast === 'function') window.EduToast(msg, null, null, 6000);
+    const examsResp = await fetch('/api/teacher/omr/exams').then(r => r.json());
+    _omrRenderExamList(examsResp.exams || []);
+  } catch (err) {
+    alert('❌ ' + err.message);
   }
 }
 
