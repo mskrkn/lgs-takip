@@ -22,6 +22,9 @@
   const MULTI_MARK_CLOSE_GAP = 15;
   const MULTI_MARK_MIN_PROMINENCE = 20;
   const BUBBLE_SAMPLE_R_MM = 1.1;
+  // Bkz. decodeFrame - ortalama guven bunun ALTINDAYSA (cogu soru sinirda/
+  // belirsiz) okuma tumden GUVENILMEZ sayilir, sunucuya cop veri gitmez.
+  const OMR_MIN_CONFIDENCE_AVG = 0.35;
   const FIDUCIAL_ORDER = ['TL', 'TR', 'BR', 'BL'];
 
   function dist(a, b) {
@@ -340,6 +343,22 @@
       ? Math.round((confidences.reduce((a, b) => a + b, 0) / confidences.length) * 100) / 100
       : 1.0;
 
+    // Gercek kullanici testinde bulundu: bulanik/parmakla kapatilmis bir
+    // karede bile QR bulunup bazi sorular "okunabiliyor" (ama ANLAMSIZ
+    // degerlerle) - eskiden bu, ogretmenin elle fark edip 🗑 Sil ile
+    // temizlemesi gereken COP bir tarama olarak sunucuya gonderiliyordu.
+    // Ortalama guven cok dusukse (coğu soru sinirda/belirsiz), QR bulunmus
+    // olsa bile "okunamadi" sayilir - cagiran taraf (omrScan.js) bunu QR-
+    // bulunamama ile AYNI sekilde ele alip sessizce yeniden dener; ogretmen
+    // cogu zaman bunu hic gormez. Mukemmel bir filtre degil (bulanikligin
+    // YANLIS ama "guvenli gorunen" bir sik secmesi teorik olarak hala
+    // mumkun) ama gercek kullanicidan gelen COP okumalarin cogunu onler.
+    if (confidenceAvg < OMR_MIN_CONFIDENCE_AVG) {
+      warped.delete(); // erken donus - WASM Mat sizintisi olmasin
+      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+        warnings: ['Okuma güvenilir değil (bulanık/örtülü olabilir) - tekrar deneniyor.'] };
+    }
+
     const resultBase = {
       readable: true, matchStatus: 'matched_qr', paperToken: qr.data,
       idDigits, questions, confidenceAvg, warnings, refinedFiducials: refined,
@@ -357,6 +376,7 @@
   const OmrWorkerCore = {
     decodeFrame, detectQr, rectify, readQuestions, readIdDigits, classifyGroup, diskMean,
     BLANK_VS_MARKED_GAP, MULTI_MARK_CLOSE_GAP, MULTI_MARK_MIN_PROMINENCE, BUBBLE_SAMPLE_R_MM,
+    OMR_MIN_CONFIDENCE_AVG,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = OmrWorkerCore;
