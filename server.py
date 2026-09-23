@@ -202,7 +202,7 @@ def _inject_env_banner(resp):
         return resp
     if resp.content_type and resp.content_type.startswith("text/html"):
         banner = (
-            f'<div style="position:fixed;top:0;left:0;right:0;z-index:999999;'
+            f'<div id="edu-env-banner" style="position:fixed;top:0;left:0;right:0;z-index:999999;'
             f'background:#f59e0b;color:#1a1a1a;font:700 13px system-ui;'
             f'text-align:center;padding:4px 0;letter-spacing:.05em">'
             f'⚠️ {APP_ENV.upper()} ORTAMI — gercek veri degil</div>'
