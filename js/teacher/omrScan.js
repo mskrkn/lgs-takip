@@ -280,6 +280,10 @@ async function _omrOpenScanView(examDefId, examTitle) {
     // Cift okuma engeli: cekimden sonra kagit kadrajdan CIKANA kadar otomatik
     // cekim kilitli (awaitingRemoval); yukleme surerken (busy) de yeni cekim yok.
     awaitingRemoval: false, notReadySince: 0, lastAttemptAt: 0, busy: false,
+    // Bir kağıt icin ILK denemeden BASARIYA kadar gecen sure/deneme sayisi -
+    // "hala bekliyorum" hissinin GERCEK sayilarla olculebilmesi icin (bkz.
+    // 2026-09-23 kullanici geri bildirimi: "daha iyi ama yine bekledim").
+    attemptCount: 0, firstAttemptAt: 0,
     approved: 0, pendingIds: new Set(), card: null,
   };
 
@@ -599,6 +603,15 @@ function _omrCaptureFrame() {
   _omrScanState.notReadySince = 0;
   _omrScanState.lockedAt = Date.now();
   const tCapture = performance.now();
+  // Bu kagit icin ILK deneme miyiz (bkz. yukarisi) - basarili olana kadar
+  // sayac sifirlanmaz, boylece "kacinci denemede/kac saniyede okundu"
+  // gercek sayilarla olculebiliyor. Cok uzun sure basarisiz kalinca (ogretmen
+  // muhtemelen VAZGECIP baska bir kagit gostermistir) sayac otomatik sifirlanir.
+  if (_omrScanState.attemptCount === 0 || tCapture - _omrScanState.firstAttemptAt > 8000) {
+    _omrScanState.attemptCount = 0;
+    _omrScanState.firstAttemptAt = tCapture;
+  }
+  _omrScanState.attemptCount++;
   const cardEl = document.getElementById('omr-scan-card');
   if (cardEl) {
     _omrScanState.card = null;
@@ -653,7 +666,13 @@ function _omrCaptureFrame() {
     }
     try {
       const data = await _omrSubmitDecoded(_omrScanState.examDefId, decoded);
-      data.timing = { totalMs: Math.round(performance.now() - tCapture) };
+      data.timing = {
+        totalMs: Math.round(performance.now() - tCapture),
+        attempts: _omrScanState.attemptCount,
+        streakMs: Math.round(performance.now() - _omrScanState.firstAttemptAt),
+      };
+      _omrScanState.attemptCount = 0;
+      _omrScanState.firstAttemptAt = 0;
       if (_omrScanState) _omrHandleScanResponse(data);
       _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
     } catch (err) {
@@ -758,7 +777,7 @@ function _omrShowCard(data) {
   el.innerHTML = `${header}${body}${picker}
     <div id="omr-card-msg" style="font-size:12px;color:#f87171;min-height:14px;margin-top:4px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${buttons}</div>
-    ${data.timing ? `<div style="font-size:11px;color:#9ca3af;margin-top:6px">📱 ${data.timing.totalMs} ms'de telefonda okundu</div>` : ''}`;
+    ${data.timing ? `<div style="font-size:11px;color:#9ca3af;margin-top:6px">📱 ${data.timing.totalMs} ms'de telefonda okundu${data.timing.attempts > 1 ? ` · ${data.timing.attempts}. denemede, kağıt gösterildikten ${(data.timing.streakMs / 1000).toFixed(1)} sn sonra` : ' · ilk denemede'}</div>` : ''}`;
   el.style.display = 'block';
 }
 
