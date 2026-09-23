@@ -20,9 +20,25 @@ sablonuyla) kalibre edildi - bkz. proje notu `edupusula-kamera-omr-projesi`.
     telefon kamerasının hafif lens distorsiyonu QR'dan (sayfanın bir
     köşesinde) uzaklaştıkça birikip sayfanın öbür ucundaki bubble'ları
     yanlış konumda okutuyor. Bunun yerine QR'dan kaba bir başlangıç tahmini
-    alınır, sonra 4 köşe fiducial'i (aşamalı olarak, her bulunan nokta bir
-    SONRAKİ tahmini iyileştirerek) kendi konumlarında ARANIP homografi bu
-    gerçek 4 noktadan hesaplanır.
+    alınır, sonra 4 köşe fiducial'i kendi konumlarında ARANIP homografi bu
+    gerçek 4 noktadan hesaplanır. KRİTİK DÜZELTME (2026-09-23, gerçek bir
+    sınıf taramasının TÜM bubble'ları yanlış okuduğu, sadece QR/kimlik
+    eşleşmesinin doğru kaldığı bir olay sonrası): köşe tahminleri ÖNCEDEN
+    her biri bir öncekinin bulduğu noktayı homografiye EKLEYEREK (aşamalı/
+    kümülatif) hesaplanıyordu - TL ve TR ikisi de sayfanın ÜST bölgesinde
+    olduğundan, bu iki nokta + QR'ın 4 köşesi (hepsi yine üst bölgede) BR/BL
+    için sayısal olarak neredeyse dejenere (tüm kalibrasyon noktaları tek
+    bir bölgede kümelenmiş) bir nokta kümesi oluşturuyordu; bu kümeden
+    `cv2.findHomography` ile sayfanın UZAK (alt) ucuna EKSTRAPOLASYON,
+    sentetik (distorsiyonsuz) bir sayfada bile onlarca piksel sapma
+    üretebiliyordu - ve homografi TEK BİR global dönüşüm olduğundan, BR/BL
+    yanlış bulununca nihai warpPerspective TÜM sayfayı (sadece alt köşeleri
+    değil) bozuyordu. Artık HER köşenin ilk tahmini DAİMA SADECE QR'ın kendi
+    4 köşesinden türetilen SABİT bir homografiyle hesaplanıyor (bir önceki
+    köşenin sonucu bir SONRAKİ köşenin tahminine karıştırılmıyor); nihai
+    warp hâlâ 4 köşenin GERÇEKTEN BULUNDUĞU (arama penceresinde iyileştirilmiş)
+    konumlarından hesaplanır - kümülatif nokta ekleme kaldırıldığı için bu
+    son adım artık sayısal olarak kararlı.
   - Fiducial arama penceresinde "dolu kare" ile "dolu (işaretli) daire"yi
     ayırt etmek için EKSEN-HİZALI solidity güvenilmez (döndürülmüş bir kare
     kutusunun sadece yarısını doldurur) - `cv2.minAreaRect` (döndürülmüş
@@ -109,32 +125,33 @@ def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
 
 def _rectify(img, qr_points, template):
     """QR koseleri + kose fiducial'lerinden nihai rektifiye (duzlestirilmis,
-    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar."""
+    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar.
+
+    Her kosenin ARAMA PENCERESI icin ilk tahmini, DAIMA SADECE QR'in kendi 4
+    kosesinden turetilen SABIT bir homografiyle (H0) hesaplanir - bir onceki
+    kosenin bulundugu nokta bir SONRAKI kosenin tahminine KARISTIRILMAZ (bkz.
+    modul docstring'indeki 2026-09-23 duzeltme notu). Nihai warp, 4 kosenin
+    GERCEKTEN BULUNDUGU konumlardan (tumu ayni H0 baz alinarak bagimsiz
+    arandigi icin sayisal olarak kararli) hesaplanir."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     qr_size_px = float(np.linalg.norm(qr_points[1] - qr_points[0]))
     win_r = qr_size_px * 1.4
     expected_fid_area_px = (qr_size_px * (template.fiducial_size_mm / 20.0)) ** 2
 
     fid_mm = template.fiducial_centers_mm()
-    known_src = [tuple(p) for p in qr_points]
-    known_dst = [_mm_to_px(x, y) for x, y in _qr_mm_corners(template)]
+    H0 = cv2.getPerspectiveTransform(
+        np.array([tuple(p) for p in qr_points], dtype=np.float32),
+        np.array([_mm_to_px(x, y) for x, y in _qr_mm_corners(template)], dtype=np.float32),
+    )
+    H0_inv = np.linalg.inv(H0)
 
     refined = {}
     for key in _FIDUCIAL_ORDER:
-        if len(known_src) == 4:
-            H_cur = cv2.getPerspectiveTransform(
-                np.array(known_src, dtype=np.float32), np.array(known_dst, dtype=np.float32))
-        else:
-            H_cur, _ = cv2.findHomography(
-                np.array(known_src, dtype=np.float32), np.array(known_dst, dtype=np.float32))
         x_mm, y_mm = fid_mm[key]
         pt = np.array([[[x_mm * PX_PER_MM, y_mm * PX_PER_MM]]], dtype=np.float32)
-        approx = cv2.perspectiveTransform(pt, np.linalg.inv(H_cur))[0][0]
+        approx = cv2.perspectiveTransform(pt, H0_inv)[0][0]
         found = _refine_square_in_window(gray, approx[0], approx[1], win_r, expected_fid_area_px)
-        pos = found if found else tuple(approx)
-        refined[key] = pos
-        known_src.append(pos)
-        known_dst.append(_mm_to_px(x_mm, y_mm))
+        refined[key] = found if found else tuple(approx)
 
     src = np.array([refined[k] for k in _FIDUCIAL_ORDER], dtype=np.float32)
     dst = np.array([_mm_to_px(*fid_mm[k]) for k in _FIDUCIAL_ORDER], dtype=np.float32)
