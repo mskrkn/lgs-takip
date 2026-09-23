@@ -2,7 +2,7 @@
 // LGS Deneme Takip - Service Worker (PWA Offline Support)
 // ============================================
 
-const CACHE_NAME = 'lgs-takip-v1.5';
+const CACHE_NAME = 'lgs-takip-v1.6';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -18,6 +18,10 @@ const ASSETS_TO_CACHE = [
   './js/teacher/ogretmen.js',
   './js/teacher/omrDefine.js',
   './js/teacher/omrScan.js',
+  './js/teacher/omrWorker.js',
+  './js/teacher/omrWorkerCore.js',
+  './js/teacher/omrGeometry.js',
+  './js/vendor/jsQR.js',
   './js/subjectSets.js',
   './js/db.js',
   './js/ui.js',

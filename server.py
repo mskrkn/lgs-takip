@@ -31,6 +31,7 @@ import random
 import socket
 import sqlite3
 import secrets
+import base64
 import zipfile
 import difflib
 import mimetypes
@@ -6314,6 +6315,70 @@ def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
     }
 
 
+def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token, id_digits):
+    """omr_pipeline/istemci-tarafi motorunun coz(du)gu kimlik bilgisinden
+    (QR paper_token ya da 4 haneli okul no) ogrenci/kagit eslestirir. Hem
+    multipart yukleme (api_teacher_omr_upload_scan) hem istemci-tarafi JSON
+    sonuc ucu (api_teacher_omr_client_decoded_scan) AYNI bu fonksiyonu
+    kullanir - eslestirme mantigi TEK YERDE, iki uc birbirinden sapmaz.
+    Doner: (student_id, paper_id, match_status, warnings)."""
+    student_id, paper_id = None, None
+    warnings = []
+    if match_status == "matched_qr" and paper_token:
+        paper = db.execute(
+            "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
+            "AND exam_definition_id = ? AND organization_id = ?",
+            (paper_token, exam_def_id, org_id),
+        ).fetchone()
+        if paper:
+            paper_id, student_id = paper["id"], paper["student_id"]
+        else:
+            warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
+            match_status = "unmatched"
+    elif match_status == "matched_id_digits" and id_digits:
+        norm_no = _normalize_school_no_py(id_digits)
+        candidates = db.execute(
+            "SELECT id, school_number FROM students WHERE organization_id = ?", (org_id,)
+        ).fetchall()
+        matches = [c["id"] for c in candidates
+                   if norm_no and _normalize_school_no_py(c["school_number"]) == norm_no]
+        if len(matches) == 1:
+            student_id = matches[0]
+        elif len(matches) > 1:
+            warnings.append("4 haneli numara birden fazla öğrenciyle eşleşti - manuel seçim gerekiyor.")
+            match_status = "unmatched"
+        else:
+            warnings.append("4 haneli numara okulda kayıtlı bir öğrenciyle eşleşmedi.")
+            match_status = "unmatched"
+    else:
+        match_status = "unmatched"
+    return student_id, paper_id, match_status, warnings
+
+
+def _omr_duplicate_card(db, org_id, paper_id, image_path_to_cleanup, pipeline_ms, pdf_page_count=None):
+    """paper_id zaten (reddedilmemis) bir taramaya bagliysa o taramanin
+    kartini dondurur, YENI kayit ACMAZ (bkz. api_teacher_omr_upload_scan
+    yorumu - kamera/istemci ayni kagidi ust uste gonderebiliyor)."""
+    if not paper_id:
+        return None
+    existing_scan = db.execute(
+        "SELECT * FROM omr_scans WHERE paper_id = ? AND organization_id = ? AND status != 'rejected' "
+        "ORDER BY id DESC LIMIT 1",
+        (paper_id, org_id),
+    ).fetchone()
+    if not existing_scan:
+        return None
+    if image_path_to_cleanup:
+        try:
+            os.remove(image_path_to_cleanup)
+        except OSError:
+            pass
+    card = _omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)
+    if pdf_page_count:
+        card["pageCount"] = pdf_page_count
+    return card
+
+
 @app.route("/api/teacher/omr/scans", methods=["POST"])
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_upload_scan():
@@ -6394,32 +6459,9 @@ def api_teacher_omr_upload_scan():
         answer_key = json.loads(exam_def["answer_key_json"] or "{}")
         graded_questions, summary = _grade_omr_questions(result["questions"], answer_key)
 
-        if result["match_status"] == "matched_qr":
-            paper = db.execute(
-                "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
-                "AND exam_definition_id = ? AND organization_id = ?",
-                (result["paper_token"], exam_def_id, org_id),
-            ).fetchone()
-            if paper:
-                paper_id, student_id, match_status = paper["id"], paper["student_id"], "matched_qr"
-            else:
-                warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
-        elif result["match_status"] == "matched_id_digits":
-            norm_no = _normalize_school_no_py(result["id_digits"])
-            candidates = db.execute(
-                "SELECT id, school_number FROM students WHERE organization_id = ?", (org_id,)
-            ).fetchall()
-            # okul no normalize edilerek (bastaki sifirlar/ondalik farki
-            # gormezden gelinerek) karsilastirilir - mevcut Optik Okuyucu
-            # ile ayni mantik (bkz. _normalize_school_no_py).
-            matches = [c["id"] for c in candidates
-                       if norm_no and _normalize_school_no_py(c["school_number"]) == norm_no]
-            if len(matches) == 1:
-                student_id, match_status = matches[0], "matched_id_digits"
-            elif len(matches) > 1:
-                warnings.append("4 haneli numara birden fazla öğrenciyle eşleşti - manuel seçim gerekiyor.")
-            else:
-                warnings.append("4 haneli numara okulda kayıtlı bir öğrenciyle eşleşmedi.")
+        student_id, paper_id, match_status, match_warnings = _omr_match_student(
+            db, org_id, exam_def_id, result["match_status"], result["paper_token"], result["id_digits"])
+        warnings.extend(match_warnings)
 
         per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
                                            ensure_ascii=False)
@@ -6430,21 +6472,9 @@ def api_teacher_omr_upload_scan():
     # yeni kayit ACILMAZ - kamera ayni kagidi kadrajda tutarken art arda
     # cekim yapabiliyor (2026-09-19'da staging'de 1-2 sn icinde 4 kayit).
     # Reddedilmis (Sil) tarama varsa yeniden okumaya izin verilir.
-    if paper_id:
-        existing_scan = db.execute(
-            "SELECT * FROM omr_scans WHERE paper_id = ? AND organization_id = ? AND status != 'rejected' "
-            "ORDER BY id DESC LIMIT 1",
-            (paper_id, org_id),
-        ).fetchone()
-        if existing_scan:
-            try:
-                os.remove(image_path)
-            except OSError:
-                pass
-            card = _omr_scan_card(db, existing_scan, [], duplicate=True, processing_ms=pipeline_ms)
-            if pdf_page_count:
-                card["pageCount"] = pdf_page_count
-            return jsonify(card), 200
+    dup_card = _omr_duplicate_card(db, org_id, paper_id, image_path, pipeline_ms, pdf_page_count)
+    if dup_card:
+        return jsonify(dup_card), 200
 
     now = datetime.now().isoformat()
     cur = db.execute(
@@ -6532,6 +6562,112 @@ def api_teacher_omr_get_scan(scan_id):
     return jsonify(result)
 
 
+_OMR_VALID_ANSWERS = ("A", "B", "C", "D", None)
+_OMR_VALID_STATUSES = ("single", "blank", "multi", "ambiguous")
+
+
+@app.route("/api/teacher/omr/scans/client-decoded", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_client_decoded_scan():
+    """edupusula-omr-motoru-prompt.md mimarisi: perspektif duzeltme, QR
+    cozme ve balon okumanin TAMAMI artik tarayicida (OpenCV.js/WASM, bkz.
+    js/teacher/omrWorker.js) yapiliyor - bu uc yalnizca istemcinin HAM
+    okumasini (hangi sikkin isaretlendigi/bos/cift oldugu) kabul eder.
+    NOT (guvenlik): istemciden 'dogru/yanlis' (grading) ASLA kabul edilmez -
+    notlandirma HER ZAMAN sunucudaki answer_key_json ile, ayni
+    _grade_omr_questions() fonksiyonuyla yeniden hesaplanir (multipart
+    yukleme uc noktasiyla BIREBIR ayni guven modeli). Ham fotograf bu ucun
+    govdesinde YOKTUR - yalnizca dusuk guvenli/supheli sonuclarda istemci
+    kucuk bir onizleme (previewImage, base64) ekleyebilir, o da opsiyoneldir."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    exam_def_id = data.get("examDefinitionId")
+    if not isinstance(exam_def_id, int):
+        return jsonify({"error": "Test tanımı belirtilmedi."}), 400
+    exam_def = db.execute(
+        "SELECT id, question_count, answer_key_json FROM omr_exam_definitions "
+        "WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+
+    client_questions = data.get("questions")
+    if not isinstance(client_questions, list) or not client_questions:
+        return jsonify({"error": "Okuma verisi eksik."}), 400
+    raw_questions = []
+    seen_numbers = set()
+    for q in client_questions:
+        if not isinstance(q, dict):
+            return jsonify({"error": "Geçersiz okuma verisi."}), 400
+        q_no = q.get("question")
+        answer = q.get("answer")
+        status = q.get("status")
+        if (not isinstance(q_no, int) or not (1 <= q_no <= exam_def["question_count"])
+                or answer not in _OMR_VALID_ANSWERS or status not in _OMR_VALID_STATUSES
+                or q_no in seen_numbers):
+            return jsonify({"error": "Geçersiz okuma verisi."}), 400
+        seen_numbers.add(q_no)
+        raw_questions.append({"question": q_no, "answer": answer, "status": status})
+    if len(raw_questions) != exam_def["question_count"]:
+        return jsonify({"error": "Tüm soruların okuma verisi gönderilmeli."}), 400
+
+    match_status = data.get("matchStatus") if data.get("matchStatus") in ("matched_qr", "matched_id_digits") else "unmatched"
+    paper_token = (data.get("paperToken") or "").strip() or None
+    id_digits = (data.get("idDigits") or "").strip() or None
+    client_warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    warnings = [str(w) for w in client_warnings][:10]
+
+    student_id, paper_id, match_status, match_warnings = _omr_match_student(
+        db, org_id, exam_def_id, match_status, paper_token, id_digits)
+    warnings.extend(match_warnings)
+
+    answer_key = json.loads(exam_def["answer_key_json"] or "{}")
+    graded_questions, summary = _grade_omr_questions(raw_questions, answer_key)
+    per_question_payload = json.dumps({"questions": graded_questions, "summary": summary}, ensure_ascii=False)
+
+    t0 = time.perf_counter()
+    dup_card = _omr_duplicate_card(db, org_id, paper_id, None, 0)
+    if dup_card:
+        return jsonify(dup_card), 200
+
+    # Onizleme goruntusu opsiyonel - yalnizca supheli/dusuk guvenli sonuclar
+    # icin istemci gonderirse kaydedilir (bkz. fonksiyon docstring'i).
+    filename = ""
+    preview_b64 = data.get("previewImage")
+    if preview_b64 and isinstance(preview_b64, str):
+        try:
+            if "," in preview_b64:
+                preview_b64 = preview_b64.split(",", 1)[1]
+            preview_bytes = base64.b64decode(preview_b64, validate=True)
+            if len(preview_bytes) <= 2 * 1024 * 1024 and preview_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+                os.makedirs(OMR_SCANS_DIR, exist_ok=True)
+                filename = f"{secrets.token_hex(16)}.png"
+                with open(os.path.join(OMR_SCANS_DIR, filename), "wb") as f:
+                    f.write(preview_bytes)
+        except Exception:
+            filename = ""
+
+    now = datetime.now().isoformat()
+    cur = db.execute(
+        "INSERT INTO omr_scans (paper_id, exam_definition_id, organization_id, student_id, match_status, "
+        "image_path, per_question_json, status, created_by, created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (paper_id, exam_def_id, org_id, student_id, match_status, filename, per_question_payload,
+         "needs_review", session["user_id"], now, now),
+    )
+    db.commit()
+    log_audit(db, "OMR_SCAN_UPLOADED", resource_type="omr_scan", resource_id=cur.lastrowid)
+    new_scan = db.execute("SELECT * FROM omr_scans WHERE id = ?", (cur.lastrowid,)).fetchone()
+    pipeline_ms = round((time.perf_counter() - t0) * 1000)
+    card = _omr_scan_card(db, new_scan, warnings, duplicate=False, processing_ms=pipeline_ms)
+    return jsonify(card), 201
+
+
 @app.route("/api/teacher/omr/scans/<int:scan_id>/image")
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_scan_image(scan_id):
@@ -6542,6 +6678,11 @@ def api_teacher_omr_scan_image(scan_id):
     scan = _get_owned_omr_scan(db, scan_id, org_id)
     if not scan:
         return jsonify({"error": "Tarama bulunamadı."}), 404
+    if not scan["image_path"]:
+        # Istemci tarafinda (WASM/tarayici) degerlendirilmis, guvenli-net bir
+        # sonuc - ham goruntu sunucuya hic gonderilmedi (bkz.
+        # edupusula-omr-motoru-prompt.md: "ham goruntu sunucuya gitmiyor").
+        return jsonify({"error": "Bu tarama tarayıcıda değerlendirildi; sunucuda görüntüsü yok."}), 404
     return send_from_directory(OMR_SCANS_DIR, scan["image_path"])
 
 
