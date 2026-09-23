@@ -245,11 +245,11 @@ async function _omrOpenScanView(examDefId, examTitle) {
     <div style="position:relative;flex:1;overflow:hidden">
       <video id="omr-scan-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
       <div id="omr-scan-frame" style="position:absolute;top:10%;left:20%;width:60%;height:75%;border:3px dashed rgba(255,255,255,0.7);border-radius:8px;pointer-events:none;transition:border-color .15s"></div>
-      <div style="position:absolute;top:10px;left:0;right:0;text-align:center;font-size:13px;text-shadow:0 1px 3px #000">
+      <div style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);left:0;right:0;text-align:center;font-size:13px;text-shadow:0 1px 3px #000">
         <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
-      <div id="omr-engine-badge" style="position:absolute;top:38px;left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
-      <button id="omr-scan-close" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
+      <div id="omr-engine-badge" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 38px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
+      <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
     </div>
@@ -265,13 +265,21 @@ async function _omrOpenScanView(examDefId, examTitle) {
     <canvas id="omr-scan-analysis-canvas" style="display:none"></canvas>
   `;
   document.body.appendChild(overlay);
+  // Staging/dev ortamında sarı "STAGING ORTAMI" şeridi (bkz. server.py
+  // _inject_env_banner) en yüksek z-index'te, sabit konumda duruyor ve bu
+  // tam ekran kamera katmanının üst kısmındaki yazıları (hazırlık ipucu,
+  // motor rozeti, ✕ kapat düğmesi) ÖRTÜYORDU - production'da banner hiç
+  // olmadığından bu görülmüyordu. Banner varsa yüksekliği ölçülüp üst
+  // elemanlar o kadar aşağı itilir; production'da (banner yok) 0px, no-op.
+  const envBanner = document.getElementById('edu-env-banner');
+  if (envBanner) overlay.style.setProperty('--omr-top-offset', envBanner.getBoundingClientRect().height + 'px');
 
   _omrScanState = {
     examDefId, examTitle, questionCount: null, templateId: 'compact',
     uploaded: 0, queued: 0, ready: false, readySince: 0,
     // Cift okuma engeli: cekimden sonra kagit kadrajdan CIKANA kadar otomatik
     // cekim kilitli (awaitingRemoval); yukleme surerken (busy) de yeni cekim yok.
-    awaitingRemoval: false, notReadySince: 0, readyDropoutSince: 0, busy: false,
+    awaitingRemoval: false, notReadySince: 0, lastAttemptAt: 0, busy: false,
     approved: 0, pendingIds: new Set(), card: null,
   };
 
@@ -495,12 +503,21 @@ function _omrScanAnalysisLoop() {
   setTimeout(_omrScanAnalysisLoop, 180);
 }
 
-const OMR_AUTO_CAPTURE_HOLD_MS = 300;
-// Bkz. _omrApplyReadyState - "hazir" durumundayken TEK bir kotu align
-// karesi butun HOLD ilerlemesini sifirlamasin diye kisa tolerans.
-const OMR_READY_DROPOUT_GRACE_MS = 500;
+// 2026-09-23 ikinci duzeltme: "N ms KESINTISIZ hazir kal, SONRA cek" modeli
+// TAMAMEN KALDIRILDI - jsQR'in on-izlemede kare kare titrek (bulundu/
+// bulunamadi) davranisi yuzunden (720px'e cikarilmasina ve tek-kare
+// toleransina RAGMEN) gercek kullanimda nadiren tetikleniyordu (kullanici:
+// "yesil cerceve/hazir cikiyor ama bir saniye olmadan gidiyor, cekmiyor").
+// Yeni model: ON-IZLEMEDE ilk basarili QR sinyalinde HEMEN tam cozunurluklu
+// okumayi dene - gercek basari/basarisizlik zaten TAM cozunurluklu decode
+// sonucuna gore belirlenir (bkz. _omrCaptureFrame), on-izleme sadece "denemeye
+// deger mi" sorusuna kaba bir evet/hayir. Ardisik denemeler arasinda sadece
+// kisa bir soguma suresi var (OMR_RETRY_COOLDOWN_MS) - otofokusun toparlanmasi
+// icin bir nefeslik zaman, "surekli hazir kalma" sartindan cok daha gevsek.
+const OMR_RETRY_COOLDOWN_MS = 400;
 // Kagit bu kadar sure kadrajdan CIKMIS (hazir degil) gorunmeden ayni kagit
-// yeniden otomatik okunmaz.
+// yeniden otomatik okunmaz - SADECE basariyla kaydedilmis (data.readable)
+// bir okumadan sonra devreye girer; basarisiz denemeler kilitlemez (asagida).
 const OMR_REARM_ABSENT_MS = 300;
 // Kagit hizla degistirilirken "hazir degil" araligi hic olusmayabilir - bu
 // sureden sonra kilit yine de acilir (QR'li ayni kagit sunucuda zaten
@@ -539,33 +556,13 @@ function _omrApplyReadyState(ready, hint) {
     return;
   }
 
-  if (hintEl) hintEl.textContent = ready ? 'Hazır - otomatik çekiliyor...' : hint;
+  if (hintEl) hintEl.textContent = ready ? 'Hazır - okunuyor...' : hint;
   if (!frame) return;
   frame.style.borderColor = ready ? '#22c55e' : 'rgba(255,255,255,0.7)';
 
-  // TEK bir "hazır değil" karesi (el titremesi, anlık odak kayması, jsQR'ın
-  // arada bir kaçırması) tüm ilerlemeyi SIFIRLAMAZ - kısa bir tolerans
-  // penceresi (OMR_READY_DROPOUT_GRACE_MS) var; bu olmadan "hazır" durumu
-  // gerçek kullanımda neredeyse hiç HOLD süresine ulaşamıyordu (bkz.
-  // yukarısı, kullanıcı raporu: "hazır çıktıktan sonra çekim olmuyor").
-  if (ready) {
-    _omrScanState.readyDropoutSince = 0;
-    if (!_omrScanState.ready) {
-      _omrScanState.ready = true;
-      _omrScanState.readySince = now;
-    } else if (now - _omrScanState.readySince > OMR_AUTO_CAPTURE_HOLD_MS) {
-      _omrScanState.ready = false; // tekrar tetiklenmeden once yeniden "hazir" olmali
-      _omrScanState.readyDropoutSince = 0;
-      _omrCaptureFrame();
-    }
-  } else if (_omrScanState.ready) {
-    if (!_omrScanState.readyDropoutSince) {
-      _omrScanState.readyDropoutSince = now;
-    } else if (now - _omrScanState.readyDropoutSince > OMR_READY_DROPOUT_GRACE_MS) {
-      _omrScanState.ready = false;
-      _omrScanState.readyDropoutSince = 0;
-    }
-    // Tolerans penceresi icindeyken readySince'e DOKUNULMAZ - HOLD ilerlemesi korunur.
+  if (ready && now - (_omrScanState.lastAttemptAt || 0) > OMR_RETRY_COOLDOWN_MS) {
+    _omrScanState.lastAttemptAt = now;
+    _omrCaptureFrame();
   }
 }
 
@@ -616,7 +613,7 @@ function _omrCaptureFrame() {
       imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     } catch (err) {
       _omrCardClose();
-      if (_omrScanState) _omrScanState.busy = false;
+      if (_omrScanState) { _omrScanState.busy = false; _omrScanState.awaitingRemoval = false; }
       return;
     }
     let decoded = null;
@@ -625,7 +622,7 @@ function _omrCaptureFrame() {
     } catch (err) {
       _omrCardClose();
       if (hintEl) hintEl.textContent = '❌ Okuma hatası: ' + (err.message || 'bilinmeyen hata');
-      if (_omrScanState) _omrScanState.busy = false;
+      if (_omrScanState) { _omrScanState.busy = false; _omrScanState.awaitingRemoval = false; }
       return;
     }
     if (!_omrScanState) return;
@@ -633,9 +630,15 @@ function _omrCaptureFrame() {
       // Okunamayan bir kağıt için sunucuya HİÇBİR ŞEY göndermiyoruz (ham
       // görüntü zaten yok, kaydedilecek anlamlı bir okuma da yok) - kart
       // sadece Türkçe uyarıyı gösterip kapatılır, öğretmen yeniden dener.
+      // ÖNEMLİ: awaitingRemoval BURADA AÇILMAZ BIRAKILMAZ - hiçbir şey
+      // kaydedilmediği için "kağıt kaldırılana kadar bekle" kilidine hiç
+      // gerek yok; bu kilit unutulduğunda başarısız İLK deneme sistemi
+      // dakikalarca kilitleyip "hazır çıkıyor ama hiç çekmiyor" izlenimi
+      // veriyordu (bkz. 2026-09-23 kullanıcı raporu).
       _omrScanState.busy = false;
+      _omrScanState.awaitingRemoval = false;
       const why = (decoded.warnings && decoded.warnings[0]) || '';
-      if (hintEl) hintEl.textContent = '❌ Okunamadı - kağıdı düzleştirip tekrar deneyin. ' + why;
+      if (hintEl) hintEl.textContent = '❌ Okunamadı - tekrar deneniyor... ' + why;
       _omrCardClose();
       return;
     }
