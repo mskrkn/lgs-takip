@@ -11,6 +11,8 @@ let _omrMeta = null;
 let _omrOverview = null;
 let _omrCurriculumTopics = [];   // secili ders+sinifin konu+kazanim listesi (bkz. _omrLoadCurriculumTopics)
 let _omrAnswerKey = {};          // { "1": "A", "2": "C", ... } - optik taslak uzerinde tiklanarak doldurulur
+let _omrEditAnswerKey = {};      // duzenleme panelinin KENDI cevap anahtari durumu (create formuyla karismasin diye ayri)
+let _omrEditQuestionCount = 0;   // duzenlemede soru sayisi SABITTIR (fiziksel kagit zaten basilmis olabilir)
 
 // Kagidin FIZIKSEL kapasitesi (bkz. omr_form.py QUESTION_COUNT_MAX) - ogretmen
 // serbestce soru sayisi girebilir (kullanici isteğiyle 2026-09-17: sabit
@@ -316,6 +318,7 @@ function _omrRenderExamList(exams) {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm" onclick="_omrOpenEditExam(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">✏️ Düzenle</button>
           <button type="button" class="btn btn-sm btn-primary" onclick="_omrOpenPaperDialog(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📄 Form Oluştur</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenScanView(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">📷 Kamerayla Tara</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenReviewPanel(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🔍 İncele</button>
@@ -323,6 +326,7 @@ function _omrRenderExamList(exams) {
           <button type="button" class="btn btn-sm" onclick="_omrOpenReportPanel(${e.id})">📑 Raporlar</button>
         </div>
       </div>
+      <div id="omr-edit-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
       <div id="omr-paper-dialog-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
       <div id="omr-review-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
       <div id="omr-question-report-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
@@ -717,6 +721,118 @@ async function _omrRejectScan(scanId, examDefId, examTitle) {
   if (!res.ok) { alert(data.error); return; }
   await _omrRefreshReviewList(examDefId, examTitle);
   if (typeof window._omrOnScanChanged === 'function') window._omrOnScanChanged(scanId, 'rejected');
+}
+
+// ---- Test tanımını düzenleme (özellikle yanlış girilmiş cevap anahtarını
+// düzeltmek için - önceden kaydedilen bir test hiç değiştirilemiyordu).
+// Soru sayısı ve ders BİLEREK değiştirilemez (bkz. server.py
+// api_teacher_omr_update_exam docstring'i).
+async function _omrOpenEditExam(examDefId, examTitle) {
+  const container = document.getElementById(`omr-edit-panel-${examDefId}`);
+  if (!container) return;
+  const isOpen = container.style.display !== 'none';
+  document.querySelectorAll('[id^="omr-edit-panel-"], [id^="omr-paper-dialog-"]').forEach(el => el.style.display = 'none');
+  if (isOpen) return;
+  container.style.display = 'block';
+  container.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+  try {
+    const exam = await fetch(`/api/teacher/omr/exams/${examDefId}`).then(r => r.json());
+    if (exam.error) throw new Error(exam.error);
+    _omrEditQuestionCount = exam.question_count;
+    _omrEditAnswerKey = { ...(exam.answerKey || {}) };
+    const gradeOptions = (_omrMeta.gradeLevels || [])
+      .map(g => `<option value="${_omrEsc(g.name)}" ${String(g.name) === String(exam.grade_level || '') ? 'selected' : ''}>${_omrEsc(g.name)}. Sınıf</option>`).join('');
+    container.innerHTML = `
+      <h4 style="margin:0 0 4px">✏️ Test Tanımını Düzenle</h4>
+      <p class="text-muted" style="font-size:12.5px;margin:0 0 10px">
+        Soru sayısı (${exam.question_count}) ve ders kaydedildikten sonra değiştirilemez - kağıt formatı buna göre basılmıştır;
+        değişmesi gerekiyorsa yeni bir test tanımlayın. <strong>Cevap anahtarını değiştirirseniz, bu teste ait tüm taramalar
+        (onaylanmış olanlar dahil) otomatik olarak yeniden değerlendirilir.</strong>
+      </p>
+      <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label class="form-label">Test Adı</label><input type="text" id="omr-edit-title-${examDefId}" class="form-control" value="${_omrEsc(exam.title)}"></div>
+        <div><label class="form-label">Sınıf Seviyesi</label><select id="omr-edit-grade-${examDefId}" class="form-control"><option value="">Seçilmedi</option>${gradeOptions}</select></div>
+        <div><label class="form-label">Konu</label><input type="text" id="omr-edit-topic-${examDefId}" class="form-control" value="${_omrEsc(exam.topic || '')}"></div>
+        <div><label class="form-label">Kazanım Adı</label><input type="text" id="omr-edit-kazanim-${examDefId}" class="form-control" value="${_omrEsc(exam.kazanim_adi || '')}"></div>
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Cevap Anahtarı — doğru şıkkı işaretleyin</label>
+        <div id="omr-edit-sheet-${examDefId}" class="omr-sheet mt-1"></div>
+      </div>
+      <div class="mt-2" style="display:flex;align-items:center;gap:12px">
+        <button type="button" class="btn btn-primary" id="omr-edit-save-${examDefId}">💾 Değişiklikleri Kaydet</button>
+        <button type="button" class="btn btn-sm" id="omr-edit-cancel-${examDefId}">İptal</button>
+        <span id="omr-edit-status-${examDefId}" class="text-muted" style="font-size:13px"></span>
+      </div>
+    `;
+    _omrRenderEditSheet(examDefId);
+    document.getElementById(`omr-edit-save-${examDefId}`).addEventListener('click', () => _omrSaveEditExam(examDefId));
+    document.getElementById(`omr-edit-cancel-${examDefId}`).addEventListener('click', () => { container.style.display = 'none'; });
+  } catch (err) {
+    container.innerHTML = `<p style="color:#f43f5e">Yüklenemedi: ${_omrEsc(err.message)}</p>`;
+  }
+}
+
+function _omrRenderEditSheet(examDefId) {
+  const count = _omrEditQuestionCount;
+  const sheet = document.getElementById(`omr-edit-sheet-${examDefId}`);
+  if (!sheet) return;
+  const nCols = _omrTemplateColsForCount(count);
+  const rowsPerCol = Math.ceil(count / nCols);
+  const cols = Array.from({ length: nCols }, () => []);
+  for (let q = 1; q <= count; q++) {
+    cols[Math.floor((q - 1) / rowsPerCol)].push(_omrBuildEditSheetRow(q));
+  }
+  sheet.innerHTML = `<div class="omr-sheet-cols">${cols.map(col => `<div class="omr-sheet-col">${col.join('')}</div>`).join('')}</div>`;
+  sheet.querySelectorAll('.omr-bubble').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.q, choice = btn.dataset.choice;
+      _omrEditAnswerKey[q] = _omrEditAnswerKey[q] === choice ? null : choice;
+      _omrRenderEditSheet(examDefId);
+    });
+  });
+}
+
+function _omrBuildEditSheetRow(q) {
+  const choices = ['A', 'B', 'C', 'D'];
+  const bubbles = choices.map(c => {
+    const filled = _omrEditAnswerKey[String(q)] === c;
+    return `<button type="button" class="omr-bubble${filled ? ' omr-bubble-filled' : ''}" data-q="${q}" data-choice="${c}">${c}</button>`;
+  }).join('');
+  return `<div class="omr-sheet-row"><span class="omr-sheet-qnum">${q}</span>${bubbles}</div>`;
+}
+
+async function _omrSaveEditExam(examDefId) {
+  const statusEl = document.getElementById(`omr-edit-status-${examDefId}`);
+  const title = document.getElementById(`omr-edit-title-${examDefId}`).value.trim();
+  const gradeLevel = document.getElementById(`omr-edit-grade-${examDefId}`).value || null;
+  const topic = document.getElementById(`omr-edit-topic-${examDefId}`).value.trim() || null;
+  const kazanimAdi = document.getElementById(`omr-edit-kazanim-${examDefId}`).value.trim() || null;
+  const answerKey = {};
+  Object.keys(_omrEditAnswerKey).forEach(q => { if (_omrEditAnswerKey[q]) answerKey[q] = _omrEditAnswerKey[q]; });
+
+  if (!title) { statusEl.textContent = '❌ Test adı gerekli.'; return; }
+  if (Object.keys(answerKey).length !== _omrEditQuestionCount) {
+    statusEl.textContent = '❌ Optik taslak üzerinde tüm soruların doğru cevabını işaretleyin.';
+    return;
+  }
+  statusEl.textContent = 'Kaydediliyor...';
+  try {
+    const res = await fetch(`/api/teacher/omr/exams/${examDefId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, gradeLevel, topic, kazanimAdi, answerKey }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Kaydedilemedi.');
+    const msg = data.answerKeyChanged
+      ? `✅ Kaydedildi. ${data.regradedScans} tarama yeniden değerlendirildi${data.updatedResults ? `, ${data.updatedResults} onaylı öğrenci sonucu güncellendi` : ''}.`
+      : '✅ Kaydedildi.';
+    if (typeof window.EduToast === 'function') window.EduToast(msg, null, null, 6000);
+    const examsResp = await fetch('/api/teacher/omr/exams').then(r => r.json());
+    _omrRenderExamList(examsResp.exams || []);
+  } catch (err) {
+    statusEl.textContent = '❌ ' + err.message;
+  }
 }
 
 function _omrOpenPaperDialog(examDefId, examTitle) {
