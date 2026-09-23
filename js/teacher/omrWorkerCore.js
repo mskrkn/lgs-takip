@@ -1,0 +1,330 @@
+// ============================================================
+// Optik Okuma (Kamera OMR) - istemci tarafı (WASM) okuma çekirdeği.
+// ============================================================
+// omr_pipeline.py'nin (2026-09-23 rektifikasyon düzeltmesi dahil) JS
+// aynası - AYNI algoritma, AYNI eşikler. cv (OpenCV.js, hazır/init
+// tamamlanmış) ve jsQR fonksiyonunu enjekte olarak alır - böylece hem
+// Worker içinde (gerçek kamera) hem de Node'da (otomatik test, bkz.
+// omrWorkerCore.test.js) AYNI kod çalıştırılıp doğrulanabilir.
+//
+// KRİTİK bakım kuralı: buradaki _rectify/_refineSquareInWindow/
+// _diskMean/_classifyGroup/_readQuestions mantığı server.py tarafındaki
+// omr_pipeline.py ile SAPMAMALI - biri değişirse diğeri de güncellenmeli
+// (aynı kural omrGeometry.js için de geçerli, bkz. o dosyanın başlığı).
+// Dosya/PDF yükleme (kamerasız) yolu HÂLÂ sunucudaki Python pipeline'ını
+// kullanıyor (bkz. server.py api_teacher_omr_upload_scan) - bu dosya
+// SADECE canlı kamera akışı için.
+
+(function (root) {
+  'use strict';
+
+  const BLANK_VS_MARKED_GAP = 15;
+  const MULTI_MARK_CLOSE_GAP = 15;
+  const MULTI_MARK_MIN_PROMINENCE = 20;
+  const BUBBLE_SAMPLE_R_MM = 1.1;
+  const FIDUCIAL_ORDER = ['TL', 'TR', 'BR', 'BL'];
+
+  function dist(a, b) {
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  }
+
+  // ---- OpenCV.js Mat yardımcıları (her biri kendi Mat'ini SİLER - WASM
+  // heap sızıntısı olmasın diye; bkz. OpenCV.js bilinen gotcha'sı) ----
+  function ptsToMat32FC2(cv, points) {
+    const arr = [];
+    for (const [x, y] of points) arr.push(x, y);
+    return cv.matFromArray(points.length, 1, cv.CV_32FC2, arr);
+  }
+
+  function getPerspectiveTransformMat(cv, srcPts, dstPts) {
+    const srcMat = ptsToMat32FC2(cv, srcPts);
+    const dstMat = ptsToMat32FC2(cv, dstPts);
+    const H = cv.getPerspectiveTransform(srcMat, dstMat);
+    srcMat.delete();
+    dstMat.delete();
+    return H; // çağıran silmeli
+  }
+
+  function invertMat(cv, H) {
+    const inv = new cv.Mat();
+    cv.invert(H, inv);
+    return inv;
+  }
+
+  function transformPoint(cv, Hinv, x, y) {
+    const src = cv.matFromArray(1, 1, cv.CV_32FC2, [x, y]);
+    const dst = new cv.Mat();
+    cv.perspectiveTransform(src, dst, Hinv);
+    const result = [dst.data32F[0], dst.data32F[1]];
+    src.delete();
+    dst.delete();
+    return result;
+  }
+
+  // omr_pipeline.py _refine_square_in_window'un birebir aynısı.
+  function refineSquareInWindow(cv, grayMat, cx, cy, winR, expectedAreaPx) {
+    const W = grayMat.cols, H = grayMat.rows;
+    const x0 = Math.max(0, Math.floor(cx - winR));
+    const x1 = Math.min(W, Math.floor(cx + winR));
+    const y0 = Math.max(0, Math.floor(cy - winR));
+    const y1 = Math.min(H, Math.floor(cy + winR));
+    if (x1 <= x0 || y1 <= y0) return null;
+    const crop = grayMat.roi(new cv.Rect(x0, y0, x1 - x0, y1 - y0));
+    const th = new cv.Mat();
+    cv.threshold(crop, th, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(th, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    let best = null, bestScore = -1;
+    for (let i = 0; i < contours.size(); i++) {
+      const c = contours.get(i);
+      const area = cv.contourArea(c);
+      if (area >= expectedAreaPx * 0.25 && area <= expectedAreaPx * 4.0) {
+        const rr = cv.minAreaRect(c);
+        const rw = rr.size.width, rh = rr.size.height;
+        if (rw >= 1 && rh >= 1) {
+          const aspect = rw < rh ? rw / rh : rh / rw;
+          const solidity = area / (rw * rh);
+          if (aspect >= 0.6 && solidity >= 0.85) {
+            const dx = rr.center.x - crop.cols / 2, dy = rr.center.y - crop.rows / 2;
+            const distToCenter = Math.hypot(dx, dy);
+            const score = solidity - distToCenter / winR;
+            if (score > bestScore) { bestScore = score; best = [x0 + rr.center.x, y0 + rr.center.y]; }
+          }
+        }
+      }
+      c.delete();
+    }
+    crop.delete(); th.delete(); contours.delete(); hierarchy.delete();
+    return best;
+  }
+
+  // omr_pipeline.py _rectify'nin (2026-09-23 düzeltmesi dahil) birebir
+  // aynısı: HER köşenin ilk tahmini DAİMA sadece QR'ın kendi 4 köşesinden
+  // türetilen sabit H0'dan hesaplanır - kümülatif değil.
+  function rectify(cv, rgbaMat, qrPoints, template) {
+    const G = root.OmrGeometry;
+    const gray = new cv.Mat();
+    cv.cvtColor(rgbaMat, gray, cv.COLOR_RGBA2GRAY);
+    const qrSizePx = dist(qrPoints[1], qrPoints[0]);
+    const winR = qrSizePx * 1.4;
+    const expectedFidAreaPx = Math.pow(qrSizePx * (template.fiducialSizeMm / 20.0), 2);
+
+    const fidMm = G.fiducialCentersMm(template);
+    const qrDst = G.qrMmCorners(template).map(([x, y]) => [x * G.PX_PER_MM, y * G.PX_PER_MM]);
+
+    const H0 = getPerspectiveTransformMat(cv, qrPoints, qrDst);
+    const H0inv = invertMat(cv, H0);
+    H0.delete();
+
+    const refined = {};
+    for (const key of FIDUCIAL_ORDER) {
+      const [xMm, yMm] = fidMm[key];
+      const approx = transformPoint(cv, H0inv, xMm * G.PX_PER_MM, yMm * G.PX_PER_MM);
+      const found = refineSquareInWindow(cv, gray, approx[0], approx[1], winR, expectedFidAreaPx);
+      refined[key] = found || approx;
+    }
+    H0inv.delete();
+
+    const src = FIDUCIAL_ORDER.map((k) => refined[k]);
+    const dst = FIDUCIAL_ORDER.map((k) => { const [x, y] = fidMm[k]; return [x * G.PX_PER_MM, y * G.PX_PER_MM]; });
+    const Hfinal = getPerspectiveTransformMat(cv, src, dst);
+
+    const canonW = Math.round(template.formWMm * G.PX_PER_MM);
+    const canonH = Math.round(template.formHMm * G.PX_PER_MM);
+    const warped = new cv.Mat();
+    cv.warpPerspective(rgbaMat, warped, Hfinal, new cv.Size(canonW, canonH));
+    Hfinal.delete();
+    gray.delete();
+    return { warped, refined };
+  }
+
+  // omr_pipeline.py _disk_mean'in birebir aynısı - ham Uint8Array üzerinde
+  // (OpenCV Mat'e ihtiyaç yok, dairesel piksel ortalaması saf JS'te hızlı).
+  function diskMean(grayData, width, height, cx, cy, r) {
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(width, Math.ceil(cx + r) + 1);
+    const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(height, Math.ceil(cy + r) + 1);
+    if (x1 <= x0 || y1 <= y0) return 255;
+    let sum = 0, n = 0;
+    const r2 = r * r;
+    for (let y = y0; y < y1; y++) {
+      const rowOff = y * width;
+      for (let x = x0; x < x1; x++) {
+        const dx = x - cx, dy = y - cy;
+        if (dx * dx + dy * dy <= r2) { sum += grayData[rowOff + x]; n++; }
+      }
+    }
+    return n ? sum / n : 255;
+  }
+
+  // omr_pipeline.py _classify_group'un birebir aynısı.
+  function classifyGroup(means, labels) {
+    const order = means.map((_, i) => i).sort((a, b) => means[a] - means[b]);
+    const darkest = means[order[0]], second = means[order[1]];
+    const brightest = Math.max.apply(null, means);
+    const gap = brightest - darkest;
+    if (gap < BLANK_VS_MARKED_GAP) return { status: 'blank', value: null, confidence: 1.0 };
+    if ((second - darkest) < MULTI_MARK_CLOSE_GAP && (brightest - second) > MULTI_MARK_MIN_PROMINENCE) {
+      return { status: 'multi', value: null, confidence: 0.3 };
+    }
+    // Guven: darkest ile 2.'si arasindaki fark ne kadar buyukse o kadar net -
+    // 0 (belirsiz sinirda) - 1 (tam net) arasi, sunucuya/UI'ya bilgi amacli.
+    const confidence = Math.max(0, Math.min(1, (second - darkest) / 60));
+    return { status: 'single', value: labels[order[0]], confidence };
+  }
+
+  function readQuestions(grayData, width, height, questionCount, template) {
+    const G = root.OmrGeometry;
+    const results = [];
+    const rPx = BUBBLE_SAMPLE_R_MM * G.PX_PER_MM;
+    for (let q = 1; q <= questionCount; q++) {
+      const means = [];
+      for (let ci = 0; ci < 4; ci++) {
+        const [xMm, yMm] = G.questionBubbleCenterMm(template, q, ci);
+        means.push(diskMean(grayData, width, height, xMm * G.PX_PER_MM, yMm * G.PX_PER_MM, rPx));
+      }
+      const cls = classifyGroup(means, G.CHOICES);
+      results.push({
+        question: q, answer: cls.value, status: cls.status,
+        confidence: Math.round(cls.confidence * 100) / 100,
+        means: means.map((m) => Math.round(m * 10) / 10),
+      });
+    }
+    return results;
+  }
+
+  function readIdDigits(grayData, width, height, template) {
+    const G = root.OmrGeometry;
+    const digits = []; const statuses = [];
+    const rPx = (template.idBubbleDMm / 2) * G.PX_PER_MM;
+    for (let col = 0; col < template.idDigitCount; col++) {
+      const means = [];
+      for (let row = 0; row < template.idDigitRows; row++) {
+        const [xMm, yMm] = G.idBubbleCenterMm(template, col, row);
+        means.push(diskMean(grayData, width, height, xMm * G.PX_PER_MM, yMm * G.PX_PER_MM, rPx));
+      }
+      const labels = Array.from({ length: template.idDigitRows }, (_, i) => String(i));
+      const cls = classifyGroup(means, labels);
+      digits.push(cls.value); statuses.push(cls.status);
+    }
+    if (statuses.some((s) => s !== 'single')) return null;
+    return digits.join('');
+  }
+
+  // jsQR ile QR tespiti - once ham karede, bulunamazsa QR'in beklenen
+  // bolgesini (varsa onceki bir tahminden) 4x buyutup tekrar dener
+  // (bkz. omr_pipeline.py _detect_qr/_decode_qr_cropped_upscale ile ayni
+  // gerekce: kucuk/uzak QR bazen dogrudan cozulmuyor).
+  function detectQr(jsQRFn, imageData) {
+    const result = jsQRFn(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+    if (!result) return null;
+    const L = result.location;
+    return {
+      data: result.data,
+      points: [
+        [L.topLeftCorner.x, L.topLeftCorner.y],
+        [L.topRightCorner.x, L.topRightCorner.y],
+        [L.bottomRightCorner.x, L.bottomRightCorner.y],
+        [L.bottomLeftCorner.x, L.bottomLeftCorner.y],
+      ],
+    };
+  }
+
+  // Supheli/dusuk guvenli sonuclarda ogretmenin "Duzenle" ekraninda kagidi
+  // gorebilmesi icin KUCUK bir onizleme PNG'i - "ham goruntu sunucuya
+  // gitmiyor" ilkesi yalnizca GUVENLE okunan sonuclar icin gecerli (bkz.
+  // edupusula-omr-motoru-prompt.md "Sonuç JSON Şeması" ve 7. adim: "Şüpheli
+  // cevap inceleme ekranı (büyüt + dokunarak düzelt)" - bu ekran bir
+  // goruntuye ihtiyac duyar).
+  function needsPreview(decoded) {
+    if (!decoded.readable) return true;
+    if (decoded.confidenceAvg < 0.5) return true;
+    return decoded.questions.some((q) => q.status === 'multi' || (q.status === 'single' && q.confidence < 0.35));
+  }
+
+  function buildPreviewPng(cv, warped) {
+    const maxW = 420;
+    const scale = Math.min(1, maxW / warped.cols);
+    const w = Math.max(1, Math.round(warped.cols * scale));
+    const h = Math.max(1, Math.round(warped.rows * scale));
+    const resized = new cv.Mat();
+    cv.resize(warped, resized, new cv.Size(w, h), 0, 0, cv.INTER_AREA);
+    const imgData = new ImageData(new Uint8ClampedArray(resized.data), w, h);
+    resized.delete();
+    if (typeof OffscreenCanvas === 'undefined') return null;
+    const canvas = new OffscreenCanvas(w, h);
+    canvas.getContext('2d').putImageData(imgData, 0, 0);
+    return canvas.convertToBlob({ type: 'image/png' });
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Ana giris noktasi - omr_pipeline.py process_scan_image'in JS aynasi.
+  // cv: initialize edilmis (thenable resolve olmus) OpenCV.js modulu.
+  // jsQRFn: jsQR fonksiyonu. imageData: {data:Uint8ClampedArray, width, height}
+  // (tarayicida canvas ImageData, Node testinde ayni sekle sahip bir obje).
+  // ASENKRON: dusuk guvenli sonuclarda onizleme PNG'i uretmek icin
+  // OffscreenCanvas.convertToBlob (Promise) bekleniyor.
+  async function decodeFrame(cv, jsQRFn, imageData, questionCount, templateId) {
+    const G = root.OmrGeometry;
+    const template = G.TEMPLATES[templateId] || G.TEMPLATES.compact;
+    const warnings = [];
+
+    const qr = detectQr(jsQRFn, imageData);
+    if (!qr) {
+      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+        warnings: ["Kağıdın QR kodu bulunamadı - kağıt kadraja tam girmiyor olabilir."] };
+    }
+
+    const rgbaMat = cv.matFromImageData(imageData);
+    let warped, refined;
+    try {
+      ({ warped, refined } = rectify(cv, rgbaMat, qr.points, template));
+    } finally {
+      rgbaMat.delete();
+    }
+
+    const warpedGray = new cv.Mat();
+    cv.cvtColor(warped, warpedGray, cv.COLOR_RGBA2GRAY);
+    const grayData = warpedGray.data; // Uint8Array (tek kanal)
+    const width = warpedGray.cols, height = warpedGray.rows;
+
+    const questions = readQuestions(grayData, width, height, questionCount, template);
+    const idDigits = readIdDigits(grayData, width, height, template);
+    if (questions.some((q) => q.status === 'multi')) warnings.push('Bazı sorularda belirsiz işaretleme tespit edildi.');
+    warpedGray.delete();
+
+    const confidences = questions.filter((q) => q.status !== 'blank').map((q) => q.confidence);
+    const confidenceAvg = confidences.length
+      ? Math.round((confidences.reduce((a, b) => a + b, 0) / confidences.length) * 100) / 100
+      : 1.0;
+
+    const resultBase = {
+      readable: true, matchStatus: 'matched_qr', paperToken: qr.data,
+      idDigits, questions, confidenceAvg, warnings, refinedFiducials: refined,
+    };
+    if (needsPreview(resultBase) && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const blob = await buildPreviewPng(cv, warped);
+        if (blob) resultBase.previewPngBase64 = await blobToBase64(blob);
+      } catch (err) { /* önizleme olmadan devam - kritik değil */ }
+    }
+    warped.delete();
+    return resultBase;
+  }
+
+  const OmrWorkerCore = {
+    decodeFrame, detectQr, rectify, readQuestions, readIdDigits, classifyGroup, diskMean,
+    BLANK_VS_MARKED_GAP, MULTI_MARK_CLOSE_GAP, MULTI_MARK_MIN_PROMINENCE, BUBBLE_SAMPLE_R_MM,
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = OmrWorkerCore;
+  root.OmrWorkerCore = OmrWorkerCore;
+})(typeof self !== 'undefined' ? self : this);
