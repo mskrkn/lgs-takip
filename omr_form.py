@@ -232,13 +232,27 @@ def _mm_to_pt_topdown(x_mm, y_mm, origin_x_pt, origin_y_top_pt):
     return px, py
 
 
-def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, template, paper, exam_title):
+def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, template, paper, exam_title, scale=1.0):
     """Tek bir ogrencinin formunu, sayfa uzerinde (origin_x_pt, origin_y_top_pt)
-    sol-ust kosesinden baslayarak, verilen sablonun geometrisiyle cizer."""
+    sol-ust kosesinden baslayarak, verilen sablonun geometrisiyle cizer.
+
+    scale: 2026-09-24'te eklendi - kagit yazicidan cikarken kenarlardaki
+    numaralarin/icerigin KIRPILMASINI onlemek icin (bkz. generate_omr_pdf,
+    PRINT_SAFE_SCALE) TUM formu (pozisyon+boyut+cizgi kalinligi dahil,
+    reportlab'in canvas donusum matrisi ile OTOMATIK ve TUTARLI sekilde)
+    kucultur. Asagidaki TUM cizim kodu DEGISMEDEN, sadece translate+scale
+    ile sarmalanarak calisir - t.xxx_mm SABITLERI (ve dolayisiyla okuma
+    tarafiyla PAYLASILAN oranlar) hic degismez, sadece BASILI FIZIKSEL
+    boyut kuculur; okuma algoritmasi (rectify) mutlak mm degil GORECELI
+    oranlarla calistigindan bu tamamen guvenlidir (bkz. omr_form.py/
+    omr_pipeline.py modul docstring'leri)."""
     t = template
+    c.saveState()
+    c.translate(origin_x_pt, origin_y_top_pt)
+    c.scale(scale, scale)
 
     def pt(x_mm, y_mm):
-        return _mm_to_pt_topdown(x_mm, y_mm, origin_x_pt, origin_y_top_pt)
+        return _mm_to_pt_topdown(x_mm, y_mm, 0, 0)
 
     # Kesim/cerceve siniri (ince gri cizgi - fiziksel kesim rehberi)
     c.setStrokeColorRGB(0.75, 0.75, 0.75)
@@ -282,8 +296,33 @@ def _draw_mini_form(c, origin_x_pt, origin_y_top_pt, template, paper, exam_title
             r = t.answer_bubble_d_mm / 2 * mm
             c.setLineWidth(1.1)
             c.circle(cx, cy, r, stroke=1, fill=0)
-            c.setFont("EduPusulaSans-Bold", t.choice_font_size)
+            # Sik harfi (A/B/C/D) BILEREK SOLUK (koyu degil, orta gri) -
+            # 2026-09-24 kullanici raporu: bazi kalemler balonu tam boyayamiyor,
+            # altta kalan KOYU harf o durumda "kismen isaretli" gibi okunup
+            # yanlis/belirsiz siniflandirmaya yol acabiliyordu (balon okuma
+            # disk-ortalama parlaklikla calisir, harf ne kadar KOYUYSA o kadar
+            # ortalamayi dusurur). Gri harf hem ogretmen/ogrenci icin hala
+            # okunakli hem de tam boyanmamis bir balonu YANLISLIKLA "isaretli"
+            # gostermeye daha az katkida bulunur.
+            c.setFillColorRGB(0.55, 0.55, 0.55)
+            c.setFont("EduPusulaSans", t.choice_font_size)
             c.drawCentredString(cx, cy - t.choice_baseline_dy, choice_label)
+            c.setFillColorRGB(0, 0, 0)
+
+    c.restoreState()
+
+
+# 2026-09-24 kullanici raporu: 6'li (compact/compact20, 3x2) ve 4'lu
+# (quarter50/100, 2x2) yerlesimlerde TUM sablonlarin toplam grid boyutu
+# (form_w_mm*page_cols x form_h_mm*page_rows) TESADUFEN A4'un TAM
+# olcusune (210x297mm) denk geliyor - yani sayfa kenarlarinda HIC pay
+# yok. Gercek yazicilarin neredeyse tamami kenara kadar basamaz (tipik
+# "basilamayan kenar" ~3-5mm) - bu yuzden en disi taki sutunun soru
+# numaralari/icerigi KIRPILIYORDU. PRINT_SAFE_SCALE, TUM formu (ve
+# aralarindaki bosluklari) oransal olarak kucultup farki sayfanin DORT
+# kenarina esit pay olarak dagitir - okuma GORECELI oranlarla calistigindan
+# (bkz. _draw_mini_form docstring'i) bu tamamen guvenlidir.
+PRINT_SAFE_SCALE = 0.95
 
 
 def generate_omr_pdf(papers, exam_title, template):
@@ -295,14 +334,16 @@ def generate_omr_pdf(papers, exam_title, template):
     c = pdf_canvas.Canvas(buf, pagesize=A4)
     page_w, page_h = A4
 
+    eff_w_mm = t.form_w_mm * PRINT_SAFE_SCALE
+    eff_h_mm = t.form_h_mm * PRINT_SAFE_SCALE
     per_page = t.page_cols * t.page_rows
-    grid_w = t.form_w_mm * t.page_cols * mm
-    grid_h = t.form_h_mm * t.page_rows * mm
+    grid_w = eff_w_mm * t.page_cols * mm
+    grid_h = eff_h_mm * t.page_rows * mm
     offset_x = (page_w - grid_w) / 2
     offset_y = (page_h - grid_h) / 2
 
     slots = [
-        (offset_x + col * t.form_w_mm * mm, page_h - offset_y - row * t.form_h_mm * mm)
+        (offset_x + col * eff_w_mm * mm, page_h - offset_y - row * eff_h_mm * mm)
         for row in range(t.page_rows) for col in range(t.page_cols)
     ]
 
@@ -311,7 +352,7 @@ def generate_omr_pdf(papers, exam_title, template):
         if slot == 0 and i > 0:
             c.showPage()
         ox, oy_top = slots[slot]
-        _draw_mini_form(c, ox, oy_top, t, paper, exam_title)
+        _draw_mini_form(c, ox, oy_top, t, paper, exam_title, scale=PRINT_SAFE_SCALE)
 
     c.save()
     return buf.getvalue()
