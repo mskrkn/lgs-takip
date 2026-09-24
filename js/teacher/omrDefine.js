@@ -20,9 +20,10 @@ let _omrEditQuestionCount = 0;   // duzenlemede soru sayisi SABITTIR (fiziksel k
 // bulamaz, o yuzden ust sinir burada da uygulanir. Girilen sayiya gore
 // sunucu HANGI FIZIKSEL SABLONU (bkz. omr_form.py select_template)
 // kullanacagini kendisi secer - ogretmen sadece soru sayisini girer:
-// 1-25 -> "compact" (70mm, 6 kagit/A4), 26-50 -> "quarter50" (ceyrek A4,
-// 4 kagit/A4, kucuk balon), 51-100 -> "quarter100" (ceyrek A4, en kucuk
-// balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
+// 1-20 -> "compact20" (70mm, 6 kagit/A4, standart kucuk kagit - 2026-09-23'te
+// eski 25'lik "compact"in yerini aldi, "Okul No" bloğu da kaldırıldı),
+// 21-50 -> "quarter50" (ceyrek A4, 4 kagit/A4, kucuk balon), 51-100 ->
+// "quarter100" (ceyrek A4, en kucuk balon). Asagidaki _OMR_TEMPLATE_COLS SADECE bu ekrandaki onizlemenin
 // kac sutuna bolunecegini belirler (gorsel), gercek PDF geometrisiyle
 // birebir ayni olmasi gerekmez.
 const OMR_QUESTION_COUNT_MAX = 100;
@@ -324,6 +325,7 @@ function _omrRenderExamList(exams) {
           <button type="button" class="btn btn-sm" onclick="_omrOpenReviewPanel(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🔍 İncele</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenQuestionReport(${e.id})">📊 Soru Analizi</button>
           <button type="button" class="btn btn-sm" onclick="_omrOpenReportPanel(${e.id})">📑 Raporlar</button>
+          <button type="button" class="btn btn-sm" style="color:#f43f5e" onclick="_omrDeleteExam(${e.id}, '${_omrEsc(e.title).replace(/'/g, "\\'")}')">🗑 Sil</button>
         </div>
       </div>
       <div id="omr-edit-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
@@ -552,7 +554,7 @@ async function _omrRefreshReviewList(examDefId, examTitle) {
     needs_review: '🟡 İncelenmedi', approved: '✅ Onaylandı', rejected: '🚫 Reddedildi',
   }[s.status] || s.status);
   const matchLabel = (s) => ({
-    matched_qr: 'QR', matched_id_digits: 'No', manual: 'Elle', unmatched: '❌ Eşleşmedi', pending: '-',
+    matched_qr: 'QR', manual: 'Elle', unmatched: '❌ Eşleşmedi', pending: '-',
   }[s.match_status] || s.match_status);
 
   container.innerHTML = `
@@ -832,6 +834,32 @@ async function _omrSaveEditExam(examDefId) {
     _omrRenderExamList(examsResp.exams || []);
   } catch (err) {
     statusEl.textContent = '❌ ' + err.message;
+  }
+}
+
+// Ogretmenin yanlislikla/deneme amacli olusturdugu bir testi TAMAMEN
+// siler - basilan kagitlar, taramalar (gorselleri dahil) ve onaylanmis
+// sonuclar birlikte gider (bkz. server.py api_teacher_omr_delete_exam).
+async function _omrDeleteExam(examDefId, examTitle) {
+  const ok = confirm(
+    `"${examTitle}" testini silmek istediğinize emin misiniz?\n\n` +
+    `Bu testle ilgili TÜM taramalar, basılan kağıt kayıtları ve (varsa) onaylanmış öğrenci sonuçları da SİLİNİR. ` +
+    `Bu işlem GERİ ALINAMAZ.\n\nSadece yanlışlıkla/deneme amaçlı oluşturduğunuz gereksiz testler için kullanın.`
+  );
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/teacher/omr/exams/${examDefId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Silinemedi.');
+    const parts = [];
+    if (data.deletedScans) parts.push(`${data.deletedScans} tarama`);
+    if (data.deletedResults) parts.push(`${data.deletedResults} onaylı sonuç`);
+    const msg = parts.length ? `🗑 Test silindi (${parts.join(', ')} dahil).` : '🗑 Test silindi.';
+    if (typeof window.EduToast === 'function') window.EduToast(msg, null, null, 6000);
+    const examsResp = await fetch('/api/teacher/omr/exams').then(r => r.json());
+    _omrRenderExamList(examsResp.exams || []);
+  } catch (err) {
+    alert('❌ ' + err.message);
   }
 }
 

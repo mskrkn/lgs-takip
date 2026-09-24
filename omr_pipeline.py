@@ -2,7 +2,9 @@
 Optik Okuma (Kamera OMR) - sunucu taraflı görüntü işleme pipeline'ı.
 
 Telefon kamerasıyla çekilen ham form fotoğrafını işler: perspektif düzeltme,
-QR/4-haneli-no ile kimlik çözümü, bubble doluluk analizi. Geometri sabitleri
+QR ile kimlik çözümü, bubble doluluk analizi (2026-09-23: yedek "4 haneli
+okul no" kimlik yöntemi kaldırıldı, gerçek kullanımda hiç kullanılmıyordu -
+bkz. omr_form.py docstring'i). Geometri sabitleri
 `omr_form.py`'den alınır - form NASIL BASILDIYSA burada AYNI koordinatlarla
 okunur, iki yerde ayrı ayrı tanımlanıp birbirinden sapmaz (bkz. omr_form.py
 docstring'i).
@@ -20,9 +22,25 @@ sablonuyla) kalibre edildi - bkz. proje notu `edupusula-kamera-omr-projesi`.
     telefon kamerasının hafif lens distorsiyonu QR'dan (sayfanın bir
     köşesinde) uzaklaştıkça birikip sayfanın öbür ucundaki bubble'ları
     yanlış konumda okutuyor. Bunun yerine QR'dan kaba bir başlangıç tahmini
-    alınır, sonra 4 köşe fiducial'i (aşamalı olarak, her bulunan nokta bir
-    SONRAKİ tahmini iyileştirerek) kendi konumlarında ARANIP homografi bu
-    gerçek 4 noktadan hesaplanır.
+    alınır, sonra 4 köşe fiducial'i kendi konumlarında ARANIP homografi bu
+    gerçek 4 noktadan hesaplanır. KRİTİK DÜZELTME (2026-09-23, gerçek bir
+    sınıf taramasının TÜM bubble'ları yanlış okuduğu, sadece QR/kimlik
+    eşleşmesinin doğru kaldığı bir olay sonrası): köşe tahminleri ÖNCEDEN
+    her biri bir öncekinin bulduğu noktayı homografiye EKLEYEREK (aşamalı/
+    kümülatif) hesaplanıyordu - TL ve TR ikisi de sayfanın ÜST bölgesinde
+    olduğundan, bu iki nokta + QR'ın 4 köşesi (hepsi yine üst bölgede) BR/BL
+    için sayısal olarak neredeyse dejenere (tüm kalibrasyon noktaları tek
+    bir bölgede kümelenmiş) bir nokta kümesi oluşturuyordu; bu kümeden
+    `cv2.findHomography` ile sayfanın UZAK (alt) ucuna EKSTRAPOLASYON,
+    sentetik (distorsiyonsuz) bir sayfada bile onlarca piksel sapma
+    üretebiliyordu - ve homografi TEK BİR global dönüşüm olduğundan, BR/BL
+    yanlış bulununca nihai warpPerspective TÜM sayfayı (sadece alt köşeleri
+    değil) bozuyordu. Artık HER köşenin ilk tahmini DAİMA SADECE QR'ın kendi
+    4 köşesinden türetilen SABİT bir homografiyle hesaplanıyor (bir önceki
+    köşenin sonucu bir SONRAKİ köşenin tahminine karıştırılmıyor); nihai
+    warp hâlâ 4 köşenin GERÇEKTEN BULUNDUĞU (arama penceresinde iyileştirilmiş)
+    konumlarından hesaplanır - kümülatif nokta ekleme kaldırıldığı için bu
+    son adım artık sayısal olarak kararlı.
   - Fiducial arama penceresinde "dolu kare" ile "dolu (işaretli) daire"yi
     ayırt etmek için EKSEN-HİZALI solidity güvenilmez (döndürülmüş bir kare
     kutusunun sadece yarısını doldurur) - `cv2.minAreaRect` (döndürülmüş
@@ -109,32 +127,33 @@ def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
 
 def _rectify(img, qr_points, template):
     """QR koseleri + kose fiducial'lerinden nihai rektifiye (duzlestirilmis,
-    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar."""
+    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar.
+
+    Her kosenin ARAMA PENCERESI icin ilk tahmini, DAIMA SADECE QR'in kendi 4
+    kosesinden turetilen SABIT bir homografiyle (H0) hesaplanir - bir onceki
+    kosenin bulundugu nokta bir SONRAKI kosenin tahminine KARISTIRILMAZ (bkz.
+    modul docstring'indeki 2026-09-23 duzeltme notu). Nihai warp, 4 kosenin
+    GERCEKTEN BULUNDUGU konumlardan (tumu ayni H0 baz alinarak bagimsiz
+    arandigi icin sayisal olarak kararli) hesaplanir."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     qr_size_px = float(np.linalg.norm(qr_points[1] - qr_points[0]))
     win_r = qr_size_px * 1.4
     expected_fid_area_px = (qr_size_px * (template.fiducial_size_mm / 20.0)) ** 2
 
     fid_mm = template.fiducial_centers_mm()
-    known_src = [tuple(p) for p in qr_points]
-    known_dst = [_mm_to_px(x, y) for x, y in _qr_mm_corners(template)]
+    H0 = cv2.getPerspectiveTransform(
+        np.array([tuple(p) for p in qr_points], dtype=np.float32),
+        np.array([_mm_to_px(x, y) for x, y in _qr_mm_corners(template)], dtype=np.float32),
+    )
+    H0_inv = np.linalg.inv(H0)
 
     refined = {}
     for key in _FIDUCIAL_ORDER:
-        if len(known_src) == 4:
-            H_cur = cv2.getPerspectiveTransform(
-                np.array(known_src, dtype=np.float32), np.array(known_dst, dtype=np.float32))
-        else:
-            H_cur, _ = cv2.findHomography(
-                np.array(known_src, dtype=np.float32), np.array(known_dst, dtype=np.float32))
         x_mm, y_mm = fid_mm[key]
         pt = np.array([[[x_mm * PX_PER_MM, y_mm * PX_PER_MM]]], dtype=np.float32)
-        approx = cv2.perspectiveTransform(pt, np.linalg.inv(H_cur))[0][0]
+        approx = cv2.perspectiveTransform(pt, H0_inv)[0][0]
         found = _refine_square_in_window(gray, approx[0], approx[1], win_r, expected_fid_area_px)
-        pos = found if found else tuple(approx)
-        refined[key] = pos
-        known_src.append(pos)
-        known_dst.append(_mm_to_px(x_mm, y_mm))
+        refined[key] = found if found else tuple(approx)
 
     src = np.array([refined[k] for k in _FIDUCIAL_ORDER], dtype=np.float32)
     dst = np.array([_mm_to_px(*fid_mm[k]) for k in _FIDUCIAL_ORDER], dtype=np.float32)
@@ -254,26 +273,6 @@ def _read_questions(gray, question_count, template):
     return results
 
 
-def _read_id_digits(gray, template):
-    """4 haneli okul-no bubble blogu - QR okunamadiginda yedek kimlik
-    dogrulama. NOT: gercek ornek fotograflarda ogrenci bu alani hic
-    doldurmadi (QR zaten kimligi tasiyordu) - bu fonksiyon ayni GORECELI
-    karsilastirma yontemiyle yazildi ama gercek ISARETLENMIS bir haneyle
-    henuz DOGRULANMADI, ileride gercek veriyle kontrol edilmeli."""
-    digits = []
-    statuses = []
-    for col in range(template.id_digit_count):
-        means = [_disk_mean(gray, *_mm_to_px(*template.id_bubble_center_mm(col, row)),
-                             template.id_bubble_d_mm / 2 * PX_PER_MM)
-                 for row in range(template.id_digit_rows)]
-        cls = _classify_group(means, [str(d) for d in range(template.id_digit_rows)])
-        digits.append(cls["value"])
-        statuses.append(cls["status"])
-    if any(s != "single" for s in statuses):
-        return None
-    return "".join(digits)
-
-
 def process_scan_image(image_bytes, question_count, template_id="compact"):
     """Ana giris noktasi. image_bytes: yuklenen fotografin ham byte'lari.
     question_count: bu sinavin soru sayisi (ogretmen serbestce girer,
@@ -284,8 +283,7 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
 
     Doner: {
       'paper_token': str|None,
-      'id_digits': str|None (4 haneli, QR yoksa/basarisizsa yedek),
-      'match_status': 'matched_qr'|'matched_id_digits'|'unmatched',
+      'match_status': 'matched_qr'|'unmatched',
       'questions': [{'question','answer','status','means'}, ...],
       'warnings': [str, ...],
     }
@@ -317,16 +315,10 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
         paper_token = _data  # duzeltme once basarisiz olup ham goruntude basarili oldugu nadir durum
 
     match_status = "unmatched"
-    id_digits = None
     if paper_token:
         match_status = "matched_qr"
     else:
-        warnings.append("QR kodu okunamadı, 4 haneli numara alanına düşülüyor.")
-        id_digits = _read_id_digits(gray, template)
-        if id_digits:
-            match_status = "matched_id_digits"
-        else:
-            warnings.append("4 haneli numara alanı da okunamadı/boş - manuel atama gerekiyor.")
+        warnings.append("QR kodu okunamadı - manuel atama gerekiyor.")
 
     if not isinstance(question_count, int) or question_count < F.QUESTION_COUNT_MIN:
         question_count = 20
@@ -337,7 +329,6 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
 
     return {
         "paper_token": paper_token,
-        "id_digits": id_digits,
         "match_status": match_status,
         "questions": questions,
         "warnings": warnings,
