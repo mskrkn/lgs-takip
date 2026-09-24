@@ -25,7 +25,56 @@
   // Bkz. decodeFrame - ortalama guven bunun ALTINDAYSA (cogu soru sinirda/
   // belirsiz) okuma tumden GUVENILMEZ sayilir, sunucuya cop veri gitmez.
   const OMR_MIN_CONFIDENCE_AVG = 0.35;
+  // Flas/parlama tespiti (bkz. decodeFrame): kagit kameraya cok yakinken
+  // flas kullanilinca yansimadan (specular glare) genis, pikselin fiziksel
+  // MAX degerine yapistigi ("tamamen yanmis") bir bolge olusabiliyor - bu,
+  // balonun altindaki koyu isareti MASKELEYIP okumayi YANLIS yaparken
+  // classifyGroup'un GORECELI kiyaslamasini da bozmadigindan (4 sik da
+  // esit derecede "parlak" gorunebiliyor) YUKSEK guvenle donebiliyor,
+  // yani OMR_MIN_CONFIDENCE_AVG bunu YAKALAYAMAZ (bkz. 2026-09-24 kullanici
+  // raporu: "flas acinca daha hizli ama yanlis okuyor").
+  //
+  // ESIK SABIT DEGIL, HER KAREYE GORE UYARLANIR: sabit "253+ piksel" denemesi
+  // sentetik test goruntulerinde (dogrudan dijital render - GERCEK bir
+  // fotografin sensor gurultusu/isik dususu OLMADIGINDAN arka plan pikselin
+  // matematiksel MAX'ina, 255'e, sabit oturuyor - olcum: %97+) YANLIS POZITIF
+  // verdi; aym mantik teorik olarak COK PARLAK (ama gercek/mesru) bir taramayi
+  // da riske atar. Bunun yerine: once bu KARENIN KENDI tipik arka plan
+  // seviyesi (histogramda 60. persentil - balonlar/QR/fiducial'lerin koyu
+  // pikselleri azinlikta oldugundan bu deger guvenle "beyaz kagit" bolgesine
+  // denk gelir) hesaplanir, parlama esigi bunun OMR_GLARE_MARGIN kadar
+  // USTUNDE (ama asla OMR_GLARE_SATURATION_LEVEL'in ALTINDA degil) belirlenir.
+  // Boylece: sentetik/mukemmel-beyaz bir karede (arka plan zaten 255) esik
+  // 255'i asar ve kontrol dogal olarak HIC TETIKLENMEZ (yanlis pozitif yok,
+  // fixture'lara dokunmaya gerek kalmadan); gercek bir fotografta (arka plan
+  // tipik 200-245, bkz. bugunku gercek cihaz ornekleri) esik sabit tabanda
+  // (253) kalir ve gercek bir flas lekesini yakalar. TEK BASINA birkac parlak
+  // piksel (kucuk, zararsiz bir yansima noktasi/toz) degil, sayfanin BUYUK
+  // bir kismini (>= %20) kaplamasi aranir - kucuk lekeler reddetmez.
+  const OMR_GLARE_SATURATION_LEVEL = 253;
+  const OMR_GLARE_BG_PERCENTILE = 0.6;
+  const OMR_GLARE_MARGIN = 15;
+  const OMR_GLARE_AREA_FRACTION = 0.20;
   const FIDUCIAL_ORDER = ['TL', 'TR', 'BR', 'BL'];
+
+  // Histogram tabanli (O(n) + O(256), tam siralamadan COK daha ucuz) parlama
+  // orani hesaplayicisi - bkz. yukaridaki uzun aciklama.
+  function glareFraction(grayData) {
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < grayData.length; i++) hist[grayData[i]]++;
+    const total = grayData.length;
+    const target = total * OMR_GLARE_BG_PERCENTILE;
+    let cum = 0, bgLevel = 255;
+    for (let v = 0; v < 256; v++) {
+      cum += hist[v];
+      if (cum >= target) { bgLevel = v; break; }
+    }
+    const level = Math.max(OMR_GLARE_SATURATION_LEVEL, bgLevel + OMR_GLARE_MARGIN);
+    if (level > 255) return 0; // 8-bit'te hicbir piksel bunu asamaz
+    let above = 0;
+    for (let v = level; v <= 255; v++) above += hist[v];
+    return above / total;
+  }
 
   function dist(a, b) {
     return Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -315,6 +364,18 @@
     const grayData = warpedGray.data; // Uint8Array (tek kanal)
     const width = warpedGray.cols, height = warpedGray.rows;
 
+    // Parlama kontrolu balon okumadan ONCE yapilir - hem gereksiz islemden
+    // kacinilir hem de classifyGroup'un GORECELI kiyaslamasi bu durumu
+    // (butun sikkin esit derecede "parlak" gorunmesi) yakalayamadigindan
+    // ayri, mutlak bir kontrole ihtiyac var (bkz. yukarisi, sabit tanimlari).
+    const glareFrac = glareFraction(grayData);
+    if (glareFrac >= OMR_GLARE_AREA_FRACTION) {
+      warpedGray.delete();
+      warped.delete();
+      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+        warnings: ['Kağıtta aşırı parlama tespit edildi (flaş/ışık yansıması olabilir) - flaşı kapatıp tekrar deneyin.'] };
+    }
+
     const questions = readQuestions(grayData, width, height, questionCount, template);
     if (questions.some((q) => q.status === 'multi')) warnings.push('Bazı sorularda belirsiz işaretleme tespit edildi.');
     warpedGray.delete();
@@ -355,9 +416,10 @@
   }
 
   const OmrWorkerCore = {
-    decodeFrame, detectQr, rectify, readQuestions, classifyGroup, diskMean,
+    decodeFrame, detectQr, rectify, readQuestions, classifyGroup, diskMean, glareFraction,
     BLANK_VS_MARKED_GAP, MULTI_MARK_CLOSE_GAP, MULTI_MARK_MIN_PROMINENCE, BUBBLE_SAMPLE_R_MM,
-    OMR_MIN_CONFIDENCE_AVG,
+    OMR_MIN_CONFIDENCE_AVG, OMR_GLARE_SATURATION_LEVEL, OMR_GLARE_BG_PERCENTILE,
+    OMR_GLARE_MARGIN, OMR_GLARE_AREA_FRACTION,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = OmrWorkerCore;
