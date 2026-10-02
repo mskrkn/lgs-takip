@@ -384,6 +384,17 @@
         </section>
 
         <!-- ============ AYARLAR ============ -->
+        <!-- ============ ÖĞRENCİ DETAYI (ayrı sayfa - telefon/tablette tam ekran) ============ -->
+        <section class="page-section" id="page-student-detail">
+          <div class="student-detail-toolbar">
+            <button type="button" class="btn btn-secondary btn-sm" id="student-detail-back" onclick="closeStudentDetail()">← Geri</button>
+            <button type="button" class="btn-print" onclick="window.print()" title="Öğrenci karnesini yazdır / PDF olarak kaydet">🖨️ Yazdır / Rapor Al</button>
+          </div>
+          <div id="student-detail-body">
+            <p class="text-muted" style="padding:40px;text-align:center">Öğrenci bilgileri yükleniyor...</p>
+          </div>
+        </section>
+
         <section class="page-section" id="page-settings">
           <div class="card">
             <div class="card-header"><h3 class="card-title"><span class="card-icon">👤</span> Hesap Bilgisi</h3></div>
@@ -431,22 +442,6 @@
       <span class="mobile-nav-icon">⚙️</span><span class="mobile-nav-label">Ayarlar</span>
     </button>
   </nav>
-
-  <!-- ========== ÖĞRENCİ DETAY MODALI ========== -->
-  <div class="modal-overlay" id="student-modal-overlay">
-    <div class="modal modal-xl">
-      <div class="modal-header" style="border-bottom:none;padding-bottom:0">
-        <h2 id="student-modal-title" style="display:none">Öğrenci Detayı</h2>
-        <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
-          <button type="button" class="btn-print" onclick="window.print()" title="Öğrenci karnesini yazdır / PDF olarak kaydet">🖨️ Yazdır / Rapor Al</button>
-          <button class="modal-close" onclick="closeStudentModal()" title="Kapat">✕</button>
-        </div>
-      </div>
-      <div class="modal-body" id="student-modal-body" style="padding-top:4px">
-        <p class="text-muted" style="padding:40px;text-align:center">Öğrenci bilgileri yükleniyor...</p>
-      </div>
-    </div>
-  </div>
 
   <!-- ========== LİSTE MODALI (Düşüş / Tebrik) ========== -->
   <div class="modal-overlay" id="list-modal-overlay">

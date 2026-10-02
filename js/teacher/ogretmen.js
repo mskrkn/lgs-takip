@@ -21,6 +21,8 @@
     let homeroomClass = null; // sınıf öğretmeninin kendi sınıfı (yoksa null)
     let currentStudentClass = null; // null = henüz seçilmedi, '__all__' = tüm sınıflar
     let currentStudentDetailData = null;
+    let studentDetailReturnPage = 'students'; // öğrenci detayının açıldığı sayfa ("← Geri" buraya döner)
+    let studentDetailRequestSeq = 0; // eski isteğin yanıtı yeni öğrencinin üzerine yazmasın
 
     function subjectName(key) {
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
@@ -53,31 +55,48 @@
     }
 
     // ---- Sayfa Geçişleri ----
-    function showPage(page) {
-      if (window.NavHistory) NavHistory.record(page);
+    const PAGE_TITLES = {
+      dashboard: ['Ana Sayfa', 'Kontrol Merkezi'],
+      analytics: ['Analizler', 'Sınıf Karşılaştırma & Konu Analizi'],
+      students: ['Öğrenciler', 'Sıralı Öğrenci Listesi & Detaylı İnceleme'],
+      exams: ['Denemeler', 'Deneme Sonuçları'],
+      omr: ['Optik Okuma', 'Kırtasiye Testi Tanımla & Form Yazdır'],
+      message: ['Mesaj Gönder', 'Öğrenciye Özel Mesaj'],
+      assignments: ['Ödevler', 'Ödev Oluştur & Sonuçları Gör'],
+      topics: ['Konular', 'Yakında'],
+      ai: ['Edu AI', 'Eğitim Asistanın'],
+      settings: ['Ayarlar', 'Hesap & Güvenlik'],
+    };
+
+    function activePageKey() {
+      const section = document.querySelector('.page-section.active');
+      return section ? section.id.replace(/^page-/, '') : 'dashboard';
+    }
+
+    // navData: geri/ileri tuşunda sayfayı yeniden kurmak için history'ye
+    // yazılan ek bilgi (bkz. NavHistory, öğrenci detayı için {studentId, studentName}).
+    function showPage(page, navData) {
+      if (window.NavHistory) NavHistory.record(page, navData);
+      // Öğrenci detayı ayrı bir menü öğesi değil - açıldığı sayfanın menüsü
+      // seçili kalır.
+      const navKey = page === 'student-detail' ? studentDetailReturnPage : page;
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-        item.classList.toggle('active', item.dataset.page === page);
+        item.classList.toggle('active', item.dataset.page === navKey);
       });
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
-        item.classList.toggle('active', item.dataset.page === page);
+        item.classList.toggle('active', item.dataset.page === navKey);
       });
+      if (page !== 'student-detail' && document.body.classList.contains('student-detail-open')) {
+        document.body.classList.remove('student-detail-open');
+        destroyStudentCharts();
+      }
       document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
       const section = document.getElementById(`page-${page}`);
       if (section) section.classList.add('active');
 
-      const titles = {
-        dashboard: ['Ana Sayfa', 'Kontrol Merkezi'],
-        analytics: ['Analizler', 'Sınıf Karşılaştırma & Konu Analizi'],
-        students: ['Öğrenciler', 'Sıralı Öğrenci Listesi & Detaylı İnceleme'],
-        exams: ['Denemeler', 'Deneme Sonuçları'],
-        omr: ['Optik Okuma', 'Kırtasiye Testi Tanımla & Form Yazdır'],
-        message: ['Mesaj Gönder', 'Öğrenciye Özel Mesaj'],
-        assignments: ['Ödevler', 'Ödev Oluştur & Sonuçları Gör'],
-        topics: ['Konular', 'Yakında'],
-        ai: ['Edu AI', 'Eğitim Asistanın'],
-        settings: ['Ayarlar', 'Hesap & Güvenlik'],
-      };
-      const [title, subtitle] = titles[page] || [page, ''];
+      const [title, subtitle] = page === 'student-detail'
+        ? ['Öğrenci Detayı', (navData && navData.studentName) || '']
+        : (PAGE_TITLES[page] || [page, '']);
       document.getElementById('page-title').firstChild.textContent = title + ' ';
       document.getElementById('page-subtitle').textContent = subtitle;
 
@@ -88,7 +107,15 @@
     }
 
     function setupNav() {
-      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
+      if (window.NavHistory) NavHistory.init((p, d) => {
+        // Geri/ileri ile öğrenci detayına dönülürse öğrenci yeniden yüklenir
+        if (p === 'student-detail') {
+          if (d && d.studentId) openStudentDetail(d.studentId, d.studentName);
+          else showPage(studentDetailReturnPage);
+          return;
+        }
+        showPage(p);
+      }, 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(item => {
         item.addEventListener('click', () => {
           showPage(item.dataset.page);
@@ -1514,14 +1541,25 @@
       renderStudentMasteryChart();
     }
 
+    // Öğrenci detayı ayrı bir sayfa (#page-student-detail) - önceden modaldı,
+    // telefon/tablette dar kaldığı için tam sayfaya taşındı. Geri tuşu
+    // açıldığı sayfaya döner (NavHistory).
     async function openStudentDetail(studentId, studentName) {
-      document.getElementById('student-modal-title').textContent = studentName || 'Öğrenci Detayı';
-      document.getElementById('student-modal-body').innerHTML = '<p class="text-muted" style="padding:40px;text-align:center">Öğrenci detayları yükleniyor...</p>';
-      document.getElementById('student-modal-overlay').classList.add('active');
-      document.body.style.overflow = 'hidden';
+      const current = activePageKey();
+      if (current !== 'student-detail') studentDetailReturnPage = current;
+      const returnTitle = (PAGE_TITLES[studentDetailReturnPage] || ['Geri'])[0];
+      document.getElementById('student-detail-back').textContent = `← ${returnTitle}`;
+      destroyStudentCharts();
+      document.body.classList.add('student-detail-open');
+      showPage('student-detail', { studentId, studentName: studentName || '' });
+      window.scrollTo(0, 0);
+      const body = document.getElementById('student-detail-body');
+      body.innerHTML = '<p class="text-muted" style="padding:40px;text-align:center">Öğrenci detayları yükleniyor...</p>';
 
+      const requestSeq = ++studentDetailRequestSeq;
       const data = await fetch(`/api/teacher/student/${studentId}`).then(r => r.json());
-      const body = document.getElementById('student-modal-body');
+      // Bu arada başka öğrenci açıldıysa ya da sayfadan çıkıldıysa çizme
+      if (requestSeq !== studentDetailRequestSeq || activePageKey() !== 'student-detail') return;
       if (data.error) {
         body.innerHTML = `<div class="card" style="padding:20px;text-align:center"><p class="text-muted">${escapeHtml(data.error)}</p></div>`;
         return;
@@ -1957,10 +1995,15 @@
       };
     }
 
-    function closeStudentModal() {
-      document.getElementById('student-modal-overlay').classList.remove('active');
-      document.body.style.overflow = '';
-      destroyStudentCharts();
+    // "← Geri" butonu - telefonun geri tuşuyla aynı davranış: history'de
+    // öğrenci detayı kayıtlıysa bir adım geri (popstate açıldığı sayfayı
+    // gösterir), değilse doğrudan açıldığı sayfaya dön.
+    function closeStudentDetail() {
+      if (window.NavHistory && history.state && history.state.eduPage === 'student-detail' && history.length > 1) {
+        history.back();
+      } else {
+        showPage(studentDetailReturnPage);
+      }
     }
 
     function closeListModal() {
@@ -1969,10 +2012,12 @@
       document.body.style.overflow = '';
     }
 
-    document.getElementById('student-modal-overlay').addEventListener('click', function(e) { if (e.target === this) closeStudentModal(); });
     document.getElementById('list-modal-overlay').addEventListener('click', function(e) { if (e.target === this) closeListModal(); });
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') { closeStudentModal(); closeListModal(); }
+      if (e.key !== 'Escape') return;
+      const listOverlay = document.getElementById('list-modal-overlay');
+      if (listOverlay && listOverlay.classList.contains('active')) closeListModal();
+      else if (activePageKey() === 'student-detail') closeStudentDetail();
     });
 
     async function changePassword() {
