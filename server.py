@@ -9627,6 +9627,20 @@ def _build_student_report(db, student_id, exam_id=None):
         (student_id,)
     ).fetchall()
 
+    # Kazanım Denemesi (OMR) -> ders adı: öğrenci/veli/öğretmen ekranlarında
+    # Kazanım Denemeleri ders bazında filtrelenebilsin diye (bir test = bir
+    # ders, bkz. omr_exam_definitions.subject_id). Genel Denemede None kalır.
+    mastery_exam_ids = sorted({r["exam_id"] for r in result_rows if _is_mastery_exam_type(r["exam_type"])})
+    mastery_subject_names = {}
+    if mastery_exam_ids:
+        placeholders = ",".join("?" * len(mastery_exam_ids))
+        for row in db.execute(
+            f"SELECT oed.exam_id, s.name AS subject_name FROM omr_exam_definitions oed "
+            f"LEFT JOIN subjects s ON s.id = oed.subject_id WHERE oed.exam_id IN ({placeholders})",
+            tuple(mastery_exam_ids),
+        ).fetchall():
+            mastery_subject_names[row["exam_id"]] = row["subject_name"]
+
     results = []
     subject_nets = {}
     for r in result_rows:
@@ -9636,6 +9650,7 @@ def _build_student_report(db, student_id, exam_id=None):
             "examId": r["exam_id"], "examName": r["exam_name"], "examDate": r["exam_date"],
             "examType": r["exam_type"], "subjects": subjects,
             "totalNet": calc_total_net(subjects),
+            "subjectName": mastery_subject_names.get(r["exam_id"]),
         })
         # subject_nets SADECE Genel Deneme'den beslenir - Kazanım Denemesi
         # (Optik Okuma) genelde tek derslik oluyor, genel ders ortalamasına/
