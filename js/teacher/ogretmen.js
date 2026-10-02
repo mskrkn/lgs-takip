@@ -1,6 +1,7 @@
     let currentExamId = null;
     let studentTrendChart = null;
     let studentMasteryChart = null, studentMasteryTrend = [], studentMasteryKazanim = null;
+    let studentMasteryResults = [], studentMasterySubject = 'ALL'; // Kazanım Denemeleri sekmesi + ders filtresi
     let studentScoreRadarChart = null;
     let studentSubjectChart = null;
     let classTrendChart = null;
@@ -1414,10 +1415,85 @@
 
     // Kazanım Gelişimi grafiği (öğrenci detayı, Kazanım Denemeleri sekmesi) -
     // veli/öğrenci portalındaki renderMasteryTrendChart ile aynı desen.
+    // Kazanım Denemesinin ders adı (sunucu: results[].subjectName /
+    // masteryTrend[].subjectName) - tanımsız ders "Diğer" altında toplanır.
+    function masterySubject(x) {
+      return (x && x.subjectName && x.subjectName !== '-') ? x.subjectName : 'Diğer';
+    }
+
+    function visibleStudentMasteryTrend() {
+      return studentMasterySubject === 'ALL' ? studentMasteryTrend : studentMasteryTrend.filter(g => masterySubject(g) === studentMasterySubject);
+    }
+
+    // Öğrenci detayı "🎯 Kazanım Denemeleri" sekmesinin içeriği - ders
+    // filtresi değişince sadece bu sekme yeniden çizilir (setStudentMasterySubject).
+    function renderStudentMasteryPaneHtml() {
+      const subjects = [...new Set(studentMasteryResults.map(masterySubject).concat(studentMasteryTrend.map(masterySubject)))].sort((a, b) => a.localeCompare(b, 'tr'));
+      if (studentMasterySubject !== 'ALL' && !subjects.includes(studentMasterySubject)) studentMasterySubject = 'ALL';
+      const rows = studentMasterySubject === 'ALL' ? studentMasteryResults : studentMasteryResults.filter(r => masterySubject(r) === studentMasterySubject);
+      const trend = visibleStudentMasteryTrend();
+      const subjectFilterHtml = subjects.length > 1 ? `
+            <div style="display:flex;align-items:center;gap:8px;padding:0 16px;margin-top:8px">
+              <label for="student-mastery-subject-select" style="font-weight:600;font-size:13px">Ders:</label>
+              <select id="student-mastery-subject-select" class="form-control" style="max-width:220px" onchange="setStudentMasterySubject(this.value)">
+                <option value="ALL"${studentMasterySubject === 'ALL' ? ' selected' : ''}>Tüm Dersler</option>
+                ${subjects.map(s => `<option value="${escapeHtml(s)}"${s === studentMasterySubject ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+              </select>
+            </div>` : '';
+      return `
+          <div class="card">
+            <div class="card-header"><h4 class="card-title">🎯 Kazanım Denemeleri (Optik Okuma)</h4></div>
+            <p class="text-muted" style="font-size:12px;padding:0 16px">Bu netler Genel Deneme ortalamasına KATILMAZ (farklı ölçek).</p>
+            ${subjectFilterHtml}
+            ${rows.length ? `
+            <div class="table-wrapper" style="margin-top:10px">
+              <table class="simple-table">
+                <thead><tr><th>Test</th><th>Ders</th><th>Tarih</th><th>Doğru</th><th>Yanlış</th><th>Boş</th><th style="text-align:right">Net</th></tr></thead>
+                <tbody>
+                  ${rows.map(r => {
+                    const subs = Object.values(r.subjects || {});
+                    const sum = (k) => subs.reduce((a, x) => a + ((x && x[k]) || 0), 0);
+                    return `<tr>
+                      <td style="font-weight:700">${escapeHtml(r.examName)}</td>
+                      <td>${escapeHtml(masterySubject(r))}</td>
+                      <td style="color:var(--text-muted);font-size:12px">${r.examDate || '-'}</td>
+                      <td>${sum('correct')}</td><td>${sum('wrong')}</td><td>${sum('blank')}</td>
+                      <td style="text-align:right"><span class="badge-net" style="font-size:15px">${r.totalNet}</span></td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>` : `<p class="text-muted" style="padding:20px">${studentMasteryResults.length ? 'Bu derste Kazanım Denemesi yok.' : 'Bu öğrenci için henüz onaylanmış bir Kazanım Denemesi yok.'}</p>`}
+          </div>
+          ${trend.length ? `
+          <div class="card mt-2">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <h4 class="card-title">📈 Kazanım Gelişimi</h4>
+              ${trend.length > 1 ? `
+              <select class="form-control" style="max-width:260px" onchange="setStudentMasteryKazanim(this.value)">
+                ${trend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}"${g.kazanimKodu === studentMasteryKazanim ? ' selected' : ''}>${studentMasterySubject === 'ALL' ? escapeHtml(g.subjectName) + ' - ' : ''}${escapeHtml(g.kazanimAdi)}</option>`).join('')}
+              </select>` : ''}
+            </div>
+            <div class="chart-box" style="height:240px"><canvas id="student-mastery-trend-chart"></canvas></div>
+          </div>` : ''}`;
+    }
+
+    function setStudentMasterySubject(subject) {
+      studentMasterySubject = subject;
+      const pane = document.getElementById('tab-pane-mastery');
+      if (!pane) return;
+      pane.innerHTML = renderStudentMasteryPaneHtml();
+      renderStudentMasteryChart();
+    }
+
     function renderStudentMasteryChart() {
       const canvas = document.getElementById('student-mastery-trend-chart');
-      if (!canvas || !studentMasteryTrend.length) return;
-      const group = studentMasteryTrend.find(g => g.kazanimKodu === studentMasteryKazanim) || studentMasteryTrend[0];
+      const trend = visibleStudentMasteryTrend();
+      if (!canvas || !trend.length) {
+        if (studentMasteryChart) { studentMasteryChart.destroy(); studentMasteryChart = null; }
+        return;
+      }
+      const group = trend.find(g => g.kazanimKodu === studentMasteryKazanim) || trend[0];
       studentMasteryKazanim = group.kazanimKodu;
       if (studentMasteryChart) { studentMasteryChart.destroy(); studentMasteryChart = null; }
       studentMasteryChart = new Chart(canvas, {
@@ -1464,8 +1540,10 @@
       const prev = generalResults[1];
       // Kazanım Denemeleri (Optik Okuma) - ayrı sekmede, Genel'le karışmaz
       const masteryResults = results.filter(r => r.examType === 'optik_kamera');
+      studentMasteryResults = masteryResults;
       studentMasteryTrend = data.masteryTrend || [];
       studentMasteryKazanim = studentMasteryTrend.length ? studentMasteryTrend[0].kazanimKodu : null;
+      studentMasterySubject = 'ALL';
 
       let changeHtml = '<span class="net-neutral">➖</span>';
       if (last && prev) {
@@ -1664,39 +1742,7 @@
 
         <!-- ============ SEKME: KAZANIM DENEMELERİ (OPTİK OKUMA) ============ -->
         <div class="detail-tab-pane" id="tab-pane-mastery">
-          <div class="card">
-            <div class="card-header"><h4 class="card-title">🎯 Kazanım Denemeleri (Optik Okuma)</h4></div>
-            <p class="text-muted" style="font-size:12px;padding:0 16px">Bu netler Genel Deneme ortalamasına KATILMAZ (farklı ölçek).</p>
-            ${masteryResults.length ? `
-            <div class="table-wrapper" style="margin-top:10px">
-              <table class="simple-table">
-                <thead><tr><th>Test</th><th>Tarih</th><th>Doğru</th><th>Yanlış</th><th>Boş</th><th style="text-align:right">Net</th></tr></thead>
-                <tbody>
-                  ${masteryResults.map(r => {
-                    const subs = Object.values(r.subjects || {});
-                    const sum = (k) => subs.reduce((a, x) => a + ((x && x[k]) || 0), 0);
-                    return `<tr>
-                      <td style="font-weight:700">${escapeHtml(r.examName)}</td>
-                      <td style="color:var(--text-muted);font-size:12px">${r.examDate || '-'}</td>
-                      <td>${sum('correct')}</td><td>${sum('wrong')}</td><td>${sum('blank')}</td>
-                      <td style="text-align:right"><span class="badge-net" style="font-size:15px">${r.totalNet}</span></td>
-                    </tr>`;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>` : '<p class="text-muted" style="padding:20px">Bu öğrenci için henüz onaylanmış bir Kazanım Denemesi yok.</p>'}
-          </div>
-          ${studentMasteryTrend.length ? `
-          <div class="card mt-2">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-              <h4 class="card-title">📈 Kazanım Gelişimi</h4>
-              ${studentMasteryTrend.length > 1 ? `
-              <select class="form-control" style="max-width:260px" onchange="setStudentMasteryKazanim(this.value)">
-                ${studentMasteryTrend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}">${escapeHtml(g.subjectName)} - ${escapeHtml(g.kazanimAdi)}</option>`).join('')}
-              </select>` : ''}
-            </div>
-            <div class="chart-box" style="height:240px"><canvas id="student-mastery-trend-chart"></canvas></div>
-          </div>` : ''}
+          ${renderStudentMasteryPaneHtml()}
         </div>
 
         <!-- ============ SEKME 4: KONU & KAZANIM ANALİZİ ============ -->

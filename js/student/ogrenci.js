@@ -57,6 +57,7 @@
     let lastMasteryTrend = [];
     let masteryTrendChart = null;
     let activeMasteryKazanim = null;
+    let activeMasterySubject = 'ALL'; // Kazanım Denemeleri ders filtresi
 
     // Genel Deneme / Kazanım Denemesi (Optik Okuma/OMR) ayrımı - "asla
     // karışmaz" ilkesi (bkz. Faz 1 planı). examType==='optik_kamera' TEK
@@ -65,45 +66,77 @@
       return exam && exam.examType === 'optik_kamera';
     }
 
+    // Kazanım Denemesinin ders adı (sunucu: results[].subjectName /
+    // masteryTrend[].subjectName) - tanımsız ders "Diğer" altında toplanır.
+    function masterySubject(x) {
+      return (x && x.subjectName && x.subjectName !== '-') ? x.subjectName : 'Diğer';
+    }
+
+    // Ders filtresine uyan Kazanım Gelişimi grupları
+    function visibleMasteryTrend() {
+      return activeMasterySubject === 'ALL' ? lastMasteryTrend : lastMasteryTrend.filter(g => masterySubject(g) === activeMasterySubject);
+    }
+
     function renderExamResultsList(results, masteryTrend) {
       lastExamResults = results || [];
       if (masteryTrend !== undefined) lastMasteryTrend = masteryTrend || [];
-      const filtered = lastExamResults.filter(r => activeExamTab === 'MASTERY' ? isMasteryExam(r) : !isMasteryExam(r));
+      let filtered = lastExamResults.filter(r => activeExamTab === 'MASTERY' ? isMasteryExam(r) : !isMasteryExam(r));
       const tabsHtml = `
         <div style="display:flex;gap:8px;margin-bottom:10px">
           <button class="btn btn-sm ${activeExamTab === 'GENERAL' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('GENERAL')">📘 Genel Denemeler</button>
           <button class="btn btn-sm ${activeExamTab === 'MASTERY' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('MASTERY')">🎯 Kazanım Denemeleri</button>
         </div>`;
+      // Ders seçici - Kazanım Denemeleri sekmesinde, birden fazla ders varsa.
+      // Hem deneme tablosunu hem Kazanım Gelişimi grafiğini filtreler.
+      let subjectFilterHtml = '';
+      if (activeExamTab === 'MASTERY') {
+        const subjects = [...new Set(filtered.map(masterySubject).concat(lastMasteryTrend.map(masterySubject)))].sort((a, b) => a.localeCompare(b, 'tr'));
+        if (activeMasterySubject !== 'ALL' && !subjects.includes(activeMasterySubject)) activeMasterySubject = 'ALL';
+        if (subjects.length > 1) {
+          subjectFilterHtml = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <label for="mastery-subject-select" style="font-weight:600">Ders:</label>
+              <select id="mastery-subject-select" class="form-control" style="max-width:220px" onchange="window._ogrSetMasterySubject(this.value)">
+                <option value="ALL"${activeMasterySubject === 'ALL' ? ' selected' : ''}>Tüm Dersler</option>
+                ${subjects.map(s => `<option value="${escapeHtml(s)}"${s === activeMasterySubject ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+              </select>
+            </div>`;
+        }
+        if (activeMasterySubject !== 'ALL') filtered = filtered.filter(r => masterySubject(r) === activeMasterySubject);
+      }
+      const trend = visibleMasteryTrend();
       // Kazanım Gelişimi grafiği (Faz 3) - sadece Kazanım Denemeleri
       // sekmesinde, kazanım koduna göre gruplanmış zaman-içi başarı yüzdesi.
-      const masteryChartHtml = (activeExamTab === 'MASTERY' && lastMasteryTrend.length) ? `
+      const masteryChartHtml = (activeExamTab === 'MASTERY' && trend.length) ? `
         <div class="ep-empty" style="text-align:left;margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <h4 style="margin:0">🎯 Kazanım Gelişimi</h4>
-            ${lastMasteryTrend.length > 1 ? `
+            ${trend.length > 1 ? `
               <select id="mastery-kazanim-select" class="form-control" style="max-width:260px" onchange="window._ogrSetMasteryKazanim(this.value)">
-                ${lastMasteryTrend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}">${escapeHtml(g.subjectName)} - ${escapeHtml(g.kazanimAdi)}</option>`).join('')}
+                ${trend.map(g => `<option value="${escapeHtml(g.kazanimKodu)}"${g.kazanimKodu === activeMasteryKazanim ? ' selected' : ''}>${activeMasterySubject === 'ALL' ? escapeHtml(g.subjectName) + ' - ' : ''}${escapeHtml(g.kazanimAdi)}</option>`).join('')}
               </select>` : ''}
           </div>
           <div style="height:220px;margin-top:10px"><canvas id="mastery-trend-chart"></canvas></div>
         </div>` : '';
       if (!filtered.length) {
-        document.getElementById('exam-results').innerHTML = tabsHtml + masteryChartHtml + '<div class="ep-empty"><div class="ep-empty-icon">📝</div>Bu kategoride henüz deneme sonucu bulunmuyor.</div>';
+        document.getElementById('exam-results').innerHTML = tabsHtml + subjectFilterHtml + masteryChartHtml + '<div class="ep-empty"><div class="ep-empty-icon">📝</div>Bu kategoride henüz deneme sonucu bulunmuyor.</div>';
         if (masteryChartHtml) renderMasteryTrendChart();
         return;
       }
-      document.getElementById('exam-results').innerHTML = tabsHtml + masteryChartHtml + `
+      const isMastery = activeExamTab === 'MASTERY';
+      document.getElementById('exam-results').innerHTML = tabsHtml + subjectFilterHtml + masteryChartHtml + `
         <div style="overflow-x:auto"><table class="ep-exams-table">
-          <tr><th>Deneme</th><th>Tarih</th><th>Toplam Net</th></tr>
-          ${filtered.map(r => `<tr><td>${escapeHtml(r.examName)}</td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
+          <tr><th>Deneme</th>${isMastery ? '<th>Ders</th>' : ''}<th>Tarih</th><th>Toplam Net</th></tr>
+          ${filtered.map(r => `<tr><td>${escapeHtml(r.examName)}</td>${isMastery ? `<td>${escapeHtml(masterySubject(r))}</td>` : ''}<td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
         </table></div>`;
       if (masteryChartHtml) renderMasteryTrendChart();
     }
 
     function renderMasteryTrendChart() {
       const canvas = document.getElementById('mastery-trend-chart');
-      if (!canvas || !lastMasteryTrend.length) return;
-      const group = lastMasteryTrend.find(g => g.kazanimKodu === activeMasteryKazanim) || lastMasteryTrend[0];
+      const trend = visibleMasteryTrend();
+      if (!canvas || !trend.length) return;
+      const group = trend.find(g => g.kazanimKodu === activeMasteryKazanim) || trend[0];
       activeMasteryKazanim = group.kazanimKodu;
       if (masteryTrendChart) { masteryTrendChart.destroy(); masteryTrendChart = null; }
       masteryTrendChart = new Chart(canvas, {
@@ -124,6 +157,11 @@
     window._ogrSetMasteryKazanim = function (kazanimKodu) {
       activeMasteryKazanim = kazanimKodu;
       renderMasteryTrendChart();
+    };
+
+    window._ogrSetMasterySubject = function (subject) {
+      activeMasterySubject = subject;
+      renderExamResultsList(lastExamResults);
     };
 
     window._ogrSetExamTab = function (tab) {
