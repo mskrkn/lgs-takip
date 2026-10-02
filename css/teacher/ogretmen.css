@@ -385,6 +385,10 @@
     }
 
     /* ---- Öğrenci Detayı sayfası (önceden modal) ---- */
+    /* .main-content .app-layout'un flex öğesi; min-width:auto iken içindeki
+       tek satırlık sekme çubuğu/geniş tablolar sayfayı ekrandan taşırıyordu
+       (telefonda sağ taraf kesiliyordu). 0 ile taşan öğeler kendi içinde kayar. */
+    .main-content { min-width: 0; }
     .student-detail-toolbar {
       display: flex; align-items: center; justify-content: space-between;
       gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
