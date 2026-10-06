@@ -5141,6 +5141,44 @@ def api_import_roster():
     return jsonify({"ok": True, "created": created, "updated": updated, "unchanged": unchanged})
 
 
+# Okul bazinda yedek - platform sahibi "Okula Gir" ile Sinif Listesi PDF
+# yuklemeden once indirir (okulun kendi admini ise tarayicidaki IndexedDB'yi
+# ExportModule.exportAllData() ile yedekler, bkz. js/rosterImport.js).
+# users tablosu (sifre hash'leri) bilerek DAHIL EDILMEZ.
+_ORG_BACKUP_TABLES = (
+    "students", "exams", "results",
+    "omr_exam_definitions", "omr_exam_applications", "omr_papers", "omr_scans",
+)
+
+
+@app.route("/api/admin/school-backup")
+@login_required(role=("admin", "super_admin"), permission="students.create")
+def api_school_backup():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    org = db.execute("SELECT name FROM organizations WHERE id=?", (org_id,)).fetchone()
+    payload = {
+        "organizationId": org_id,
+        "organizationName": org["name"] if org else None,
+        "exportedAt": datetime.now().isoformat(),
+        "tables": {},
+    }
+    for table in _ORG_BACKUP_TABLES:
+        rows = db.execute(f"SELECT * FROM {table} WHERE organization_id=?", (org_id,)).fetchall()
+        payload["tables"][table] = [dict(r) for r in rows]
+
+    log_audit(db, "SCHOOL_BACKUP_EXPORTED", resource_type="organization", resource_id=org_id)
+    filename = f"edupusula_okul{org_id}_yedek_{datetime.now().strftime('%Y-%m-%d')}.json"
+    return Response(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.route("/api/teacher/exams", methods=["POST"])
 @login_required(role=("admin", "super_admin"), permission="exams.create")
 def api_platform_add_exam():

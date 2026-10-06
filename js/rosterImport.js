@@ -51,11 +51,10 @@ const RosterImport = {
           </div>
           <div id="roster-import-status" style="margin-top:14px"></div>
           <div id="roster-import-preview"></div>
-          ${mode === 'local' ? `
           <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;cursor:pointer">
             <input type="checkbox" id="roster-backup-first" checked>
-            İçe aktarmadan önce tüm verilerin yedeğini indir (JSON)
-          </label>` : ''}
+            İçe aktarmadan önce ${mode === 'local' ? 'tüm verilerin' : 'bu okulun verilerinin'} yedeğini indir (JSON)
+          </label>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
           <button class="btn btn-ghost" onclick="RosterImport.close()">İptal</button>
@@ -131,14 +130,11 @@ const RosterImport = {
     });
 
     try {
+      if (document.getElementById('roster-backup-first')?.checked) {
+        statusEl.innerHTML = `<p class="text-muted">⏳ Yedek indiriliyor...</p>`;
+        await this._downloadBackup();
+      }
       if (this._mode === 'local') {
-        // Okulun verisi bu tarayıcının IndexedDB'sinde yaşıyor ve senkron
-        // sunucuya taşıyor - içe aktarmadan önce geri dönülebilir bir
-        // kopya (Ayarlar > Veri Yedekleme ile aynı JSON) indir.
-        if (document.getElementById('roster-backup-first')?.checked) {
-          statusEl.innerHTML = `<p class="text-muted">⏳ Yedek indiriliyor...</p>`;
-          await ExportModule.exportAllData();
-        }
         await this._confirmLocal(students, statusEl);
       } else {
         await this._confirmServer(students);
@@ -149,6 +145,25 @@ const RosterImport = {
       statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
       confirmBtn.disabled = false;
     }
+  },
+
+  // İçe aktarmadan önce geri dönülebilir bir kopya indirir. 'local': okulun
+  // verisi bu tarayıcının IndexedDB'sinde (Ayarlar > Veri Yedekleme ile aynı
+  // JSON). 'server': platform sahibi - veri sunucuda, o okulun yedeği
+  // /api/admin/school-backup'tan gelir. Yedek alınamazsa hata fırlatır,
+  // içe aktarma başlamaz.
+  async _downloadBackup() {
+    if (this._mode === 'local') {
+      await ExportModule.exportAllData();
+      return;
+    }
+    const res = await fetch(`/api/admin/school-backup${this._schoolQuery}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(`Yedek alınamadı, içe aktarma yapılmadı: ${data.error || res.status}`);
+    }
+    const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+    UI.downloadFile(await res.text(), match ? match[1] : 'okul_yedek.json', 'application/json');
   },
 
   async _confirmServer(students) {
