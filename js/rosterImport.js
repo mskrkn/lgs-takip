@@ -51,6 +51,11 @@ const RosterImport = {
           </div>
           <div id="roster-import-status" style="margin-top:14px"></div>
           <div id="roster-import-preview"></div>
+          ${mode === 'local' ? `
+          <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="roster-backup-first" checked>
+            İçe aktarmadan önce tüm verilerin yedeğini indir (JSON)
+          </label>` : ''}
         </div>
         <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center">
           <button class="btn btn-ghost" onclick="RosterImport.close()">İptal</button>
@@ -127,6 +132,13 @@ const RosterImport = {
 
     try {
       if (this._mode === 'local') {
+        // Okulun verisi bu tarayıcının IndexedDB'sinde yaşıyor ve senkron
+        // sunucuya taşıyor - içe aktarmadan önce geri dönülebilir bir
+        // kopya (Ayarlar > Veri Yedekleme ile aynı JSON) indir.
+        if (document.getElementById('roster-backup-first')?.checked) {
+          statusEl.innerHTML = `<p class="text-muted">⏳ Yedek indiriliyor...</p>`;
+          await ExportModule.exportAllData();
+        }
         await this._confirmLocal(students, statusEl);
       } else {
         await this._confirmServer(students);
