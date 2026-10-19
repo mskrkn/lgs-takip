@@ -85,7 +85,8 @@
         <div style="display:flex;gap:8px;margin-bottom:10px">
           <button class="btn btn-sm ${activeExamTab === 'GENERAL' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('GENERAL')">📘 Genel Denemeler</button>
           <button class="btn btn-sm ${activeExamTab === 'MASTERY' ? 'btn-primary' : 'btn-secondary'}" onclick="window._ogrSetExamTab('MASTERY')">🎯 Kazanım Denemeleri</button>
-        </div>`;
+        </div>
+        ${activeExamTab === 'MASTERY' ? `<button type="button" class="km-link" onclick="window._ogrOpenDashView('mastery')">📚 Ders ders, konu konu detaylı analiz →</button>` : ''}`;
       // Ders seçici - Kazanım Denemeleri sekmesinde, birden fazla ders varsa.
       // Hem deneme tablosunu hem Kazanım Gelişimi grafiğini filtreler.
       let subjectFilterHtml = '';
@@ -1089,15 +1090,21 @@
       }
     }
 
-    function showPage(page) {
-      if (window.NavHistory) NavHistory.record(page);
-      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
-      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===page));
+    function showPage(page, data) {
+      if (window.NavHistory) NavHistory.record(page, data);
+      // 'dash-*' görünümleri Ana Sayfa bölümünün alt görünümleridir (bkz. setDashView)
+      const dashView = DASH_PAGES[page];
+      const section = dashView ? 'dashboard' : page;
+      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===section));
+      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===section));
       document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-      const sec = document.getElementById(`page-${page}`);
+      const sec = document.getElementById(`page-${section}`);
       if (sec) sec.classList.add('active');
       const titles = {
         dashboard: ['Ana Sayfa','Başarı Merkezi'],
+        'dash-general': ['Genel Denemeler','Netlerin & Gelişimin'],
+        'dash-mastery': ['Kazanım Denemeleri','Ders Ders Kazanımların'],
+        'dash-mastery-subject': ['Kazanım Denemeleri',''],
         analytics: ['Analizler','Konu Analizi & Sınıf Karşılaştırma'],
         exams:     ['Denemelerim','Deneme Sonuçlarım'],
         assignments: ['Ödevlerim','Öğretmenimin Verdiği Ödevler'],
@@ -1111,10 +1118,11 @@
       const overlay = document.querySelector('.sidebar-overlay');
       if (sidebar) sidebar.classList.remove('open');
       if (overlay) overlay.classList.remove('active');
+      if (dashView) setDashView(dashView, data);
     }
 
     function setupNav() {
-      if (window.NavHistory) NavHistory.init((p) => showPage(p), 'dashboard');
+      if (window.NavHistory) NavHistory.init((p, d) => showPage(p, d), 'dashboard');
       document.querySelectorAll('.nav-item[data-page]').forEach(i => i.addEventListener('click', () => {
         showPage(i.dataset.page);
         if (i.dataset.page === 'assignments') renderAssignmentsList();
@@ -1137,6 +1145,381 @@
         if (card && card.style.display !== 'none') card.scrollIntoView({behavior:'smooth',block:'start'});
         markMessagesRead();
       });
+    }
+
+    // =====================================================================
+    // ANA SAYFA GÖRÜNÜMLERİ: Seçim -> Genel Denemeler | Kazanım Denemeleri
+    // Panel açılınca sadece iki seçim kartı görünür. Her görünüm ayrı bir
+    // NavHistory sayfası ('dash-*'), böylece telefonun geri tuşu bir üst
+    // görünüme döner. Hepsi aynı #page-dashboard bölümünde yaşar.
+    // =====================================================================
+    const DASH_PAGES = { 'dashboard': 'chooser', 'dash-general': 'general', 'dash-mastery': 'mastery', 'dash-mastery-subject': 'mastery-subject' };
+    const LAST_VIEW_KEY = 'ogr.lastDashView';
+    let masteryData = null;      // /api/student/mastery yanıtı (ilk girişte bir kez çekilir)
+    let kmCharts = [];
+
+    function fmtDate(s) {
+      if (!s) return '—';
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+      if (!m) return s;
+      return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function kmStatus(rate) {
+      if (rate >= 70) return { key: 'ok',  label: 'Kazanıldı', icon: '✅', color: '#22C55E' };
+      if (rate >= 50) return { key: 'mid', label: 'Gelişiyor', icon: '🟡', color: '#F59E0B' };
+      return               { key: 'low', label: 'Eksik',     icon: '🔴', color: '#EF4444' };
+    }
+
+    const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+
+    // Sunucunun düz deneme listesinden Ders -> Konu -> Kazanım ağacı
+    function kmBuildTree(exams) {
+      const subjects = new Map();
+      [...exams].reverse().forEach(ex => { // sunucu yeni->eski döner; ağaçta eski->yeni
+        let sub = subjects.get(ex.subjectName);
+        if (!sub) { sub = { name: ex.subjectName, exams: [], kazanims: new Map(), topics: new Map() }; subjects.set(ex.subjectName, sub); }
+        sub.exams.push(ex);
+        let kz = sub.kazanims.get(ex.kazanimKodu);
+        if (!kz) {
+          kz = { key: ex.kazanimKodu, name: ex.kazanimAdi, topic: ex.topic, attempts: [] };
+          sub.kazanims.set(ex.kazanimKodu, kz);
+          if (!sub.topics.has(ex.topic)) sub.topics.set(ex.topic, []);
+          sub.topics.get(ex.topic).push(kz);
+        }
+        kz.attempts.push(ex);
+      });
+      subjects.forEach(sub => {
+        sub.avgRate = avg(sub.exams.map(e => e.successRate));
+        const withClass = sub.exams.filter(e => e.classAvgRate != null);
+        sub.classAvgRate = avg(withClass.map(e => e.classAvgRate));
+        sub.classDiff = withClass.length ? avg(withClass.map(e => e.successRate - e.classAvgRate)) : null;
+        sub.kazanims.forEach(kz => {
+          kz.latest = kz.attempts[kz.attempts.length - 1];
+          kz.prev = kz.attempts.length > 1 ? kz.attempts[kz.attempts.length - 2] : null;
+          kz.avgRate = avg(kz.attempts.map(a => a.successRate));
+          kz.status = kmStatus(kz.latest.successRate);
+        });
+        const kzList = [...sub.kazanims.values()];
+        sub.statusCounts = { ok: 0, mid: 0, low: 0 };
+        kzList.forEach(kz => sub.statusCounts[kz.status.key]++);
+        sub.weakest = kzList.filter(kz => kz.latest.successRate < 70).sort((a, b) => a.latest.successRate - b.latest.successRate);
+      });
+      return [...subjects.values()].sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    }
+
+    function kmDestroyCharts() { kmCharts.forEach(c => c.destroy()); kmCharts = []; }
+
+    function kmRatePill(rate) {
+      const st = kmStatus(rate);
+      return `<span class="km-pill" style="color:${st.color};background:${st.color}1f;border-color:${st.color}55">%${rate}</span>`;
+    }
+
+    function kmClassLine(rate, classRate) {
+      if (classRate == null) return '';
+      const d = rate - classRate;
+      const cls = d > 0 ? 'km-up' : d < 0 ? 'km-down' : '';
+      return `<span class="km-class ${cls}">Sınıf %${classRate}${d ? ` · ${d > 0 ? '+' : ''}${d}` : ''}</span>`;
+    }
+
+    function kmDiffText(d) {
+      return d === 0 ? 'Sınıfla aynı' : `Sınıfa göre ${d > 0 ? '+' : ''}${d}`;
+    }
+
+    function kmAnswerStrip(answers) {
+      if (!answers || !answers.length) return '';
+      const label = { D: 'Doğru', Y: 'Yanlış', B: 'Boş' };
+      return `<div class="km-strip">${answers.map((a, i) => {
+        const k = a === 'D' || a === 'Y' ? a : 'B';
+        return `<span class="km-q km-q-${k}" title="${i + 1}. soru: ${label[k]}">${i + 1}</span>`;
+      }).join('')}</div>`;
+    }
+
+    // ---------- Kazanım Denemeleri: genel bakış ----------
+    async function renderMasteryOverview() {
+      const el = document.getElementById('km-overview');
+      if (!masteryData) {
+        el.innerHTML = '<div class="ep-empty">Yükleniyor...</div>';
+        try {
+          const res = await fetch('/api/student/mastery');
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.error || 'Veri alınamadı.');
+          masteryData = d;
+        } catch (e) {
+          el.innerHTML = `<div class="ep-empty"><div class="ep-empty-icon">⚠️</div>${escapeHtml(e.message)}</div>`;
+          return;
+        }
+      }
+      kmDestroyCharts();
+      const exams = masteryData.exams || [];
+      if (!exams.length) {
+        el.innerHTML = `<div class="ep-card"><div class="ep-empty"><div class="ep-empty-icon">🎯</div>
+          Henüz Kazanım Denemesi sonucun yok.<br>Öğretmenin optik okumayla bir kazanım denemesi okuttuğunda sonuçların burada görünecek.</div></div>`;
+        return;
+      }
+      const tree = kmBuildTree(exams);
+      const allKz = tree.flatMap(s => [...s.kazanims.values()]);
+      const okCount = allKz.filter(k => k.status.key === 'ok').length;
+      const lowCount = allKz.filter(k => k.status.key === 'low').length;
+      const recent = exams.slice(0, 5);
+
+      el.innerHTML = `
+        <div class="km-kpis anim-fade-up">
+          <div class="km-kpi"><span class="km-kpi-val">${exams.length}</span><span class="km-kpi-lbl">Kazanım denemesi</span></div>
+          <div class="km-kpi"><span class="km-kpi-val">%${avg(exams.map(e => e.successRate))}</span><span class="km-kpi-lbl">Ortalama başarı</span></div>
+          <div class="km-kpi"><span class="km-kpi-val" style="color:#22C55E">${okCount}<small>/${allKz.length}</small></span><span class="km-kpi-lbl">Kazanılan kazanım</span></div>
+          <div class="km-kpi"><span class="km-kpi-val" style="color:${lowCount ? '#EF4444' : '#22C55E'}">${lowCount}</span><span class="km-kpi-lbl">Çalışılacak kazanım</span></div>
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d1">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🕒</div> Son Yapılan Denemeler</div></div>
+          <div class="km-recent">
+            ${recent.map(ex => `
+              <button type="button" class="km-recent-row" onclick="window._ogrOpenMasterySubject(${JSON.stringify(ex.subjectName).replace(/"/g, '&quot;')}, ${JSON.stringify(ex.kazanimKodu).replace(/"/g, '&quot;')})">
+                <span class="km-recent-icon" style="background:${subjectColor(ex.subjectName)}26">${subjectIcon(ex.subjectName)}</span>
+                <span class="km-recent-main">
+                  <span class="km-recent-title">${escapeHtml(ex.kazanimAdi)}</span>
+                  <span class="km-recent-sub">${escapeHtml(ex.subjectName)} · ${escapeHtml(ex.topic)} · ${fmtDate(ex.date)}</span>
+                </span>
+                <span class="km-recent-score">${kmRatePill(ex.successRate)}${kmClassLine(ex.successRate, ex.classAvgRate)}</span>
+              </button>`).join('')}
+          </div>
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d2">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">📚</div> Derslerim</div></div>
+          <p class="km-hint">Bir derse dokun: o derste hangi konu ve kazanımda deneme yapıldığını ve sonuçlarını gör.</p>
+          <div class="km-subject-grid">
+            ${tree.map((s, i) => {
+              const color = subjectColor(s.name);
+              const weak = s.weakest[0];
+              return `
+              <button type="button" class="km-subject-card" style="--km-c:${color}" onclick="window._ogrOpenMasterySubject(${JSON.stringify(s.name).replace(/"/g, '&quot;')})">
+                <span class="km-subject-head"><span class="km-subject-icon">${subjectIcon(s.name)}</span><span class="km-subject-name">${escapeHtml(s.name)}</span><span class="km-subject-go">→</span></span>
+                <span class="km-subject-rate">%${s.avgRate}<small> ortalama</small></span>
+                <span class="km-bar"><span style="width:${s.avgRate}%;background:${color}"></span>${s.classAvgRate != null ? `<i class="km-bar-mark" style="left:${s.classAvgRate}%" title="Sınıf ortalaması %${s.classAvgRate}"></i>` : ''}</span>
+                <span class="km-subject-meta">${s.exams.length} deneme · ${s.kazanims.size} kazanım${s.classDiff != null ? ` · <b class="${s.classDiff > 0 ? 'km-up' : s.classDiff < 0 ? 'km-down' : ''}">${kmDiffText(s.classDiff)}</b>` : ''}</span>
+                <span class="km-chips"><span>✅ ${s.statusCounts.ok}</span><span>🟡 ${s.statusCounts.mid}</span><span>🔴 ${s.statusCounts.low}</span></span>
+                ${s.exams.length > 1 ? `<span class="km-spark"><canvas id="km-spark-${i}"></canvas></span>` : ''}
+                <span class="km-subject-weak">${weak ? `En zayıf: <b>${escapeHtml(weak.name)}</b> (%${weak.latest.successRate})` : '🎉 Tüm kazanımlarda %70 üstündesin'}</span>
+              </button>`;
+            }).join('')}
+          </div>
+        </div>
+
+        ${tree.length > 1 ? `
+        <div class="ep-card anim-fade-up anim-fade-up-d3">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">📊</div> Ders Karşılaştırma</div></div>
+          <p class="km-hint">Kazanım denemelerindeki ortalama başarın${tree.some(s => s.classAvgRate != null) ? ', sınıf ortalamasıyla birlikte' : ''}.</p>
+          <div class="chart-box" style="height:${Math.max(180, tree.length * 54)}px"><canvas id="km-compare-chart"></canvas></div>
+        </div>` : ''}`;
+
+      tree.forEach((s, i) => {
+        const c = document.getElementById(`km-spark-${i}`);
+        if (!c) return;
+        const color = subjectColor(s.name);
+        kmCharts.push(new Chart(c, {
+          type: 'line',
+          data: { labels: s.exams.map(e => fmtDate(e.date)), datasets: [{ data: s.exams.map(e => e.successRate), borderColor: color, backgroundColor: color + '22', fill: true, borderWidth: 2, tension: 0.35, pointRadius: 0 }] },
+          options: { responsive: true, maintainAspectRatio: false, events: [], plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                     scales: { x: { display: false }, y: { display: false, min: 0, max: 100 } } },
+        }));
+      });
+
+      const cmp = document.getElementById('km-compare-chart');
+      if (cmp) {
+        const datasets = [{ label: 'Sen', data: tree.map(s => s.avgRate), backgroundColor: tree.map(s => subjectColor(s.name)), borderRadius: 6, barThickness: 16 }];
+        if (tree.some(s => s.classAvgRate != null)) {
+          datasets.push({ label: 'Sınıf ortalaması', data: tree.map(s => s.classAvgRate), backgroundColor: 'rgba(148,163,184,0.45)', borderRadius: 6, barThickness: 16 });
+        }
+        const base = chartDefaults();
+        kmCharts.push(new Chart(cmp, {
+          type: 'bar',
+          data: { labels: tree.map(s => s.name), datasets },
+          options: { ...base, indexAxis: 'y',
+            plugins: { ...base.plugins, tooltip: { ...base.plugins.tooltip, callbacks: { label: (ctx) => `${ctx.dataset.label}: %${ctx.raw}` } } },
+            scales: { x: { ...base.scales.x, min: 0, max: 100, ticks: { ...base.scales.x.ticks, callback: v => '%' + v } }, y: base.scales.y } },
+        }));
+      }
+    }
+
+    // ---------- Kazanım Denemeleri: ders detayı ----------
+    function renderMasterySubject(subjectName, focusKey) {
+      const el = document.getElementById('km-subject');
+      kmDestroyCharts();
+      const tree = masteryData ? kmBuildTree(masteryData.exams || []) : [];
+      const s = tree.find(x => x.name === subjectName);
+      if (!s) { el.innerHTML = '<div class="ep-empty">Bu derste kazanım denemesi bulunamadı.</div>'; return; }
+      const color = subjectColor(s.name);
+      document.getElementById('page-title').firstChild.textContent = s.name + ' ';
+      document.getElementById('page-subtitle').textContent = 'Kazanım Denemeleri';
+
+      const topics = [...s.topics.entries()]
+        .map(([name, kzs]) => ({ name, kzs, avgRate: avg(kzs.map(k => k.latest.successRate)) }))
+        .sort((a, b) => a.avgRate - b.avgRate);
+      const allKz = topics.flatMap(t => t.kzs);
+      const maxCols = Math.min(6, Math.max(...allKz.map(k => k.attempts.length)));
+
+      const kzRow = (kz) => {
+        const st = kz.status;
+        let trend = '';
+        if (kz.prev) {
+          const d = kz.latest.successRate - kz.prev.successRate;
+          trend = d > 0 ? `<span class="km-up">▲ ${d}</span>` : d < 0 ? `<span class="km-down">▼ ${-d}</span>` : '<span>＝</span>';
+        }
+        return `
+          <details class="km-kz" data-kz="${escapeHtml(kz.key)}"${kz.key === focusKey ? ' open' : ''}>
+            <summary>
+              <span class="km-kz-main">
+                <span class="km-kz-name">${escapeHtml(kz.name)}</span>
+                <span class="km-kz-sub">${/^exam-/.test(kz.key) ? '' : escapeHtml(kz.key) + ' · '}${kz.attempts.length} deneme · son ${fmtDate(kz.latest.date)} ${trend}</span>
+                <span class="km-bar"><span style="width:${kz.latest.successRate}%;background:${st.color}"></span>${kz.latest.classAvgRate != null ? `<i class="km-bar-mark" style="left:${kz.latest.classAvgRate}%" title="Sınıf ortalaması %${kz.latest.classAvgRate}"></i>` : ''}</span>
+              </span>
+              <span class="km-kz-right">
+                <span class="km-badge" style="color:${st.color};background:${st.color}1f">${st.icon} ${st.label}</span>
+                ${kmRatePill(kz.latest.successRate)}
+              </span>
+            </summary>
+            <div class="km-attempts">
+              ${[...kz.attempts].reverse().map(a => `
+                <div class="km-attempt">
+                  <div class="km-attempt-hd">
+                    <span><b>${escapeHtml(a.examName)}</b><br><small>${fmtDate(a.date)}</small></span>
+                    <span class="km-attempt-score">${kmRatePill(a.successRate)}${kmClassLine(a.successRate, a.classAvgRate)}</span>
+                  </div>
+                  <div class="km-dyb"><span class="km-d">✅ ${a.correct} doğru</span><span class="km-y">❌ ${a.wrong} yanlış</span><span class="km-b">⬜ ${a.blank} boş</span></div>
+                  ${kmAnswerStrip(a.answers)}
+                </div>`).join('')}
+            </div>
+          </details>`;
+      };
+
+      el.innerHTML = `
+        <div class="ep-card km-subject-hero anim-fade-up" style="--km-c:${color}">
+          <div class="km-subject-hero-top">
+            <span class="km-subject-hero-icon">${subjectIcon(s.name)}</span>
+            <div>
+              <div class="km-subject-hero-name">${escapeHtml(s.name)}</div>
+              <div class="km-subject-meta">${s.exams.length} deneme · ${s.topics.size} konu · ${s.kazanims.size} kazanım</div>
+            </div>
+            <div class="km-subject-hero-rate">%${s.avgRate}<small>ortalama</small></div>
+          </div>
+          <div class="km-chips">
+            <span>✅ ${s.statusCounts.ok} kazanıldı</span><span>🟡 ${s.statusCounts.mid} gelişiyor</span><span>🔴 ${s.statusCounts.low} eksik</span>
+            ${s.classDiff != null ? `<span class="${s.classDiff > 0 ? 'km-up' : s.classDiff < 0 ? 'km-down' : ''}">${kmDiffText(s.classDiff)}</span>` : ''}
+          </div>
+          ${s.exams.length > 1 ? `<div class="chart-box" style="height:200px;margin-top:12px"><canvas id="km-subject-chart"></canvas></div>` : ''}
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d1">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🎯</div> Önce Bunlara Çalış</div></div>
+          ${s.weakest.length ? `<div class="km-focus">${s.weakest.slice(0, 3).map((kz, i) => `
+            <button type="button" class="km-focus-item" onclick="window._ogrFocusKazanim(${JSON.stringify(kz.key).replace(/"/g, '&quot;')})">
+              <span class="km-focus-rank">${i + 1}</span>
+              <span class="km-recent-main"><span class="km-recent-title">${escapeHtml(kz.name)}</span><span class="km-recent-sub">${escapeHtml(kz.topic)}</span></span>
+              ${kmRatePill(kz.latest.successRate)}
+            </button>`).join('')}</div>`
+          : '<div class="ep-empty"><div class="ep-empty-icon">🎉</div>Bu dersteki tüm kazanımlarda %70 ve üstündesin. Harika!</div>'}
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d2">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🗂️</div> Konular ve Kazanımlar</div></div>
+          <p class="km-hint">Bir kazanıma dokun: o kazanımda yaptığın denemeleri, sınıf ortalamasını ve soru soru cevaplarını gör. Çubuktaki çizgi sınıf ortalamasıdır.</p>
+          ${topics.map(t => `
+            <details class="km-topic" open>
+              <summary><span class="km-topic-name">📖 ${escapeHtml(t.name)}</span><span class="km-subject-meta">${t.kzs.length} kazanım</span>${kmRatePill(t.avgRate)}</summary>
+              ${t.kzs.map(kzRow).join('')}
+            </details>`).join('')}
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d3">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🔥</div> Gelişim Haritası</div></div>
+          <p class="km-hint">Her satır bir kazanım; soldan sağa o kazanımdaki denemelerin${maxCols < Math.max(...allKz.map(k => k.attempts.length)) ? ` (son ${maxCols})` : ''}. Renk yeşile döndükçe kazanım oturuyor.</p>
+          <div class="km-heat-wrap"><table class="km-heat">
+            <tr><th></th>${Array.from({ length: maxCols }, (_, i) => `<th>${i + 1}.</th>`).join('')}</tr>
+            ${allKz.map(kz => {
+              const atts = kz.attempts.slice(-maxCols);
+              return `<tr><td class="km-heat-name" title="${escapeHtml(kz.name)}">${escapeHtml(kz.name)}</td>${Array.from({ length: maxCols }, (_, i) => {
+                const a = atts[i];
+                if (!a) return '<td class="km-heat-empty"></td>';
+                const st = kmStatus(a.successRate);
+                return `<td style="background:${st.color}38;color:${st.color}" title="${escapeHtml(a.examName)} · ${fmtDate(a.date)}">%${a.successRate}</td>`;
+              }).join('')}</tr>`;
+            }).join('')}
+          </table></div>
+          <div class="km-legend"><span><i style="background:#22C55E"></i>%70+ Kazanıldı</span><span><i style="background:#F59E0B"></i>%50-69 Gelişiyor</span><span><i style="background:#EF4444"></i>%50 altı Eksik</span></div>
+        </div>`;
+
+      const sc = document.getElementById('km-subject-chart');
+      if (sc) {
+        const base = chartDefaults();
+        const datasets = [{ label: 'Sen', data: s.exams.map(e => e.successRate), borderColor: color, backgroundColor: color + '26', fill: true, borderWidth: 3, tension: 0.3, pointRadius: 4 }];
+        if (s.exams.some(e => e.classAvgRate != null)) {
+          datasets.push({ label: 'Sınıf ortalaması', data: s.exams.map(e => e.classAvgRate), borderColor: '#94a3b8', borderDash: [6, 4], borderWidth: 2, tension: 0.3, pointRadius: 2, spanGaps: true });
+        }
+        kmCharts.push(new Chart(sc, {
+          type: 'line',
+          data: { labels: s.exams.map(e => fmtDate(e.date)), datasets },
+          options: { ...base,
+            plugins: { ...base.plugins, tooltip: { ...base.plugins.tooltip, callbacks: {
+              title: (items) => s.exams[items[0].dataIndex].kazanimAdi,
+              label: (ctx) => ctx.raw == null ? '' : `${ctx.dataset.label}: %${ctx.raw}` } } },
+            scales: { x: base.scales.x, y: { ...base.scales.y, min: 0, max: 100, ticks: { ...base.scales.y.ticks, callback: v => '%' + v } } } },
+        }));
+      }
+      if (focusKey) setTimeout(() => window._ogrFocusKazanim(focusKey), 50);
+    }
+
+    window._ogrFocusKazanim = function (key) {
+      const d = [...document.querySelectorAll('#km-subject .km-kz')].find(x => x.dataset.kz === key);
+      if (!d) return;
+      d.open = true;
+      d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    function setDashView(view, data) {
+      const sec = document.getElementById('page-dashboard');
+      const onChooser = view === 'chooser';
+      sec.querySelector('.ep-hero').classList.toggle('dash-off', !onChooser);
+      document.getElementById('teacher-messages-card').classList.toggle('dash-off', !onChooser);
+      document.getElementById('dash-chooser').classList.toggle('dash-off', !onChooser);
+      document.getElementById('dash-general').hidden = view !== 'general';
+      document.getElementById('dash-mastery').hidden = view !== 'mastery';
+      document.getElementById('dash-mastery-subject').hidden = view !== 'mastery-subject';
+      if (onChooser) {
+        let last = null;
+        try { last = localStorage.getItem(LAST_VIEW_KEY); } catch (_) { /* depolama kapalı olabilir */ }
+        document.querySelectorAll('#dash-chooser .km-choice').forEach(b => b.classList.toggle('km-choice-last', b.dataset.view === last));
+      } else if (view === 'general' || view === 'mastery') {
+        try { localStorage.setItem(LAST_VIEW_KEY, view); } catch (_) { /* depolama kapalı olabilir */ }
+      }
+      if (view === 'general') {
+        // Gizliyken çizilen grafikler 0 boyutta kalabilir - görünür olunca yeniden ölç
+        requestAnimationFrame(() => [radarChart, areaChart, scoreRadarChart, masteryTrendChart].forEach(c => c && c.resize()));
+      } else if (view === 'mastery') {
+        renderMasteryOverview();
+      } else if (view === 'mastery-subject') {
+        const go = () => renderMasterySubject(data && data.subject, data && data.focus);
+        if (masteryData) go(); else renderMasteryOverview().then(go);
+      }
+      if (!onChooser) window.scrollTo({ top: 0 });
+    }
+
+    window._ogrOpenDashView = function (view) {
+      showPage(view === 'general' ? 'dash-general' : 'dash-mastery');
+    };
+
+    window._ogrOpenMasterySubject = function (subject, focus) {
+      showPage('dash-mastery-subject', { subject, focus: focus || null });
+    };
+
+    function renderChooserMeta(generalResults, allResults) {
+      const mastery = (allResults || []).filter(isMasteryExam);
+      const meta = (list, dateKey) => list.length
+        ? `${list.length} deneme · son: ${fmtDate(list[0][dateKey])}`
+        : 'Henüz deneme yok';
+      document.getElementById('choice-general-meta').textContent = meta(generalResults || [], 'examDate');
+      document.getElementById('choice-mastery-meta').textContent = meta(mastery, 'examDate');
     }
 
     // ----- ANA BOOT -----
@@ -1166,6 +1549,8 @@
 
       renderTeacherMessages(data.messages);
       renderMailBadge(data.unreadMessageCount);
+      renderChooserMeta(generalResults, data.results);
+      setDashView('chooser');
       renderDirectionStatus(data.netTrend);
       renderScorecards(last, diffVal, data.classRank, riseStreak);
       renderStreakCard(riseStreak, data.netTrend);
