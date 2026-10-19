@@ -42,8 +42,6 @@
     <h1>Şifreni Belirle</h1>
     <p class="sub">İlk girişin için geçici şifre verildi. Devam etmek için kendi şifreni belirlemelisin.</p>
     <form id="f">
-      <label for="cur">Geçici şifre</label>
-      <input type="password" id="cur" autocomplete="current-password" required>
       <label for="uname">Kullanıcı adın <small>(istersen değiştirebilirsin)</small></label>
       <input type="text" id="uname" autocomplete="username" autocapitalize="off" autocorrect="off">
       <small>3-30 karakter: harf, rakam, nokta, tire, alt çizgi. Başkasında varsa uyarı alırsın.</small>
@@ -84,7 +82,7 @@
         const nu = document.getElementById('uname').value.trim();
         const res = await fetch('/api/me/credentials', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ currentPassword: document.getElementById('cur').value, newPassword: np,
+          body: JSON.stringify({ newPassword: np,
                                  newUsername: nu && nu !== username ? nu : '' }),
         });
         const d = await res.json();
