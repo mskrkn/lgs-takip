@@ -7235,7 +7235,7 @@ def api_change_own_credentials():
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
     if not user or not verify_password(user["password_hash"], current)[0]:
-        return jsonify({"error": "Mevcut (geçici) şifre yanlış."}), 401
+        return jsonify({"error": "Mevcut (geçici) şifre yanlış."}), 400
     username = user["username"]
     if new_username and new_username != username:
         if not _USERNAME_RE.match(new_username):
@@ -7504,7 +7504,7 @@ def api_change_own_password():
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
     if not user or not verify_password(user["password_hash"], current)[0]:
-        return jsonify({"error": "Mevcut şifre yanlış."}), 401
+        return jsonify({"error": "Mevcut şifre yanlış."}), 400
     db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
                (hash_password(new_password), user["id"]))
     db.commit()
