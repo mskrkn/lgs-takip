@@ -112,6 +112,39 @@
             </div>
           </div>
 
+          <!-- ============ SEÇİM: Genel Denemeler / Kazanım Denemeleri ============
+               Panel açılınca sadece bu iki kart görünür; içerik seçimden sonra açılır. -->
+          <div class="km-chooser anim-fade-up anim-fade-up-d1" id="dash-chooser">
+            <button type="button" class="km-choice" data-view="general" onclick="window._ogrOpenDashView('general')">
+              <span class="km-choice-icon">📘</span>
+              <span class="km-choice-title">Genel Denemeler</span>
+              <span class="km-choice-desc">Netlerin, gelişim eğrin, derslerin ve hedefin</span>
+              <span class="km-choice-meta" id="choice-general-meta">—</span>
+            </button>
+            <button type="button" class="km-choice km-choice-mastery" data-view="mastery" onclick="window._ogrOpenDashView('mastery')">
+              <span class="km-choice-icon">🎯</span>
+              <span class="km-choice-title">Kazanım Denemeleri</span>
+              <span class="km-choice-desc">Ders ders, konu konu hangi kazanımda nasılsın</span>
+              <span class="km-choice-meta" id="choice-mastery-meta">—</span>
+            </button>
+          </div>
+
+          <!-- ============ KAZANIM DENEMELERİ: genel bakış ============ -->
+          <div class="dash-view" id="dash-mastery" hidden>
+            <button type="button" class="km-back" onclick="history.back()">← Ana Sayfa</button>
+            <div id="km-overview"><div class="ep-empty">Yükleniyor...</div></div>
+          </div>
+
+          <!-- ============ KAZANIM DENEMELERİ: ders detayı ============ -->
+          <div class="dash-view" id="dash-mastery-subject" hidden>
+            <button type="button" class="km-back" onclick="history.back()">← Kazanım Denemeleri</button>
+            <div id="km-subject"></div>
+          </div>
+
+          <!-- ============ GENEL DENEMELER (eski Ana Sayfa içeriği) ============ -->
+          <div class="dash-view" id="dash-general" hidden>
+          <button type="button" class="km-back" onclick="history.back()">← Ana Sayfa</button>
+
           <!-- KPI STRIP -->
           <div class="ep-kpi-strip anim-fade-up anim-fade-up-d1" id="scorecards">
             <!-- JS tarafından doldurulur -->
@@ -266,6 +299,7 @@
             <div id="study-plan"></div>
           </div>
 
+          </div><!-- /dash-general -->
         </section>
 
         <!-- ============ ANALİZLER ============ -->

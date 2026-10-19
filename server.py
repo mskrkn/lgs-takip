@@ -9491,6 +9491,81 @@ def _build_mastery_trend(db, student_id):
     return list(groups.values())
 
 
+def _rate_from_subjects(subjects):
+    """results.data_json.subjects -> (dogru, yanlis, bos, cevaplar). Kazanim
+    Denemesi tek derslik oldugu icin cevaplar ilk 'answers' dizisinden alinir."""
+    correct = sum((s or {}).get("correct", 0) for s in subjects.values())
+    wrong = sum((s or {}).get("wrong", 0) for s in subjects.values())
+    blank = sum((s or {}).get("blank", 0) for s in subjects.values())
+    answers = next(((s or {}).get("answers") for s in subjects.values() if (s or {}).get("answers")), None)
+    return correct, wrong, blank, answers
+
+
+# Sinif ortalamasi en az bu kadar ogrenci o denemeye girdiyse gosterilir -
+# daha azinda ortalamadan tek bir arkadasin sonucu geri hesaplanabilir.
+_MASTERY_CLASS_AVG_MIN = 3
+
+
+def _build_student_mastery(db, student_id):
+    """Ogrenci paneli '🎯 Kazanim Denemeleri' ekrani: ogrencinin her Kazanim
+    Denemesi (OMR) sonucu - ders/konu/kazanim/D-Y-B/soru soru cevaplar + ayni
+    denemenin SINIF ortalamasi (sadece ortalama, bireysel sonuc yok). Ders ->
+    Konu -> Kazanim hiyerarsisi on yuzde kurulur (bir test = bir kazanim)."""
+    student = db.execute("SELECT class_name, organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return None
+    rows = db.execute(
+        "SELECT r.exam_id, r.data_json, e.date, e.name AS exam_name, oed.topic, oed.grade_level, "
+        "oed.kazanim_kodu, oed.kazanim_adi, oed.question_count, s.name AS subject_name "
+        "FROM results r "
+        "JOIN exams e ON e.id = r.exam_id "
+        "JOIN omr_exam_definitions oed ON oed.exam_id = e.id "
+        "LEFT JOIN subjects s ON s.id = oed.subject_id "
+        "WHERE r.student_id = ? AND e.exam_type = 'optik_kamera' "
+        "ORDER BY e.date DESC, r.exam_id DESC",
+        (student_id,),
+    ).fetchall()
+
+    class_avg = {}
+    exam_ids = sorted({r["exam_id"] for r in rows})
+    if exam_ids and student["class_name"]:
+        placeholders = ",".join("?" * len(exam_ids))
+        rates = {}
+        for cr in db.execute(
+            f"SELECT r.exam_id, r.data_json FROM results r JOIN students s ON s.id = r.student_id "
+            f"WHERE r.exam_id IN ({placeholders}) AND s.organization_id = ? AND s.class_name = ?",
+            (*exam_ids, student["organization_id"], student["class_name"]),
+        ).fetchall():
+            c, w, b, _ = _rate_from_subjects(json.loads(cr["data_json"]).get("subjects", {}))
+            if c + w + b:
+                rates.setdefault(cr["exam_id"], []).append(c / (c + w + b) * 100)
+        for eid, vals in rates.items():
+            if len(vals) >= _MASTERY_CLASS_AVG_MIN:
+                class_avg[eid] = {"rate": round(sum(vals) / len(vals)), "count": len(vals)}
+
+    exams = []
+    for r in rows:
+        correct, wrong, blank, answers = _rate_from_subjects(json.loads(r["data_json"]).get("subjects", {}))
+        total = correct + wrong + blank
+        if not total:
+            continue
+        avg = class_avg.get(r["exam_id"])
+        exams.append({
+            "examId": r["exam_id"], "examName": r["exam_name"], "date": r["date"],
+            "subjectName": r["subject_name"] or "Diğer",
+            "gradeLevel": r["grade_level"],
+            "topic": r["topic"] or "Konu belirtilmemiş",
+            "kazanimKodu": r["kazanim_kodu"] or f"exam-{r['exam_id']}",
+            "kazanimAdi": r["kazanim_adi"] or r["topic"] or r["exam_name"],
+            "correct": correct, "wrong": wrong, "blank": blank,
+            "successRate": round(correct / total * 100),
+            "answers": answers,
+            "classAvgRate": avg["rate"] if avg else None,
+            "classAvgCount": avg["count"] if avg else None,
+        })
+    return {"className": student["class_name"], "exams": exams}
+
+
 def _build_error_memory(result_rows):
     """Hata Hafızası (Bölüm 10): öğrencinin en son denemesindeki yanlışlarını,
     o konudaki KENDİ geçmiş başarı oranına göre sınıflandırır - uydurma bir
@@ -9954,6 +10029,17 @@ def api_student_overview():
     ]
     report["unreadMessageCount"] = sum(1 for m in report["messages"] if not m["isRead"])
     return jsonify(report)
+
+
+@app.route("/api/student/mastery")
+@login_required(role="student", permission="results.view")
+def api_student_mastery():
+    db = get_db()
+    student_id = session.get("student_id")
+    data = _build_student_mastery(db, student_id) if student_id else None
+    if data is None:
+        return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı."}), 404
+    return jsonify(data)
 
 
 @app.route("/api/student/messages/mark-read", methods=["POST"])
