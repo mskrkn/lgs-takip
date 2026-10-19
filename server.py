@@ -7230,12 +7230,17 @@ def api_change_own_credentials():
     new_username = (data.get("newUsername") or "").strip()
     if len(new_password) < 6:
         return jsonify({"error": "Yeni şifre en az 6 karakter olmalı."}), 400
-    if new_password == current:
-        return jsonify({"error": "Yeni şifre geçici şifreyle aynı olamaz."}), 400
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
-    if not user or not verify_password(user["password_hash"], current)[0]:
-        return jsonify({"error": "Mevcut (geçici) şifre yanlış."}), 401
+    if not user:
+        return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
+    # Zorunlu degistirme adiminda gecici sifre tekrar SORULMAZ: kullanici az
+    # once onunla giris yapti (oturum bunu kanitliyor). Tekrar sormak tarayicinin
+    # kutuyu kayitli BASKA bir sifreyle otomatik doldurmasina yol aciyordu.
+    if not session.get("must_change_password") and not verify_password(user["password_hash"], current)[0]:
+        return jsonify({"error": "Mevcut (geçici) şifre yanlış."}), 400
+    if verify_password(user["password_hash"], new_password)[0]:
+        return jsonify({"error": "Yeni şifre geçici şifreyle aynı olamaz."}), 400
     username = user["username"]
     if new_username and new_username != username:
         if not _USERNAME_RE.match(new_username):
@@ -7504,7 +7509,7 @@ def api_change_own_password():
     db = get_db()
     user = db.execute("SELECT * FROM users WHERE id = ?", (session["user_id"],)).fetchone()
     if not user or not verify_password(user["password_hash"], current)[0]:
-        return jsonify({"error": "Mevcut şifre yanlış."}), 401
+        return jsonify({"error": "Mevcut şifre yanlış."}), 400
     db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
                (hash_password(new_password), user["id"]))
     db.commit()

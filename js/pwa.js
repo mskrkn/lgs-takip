@@ -92,7 +92,7 @@
       }
       throw err;
     }
-    if (isApi && res.status === 401 && !redirecting && !/\/api\/(login|me)(\?|$)/.test(url)) {
+    if (isApi && res.status === 401 && !redirecting && !/\/api\/(login|me|me\/credentials|me\/password)(\?|$)/.test(url)) {
       redirecting = true;
       toast('Oturumunuz sona erdi. Giriş sayfasına yönlendiriliyorsunuz…', null, null, 4000);
       setTimeout(() => location.replace('/login.html'), 1500);
