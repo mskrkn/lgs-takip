@@ -7309,8 +7309,17 @@ def api_admin_student_accounts_summary():
             "className": r["class_name"], "name": r["display_name"], "username": r["username"],
             "tempPassword": creds[1] if creds else "",
         })
+    # Hesabi olan ogrencilerin siniflari - "Tum okulu sifirla" bunlari sirayla
+    # /student-accounts/reset {className} ile sifirlar (tek dev istek yerine).
+    account_classes = [
+        {"className": r["class_name"], "count": r["n"]}
+        for r in db.execute(
+            "SELECT s.class_name, COUNT(*) AS n FROM users u JOIN students s ON s.id = u.student_id "
+            "WHERE u.organization_id=? AND u.role='student' GROUP BY s.class_name ORDER BY s.class_name",
+            (org_id,)).fetchall()
+    ]
     return jsonify({"totalStudents": total_students, "accounts": accounts,
-                    "pendingFirstLogin": len(sheet), "sheet": sheet})
+                    "pendingFirstLogin": len(sheet), "sheet": sheet, "accountClasses": account_classes})
 
 
 @app.route("/api/admin/student-accounts/generate", methods=["POST"])

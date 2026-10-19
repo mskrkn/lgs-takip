@@ -40,6 +40,10 @@ const StudentAccounts = {
           <input type="text" id="sa-reset-class" class="form-control" placeholder="Sınıf (örn: 8/A)" style="width:140px">
           <button class="btn btn-secondary" onclick="StudentAccounts.resetClass()">🔑 Sınıfın şifrelerini numaraya döndür</button>
         </div>
+        <div style="margin-top:10px">
+          <button class="btn btn-danger" id="sa-reset-all-btn" onclick="StudentAccounts.resetAll()">🔑 Tüm okulun şifrelerini numaraya döndür</button>
+          <div id="sa-reset-all-progress" style="margin-top:8px;font-size:13px"></div>
+        </div>
       </div>`;
   },
 
@@ -54,6 +58,7 @@ const StudentAccounts = {
       const d = await fetch(`/api/admin/student-accounts${this._q()}`).then(r => r.json());
       if (d.error) { el.textContent = d.error; return; }
       this._sheet = d.sheet || [];
+      this._accountClasses = d.accountClasses || [];
       el.innerHTML = `Sunucudaki öğrenci: <b>${d.totalStudents}</b> · Öğrenci hesabı: <b>${d.accounts}</b> · ` +
         `Şifresini henüz değiştirmemiş (hiç giriş yapmamış/geçici şifreli): <b>${d.pendingFirstLogin}</b>` +
         (d.totalStudents === 0 ? '<br>⚠️ Sunucuda öğrenci yok — önce Ayarlar\'dan bulut senkronizasyonunu çalıştırın.' : '');
@@ -155,5 +160,45 @@ const StudentAccounts = {
     if (!r.ok) { UI.toast(d.error || 'Hata', 'danger'); return; }
     UI.toast(`${d.reset} öğrencinin şifresi sıfırlandı${d.skipped ? ` (${d.skipped} atlandı: numara yok)` : ''}`, 'success');
     await this.refreshSummary();
+  },
+
+  // Okulun TÜM öğrenci hesaplarını sınıf sınıf sıfırlar (her sınıf ayrı istek,
+  // ilerleme gösterilir). Sınıfı olmayan hesaplar sınıfla eşleşemediği için atlanır.
+  async resetAll() {
+    await this.refreshSummary();
+    const classes = (this._accountClasses || []).filter(c => c.className);
+    const noClass = (this._accountClasses || []).filter(c => !c.className).reduce((a, c) => a + c.count, 0);
+    const total = classes.reduce((a, c) => a + c.count, 0);
+    if (!total) { UI.toast('Bu okulda sıfırlanacak öğrenci hesabı yok.', 'info'); return; }
+    const ok = await UI.confirm(`Bu okuldaki ${classes.length} sınıfta toplam ${total} öğrencinin şifresi 4 haneli okul numarasına döndürülecek ve hepsinden ilk girişte tekrar şifre değiştirmeleri istenecek. Şifresini değiştirmiş öğrenciler de dahil. Emin misiniz?`);
+    if (!ok) return;
+    const btn = document.getElementById('sa-reset-all-btn');
+    const prog = document.getElementById('sa-reset-all-progress');
+    btn.disabled = true;
+    let reset = 0, skipped = 0;
+    const failed = [];
+    try {
+      for (let i = 0; i < classes.length; i++) {
+        const c = classes[i];
+        prog.textContent = `⏳ ${i + 1}/${classes.length}: ${c.className} sıfırlanıyor… (${reset} tamamlandı)`;
+        try {
+          const r = await fetch(`/api/admin/student-accounts/reset${this._q()}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ className: c.className }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Hata');
+          reset += d.reset; skipped += d.skipped;
+        } catch (e) { failed.push(c.className); }
+      }
+      prog.innerHTML = `✅ <b>${reset}</b> öğrencinin şifresi sıfırlandı.` +
+        (skipped ? ` ${skipped} atlandı (okul numarası yok/rakam değil).` : '') +
+        (noClass ? ` ${noClass} hesap sınıfsız olduğu için atlandı.` : '') +
+        (failed.length ? `<br>⚠️ Şu sınıflar sıfırlanamadı, tekrar deneyin: <b>${this._esc(failed.join(', '))}</b>` : '') +
+        `<br>Şimdi "📥 Giriş Listesi (CSV)" ile listeyi indirebilirsiniz.`;
+      UI.toast(`${reset} öğrencinin şifresi sıfırlandı`, failed.length ? 'warning' : 'success');
+    } finally {
+      btn.disabled = false;
+      await this.refreshSummary();
+    }
   },
 };
