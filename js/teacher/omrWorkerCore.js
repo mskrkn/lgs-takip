@@ -245,12 +245,12 @@
     return results;
   }
 
-  // jsQR ile QR tespiti - once ham karede, bulunamazsa QR'in beklenen
-  // bolgesini (varsa onceki bir tahminden) 4x buyutup tekrar dener
-  // (bkz. omr_pipeline.py _detect_qr/_decode_qr_cropped_upscale ile ayni
-  // gerekce: kucuk/uzak QR bazen dogrudan cozulmuyor).
+  // jsQR ile tek bir karede QR tespiti (olcek secimi detectQr'da, asagida).
   function _tryDecodeQr(jsQRFn, imageData) {
-    const result = jsQRFn(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+    // Basili formun QR'i HER ZAMAN beyaz zemin uzerine siyah - ters renk
+    // denemesi (attemptBoth) gercek kamera karelerinde HIC ek QR bulmadi ama
+    // basarisiz denemenin suresini ikiye katliyordu (2026-10-21 olcumu).
+    const result = jsQRFn(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
     if (!result) return null;
     const L = result.location;
     return {
@@ -264,38 +264,81 @@
     };
   }
 
-  // cv verilirse ve ham karede QR bulunamazsa 1.6x büyütüp tekrar dener -
-  // omr_pipeline.py'nin (Python) AYNI bulgusuna dayanır (bkz. o dosyanın
-  // docstring'i: "QR kucuk kalinca cogu zaman HIC bulamiyordu"). Gerçek bir
-  // kullanıcı raporuyla doğrulandı: 720px önizleme QR'ı buluyor (yeşil
-  // çerçeve) ama el titremesi/az ışıkta tam çözünürlüklü çekimde jsQR'ın TEK
-  // denemesi çoğu zaman başarısız oluyordu. Sadece ilk deneme başarısız
-  // olunca çalıştığından çoğu (başarılı) durumda ek maliyeti yok.
-  function detectQr(jsQRFn, imageData, cv) {
-    const direct = _tryDecodeQr(jsQRFn, imageData);
-    if (direct) return direct;
-    if (!cv) return null;
-    let src = null, up = null;
+  // jsQR, QR'i ONIZLEME boyutundaki (~720 px genislik) karelerde bulup tam
+  // cozunurlukte (1080/1920 px) ya da buyutulmus karede bulamiyor: el
+  // titremesi/odak bulanikligi buyuk karede daha fazla piksele yayiliyor,
+  // kucultme (INTER_AREA) ise onu yumusatip QR'i netlestiriyor. 2026-10-21
+  // olcumu (26 gercek telefon karesi, bkz. kullanici raporu "yesil cerceve
+  // cikiyor, 'QR bulunamadi' diyor, kagit basina 1-2 dk"): tam cozunurluk
+  // 1/26, eski 1.6x buyutme yedegi 0/26 (ve en pahali yol), 720 px 7/26,
+  // 640>720>800 sirasi 9/26 (herhangi bir olcekte bulunabilenlerin hepsi).
+  // Bu yuzden QR once bu genisliklerde aranir; bulunan kose noktalari
+  // orijinal imageData uzayina geri olceklenir (rectify() tam cozunurluklu
+  // karede calismaya devam eder, fiducial'lari orada kendisi inceltir).
+  const QR_TRY_WIDTHS = [640, 720, 800];
+
+  function _refineQrAtFullRes(cv, jsQRFn, imageData, srcMat, coarse) {
+    const xs = coarse.points.map((p) => p[0]), ys = coarse.points.map((p) => p[1]);
+    const size = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const pad = size * 0.6;
+    const x0 = Math.max(0, Math.floor(Math.min(...xs) - pad)), y0 = Math.max(0, Math.floor(Math.min(...ys) - pad));
+    const x1 = Math.min(imageData.width, Math.ceil(Math.max(...xs) + pad)), y1 = Math.min(imageData.height, Math.ceil(Math.max(...ys) + pad));
+    if (x1 - x0 < 20 || y1 - y0 < 20) return null;
+    let view = null, crop = null;
     try {
-      const scale = 1.6;
-      src = cv.matFromImageData(imageData);
-      up = new cv.Mat();
-      cv.resize(src, up, new cv.Size(Math.round(imageData.width * scale), Math.round(imageData.height * scale)), 0, 0, cv.INTER_CUBIC);
-      const upImageData = { data: new Uint8ClampedArray(up.data), width: up.cols, height: up.rows };
-      const found = _tryDecodeQr(jsQRFn, upImageData);
-      if (found) {
-        // Buyutulmus koordinatlari orijinal (rectify()'in bekledigi) olcege
-        // geri getir - noktalar HER ZAMAN orijinal imageData uzayinda olmali.
-        found.points = found.points.map(([x, y]) => [x / scale, y / scale]);
-        return found;
-      }
+      view = srcMat.roi(new cv.Rect(x0, y0, x1 - x0, y1 - y0));
+      crop = view.clone(); // roi bir gorunum - surekli (continuous) veri icin kopya
+      const fine = _tryDecodeQr(jsQRFn, { data: new Uint8ClampedArray(crop.data), width: crop.cols, height: crop.rows });
+      if (!fine || fine.data !== coarse.data) return null;
+      fine.points = fine.points.map(([x, y]) => [x + x0, y + y0]);
+      return fine;
     } catch (err) {
-      // sessizce basarisiz - null donulur, cagiran "okunamadi" olarak ele alir.
+      return null;
     } finally {
-      if (src) src.delete();
-      if (up) up.delete();
+      if (view) view.delete();
+      if (crop) crop.delete();
     }
-    return null;
+  }
+
+  function detectQr(jsQRFn, imageData, cv) {
+    if (!cv) return _tryDecodeQr(jsQRFn, imageData);
+    let triedDirect = false;
+    for (const targetW of QR_TRY_WIDTHS) {
+      if (targetW > imageData.width) continue; // buyutme ISE YARAMIYOR (bkz. yukarisi)
+      if (targetW === imageData.width) {
+        triedDirect = true;
+        const direct = _tryDecodeQr(jsQRFn, imageData);
+        if (direct) return direct;
+        continue;
+      }
+      let src = null, small = null;
+      try {
+        const scale = targetW / imageData.width;
+        src = cv.matFromImageData(imageData);
+        small = new cv.Mat();
+        cv.resize(src, small, new cv.Size(targetW, Math.round(imageData.height * scale)), 0, 0, cv.INTER_AREA);
+        const found = _tryDecodeQr(jsQRFn, { data: new Uint8ClampedArray(small.data), width: small.cols, height: small.rows });
+        if (found) {
+          found.points = found.points.map(([x, y]) => [x / scale, y / scale]);
+          // Kucuk karedeki kose noktalari ~1/scale piksel kaba - rectify()
+          // sayfanin en alt koselerini bu 4 noktadan disariya dogru tahmin
+          // ettigi icin hata orada buyuyor. QR'in cevresi TAM cozunurlukte
+          // kirpilip yeniden okunursa hassas koseler alinir (kucuk bolge,
+          // hizli); okunamazsa olceklenmis noktalarla devam edilir.
+          return _refineQrAtFullRes(cv, jsQRFn, imageData, src, found) || found;
+        }
+      } catch (err) {
+        // bu olcek basarisiz - siradakini dene
+      } finally {
+        if (src) src.delete();
+        if (small) small.delete();
+      }
+    }
+    // Kare zaten kucukse (<640 px) hicbir olcek denenmemis olur - kendi
+    // boyutunda dene. Buyuk karede tam cozunurluk denenmez: olcumde hic ek QR
+    // bulmadi ama basarisiz her denemeye telefonda ~1 sn ekliyordu.
+    if (triedDirect || imageData.width > QR_TRY_WIDTHS[0]) return null;
+    return _tryDecodeQr(jsQRFn, imageData);
   }
 
   // Supheli/dusuk guvenli sonuclarda ogretmenin "Duzenle" ekraninda kagidi
