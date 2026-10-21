@@ -17,7 +17,10 @@
 //   <- {type:'decodeResult', reqId, ...OmrWorkerCore.decodeFrame sonucu}
 //   <- {type:'decodeError', reqId, message}
 
-importScripts('/js/teacher/omrGeometry.js', '/js/teacher/omrWorkerCore.js', '/js/vendor/jsQR.js');
+// ?v= (omrScan.js OMR_ENGINE_VERSION) motor dosyalarina da aktarilir - eski
+// surum onbellekten gelip yeni Worker'la karismasin.
+const OMR_V = self.location.search || '';
+importScripts('/js/teacher/omrGeometry.js' + OMR_V, '/js/teacher/omrWorkerCore.js' + OMR_V, '/js/vendor/jsQR.js');
 importScripts('https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.js');
 
 let cvReady = null; // initialize olmus OpenCV.js modulu
