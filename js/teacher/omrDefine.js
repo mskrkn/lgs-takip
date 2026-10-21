@@ -624,27 +624,23 @@ async function _omrOpenScanDetail(scanId, examDefId, examTitle, hostEl) {
   ).join('');
   const studentOptions = _omrBuildStudentOptions(students, currentClass, scan.student_id);
 
-  const outcomeColor = { correct: '#22c55e', wrong: '#f43f5e', blank: '#888', multi: '#f59e0b', ambiguous: '#f59e0b' };
-  const questionsHtml = (scan.perQuestion ? scan.perQuestion.questions : []).map(q => `
-    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px">
-      <span style="width:22px;color:var(--text-muted,#888)">${q.question}.</span>
-      <span style="width:14px;height:14px;border-radius:50%;background:${outcomeColor[q.outcome] || '#888'};display:inline-block"></span>
-      <span style="width:60px">${q.answer || '-'} ${q.keyAnswer ? '(anahtar: ' + q.keyAnswer + ')' : ''}</span>
-      ${(q.outcome === 'multi' || q.outcome === 'ambiguous') ? `
-        <select class="form-control omr-correction-input" data-q="${q.question}" style="padding:2px;width:60px">
-          <option value="">-</option>
-          <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option>
-        </select>` : ''}
-    </div>
-  `).join('');
-
-  const summary = scan.perQuestion ? scan.perQuestion.summary : null;
   const readOnly = scan.status !== 'needs_review';
+  _omrSheetState = {
+    scanId, readOnly,
+    template: scan.formTemplate || 'compact',
+    examTitle: scan.examTitle || examTitle || '',
+    studentName: scan.student ? `${scan.student.first_name || ''} ${scan.student.last_name || ''}`.trim() : '',
+    imageKind: scan.imageKind || null,
+    showPhoto: scan.imageKind === 'rectified',
+    questions: (scan.perQuestion ? scan.perQuestion.questions : []).map(q => ({ ...q })),
+    original: {},
+  };
+  _omrSheetState.questions.forEach(q => { _omrSheetState.original[q.question] = q.answer || null; });
 
   host.innerHTML = `
     <div class="card" style="display:flex;gap:16px;flex-wrap:wrap">
-      <div style="flex:0 0 220px">
-        <img src="/api/teacher/omr/scans/${scanId}/image" style="max-width:100%;border-radius:6px" alt="Tarama">
+      <div style="flex:0 1 340px;min-width:240px">
+        <div id="omr-sheet-${scanId}"></div>
       </div>
       <div style="flex:1;min-width:220px">
         <div style="margin-bottom:8px">
@@ -660,18 +656,157 @@ async function _omrOpenScanDetail(scanId, examDefId, examTitle, hostEl) {
           </select>
           ${!readOnly ? `<button type="button" class="btn btn-sm mt-2" onclick="_omrAssignStudent(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">Öğrenciyi Kaydet</button>` : ''}
         </div>
-        ${summary ? `<div class="text-muted" style="font-size:13px;margin-bottom:6px">Doğru: ${summary.correct} · Yanlış: ${summary.wrong} · Boş: ${summary.blank} · Şüpheli: ${summary.flagged}</div>` : ''}
-        <div style="max-height:260px;overflow-y:auto">${questionsHtml}</div>
+        <div id="omr-sheet-summary-${scanId}"></div>
         <div id="omr-detail-status-${scanId}" class="text-muted" style="font-size:13px;margin-top:8px"></div>
         ${!readOnly ? `
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button type="button" class="btn btn-sm" onclick="_omrSaveCorrections(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">Düzeltmeleri Kaydet</button>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button type="button" class="btn btn-sm" id="omr-sheet-save-${scanId}" onclick="_omrSaveCorrections(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">💾 Düzeltmeleri Kaydet</button>
             <button type="button" class="btn btn-sm btn-primary" onclick="_omrApproveScan(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">✅ Onayla</button>
             <button type="button" class="btn btn-sm" onclick="_omrRejectScan(${scanId}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">🚫 Reddet</button>
           </div>` : `<p class="text-muted" style="font-size:12px">${scan.status === 'approved' ? '✅ Onaylandı, düzenlenemez.' : '🚫 Reddedildi.'}</p>`}
       </div>
     </div>
   `;
+  _omrRenderSheet();
+}
+
+// ============================================================
+// Tarama detayı: cevaplar kağıdın KENDİ yerleşimi üzerinde (öğretmen
+// isteği 2026-10-21: "doğru/yanlış/boş ya da yanlış okuma, optik kağıdın
+// üzerinde olursa daha işlevsel"). Kağıt omrGeometry.js şablonuyla basılı
+// haliyle aynı ölçülerde (mm cinsinden viewBox) çizilir. Telefon motorunun
+// gönderdiği önizleme DÜZELTİLMİŞ tam kağıt olduğundan (bkz. server.py
+// imageKind) varsa cevaplar doğrudan kağıdın fotoğrafının üstüne çizilir.
+// Bir balona dokunmak o soruyu o şıkla değiştirir, işaretli balona tekrar
+// dokunmak boş yapar - sunucu (corrections ucu) notu yeniden hesaplar.
+// ============================================================
+let _omrSheetState = null;
+const OMR_SHEET_COLORS = { correct: '#16a34a', wrong: '#dc2626', multi: '#f59e0b', ambiguous: '#f59e0b' };
+
+function _omrSheetOutcome(q) {
+  if (!q.answer) return 'blank';
+  if (q.status === 'multi' || q.status === 'ambiguous') return q.status;
+  return q.answer === q.keyAnswer ? 'correct' : 'wrong';
+}
+
+function _omrSheetChanges() {
+  const st = _omrSheetState;
+  if (!st) return {};
+  const changes = {};
+  st.questions.forEach(q => {
+    const now = q.answer || null;
+    if (now !== st.original[q.question] || (q.edited && (q.outcome === 'multi' || q.outcome === 'ambiguous'))) changes[q.question] = now;
+  });
+  return changes;
+}
+
+function _omrSheetSvg(st) {
+  const G = window.OmrGeometry;
+  const t = G.TEMPLATES[st.template] || G.TEMPLATES.compact;
+  const W = t.formWMm, H = t.formHMm, r = t.answerBubbleDMm / 2;
+  const photo = st.showPhoto && st.imageKind === 'rectified';
+  const parts = [];
+  if (photo) {
+    parts.push(`<image href="/api/teacher/omr/scans/${st.scanId}/image" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>`);
+  } else {
+    parts.push(`<rect x="0" y="0" width="${W}" height="${H}" rx="1.5" fill="#fff" stroke="#cbd5e1" stroke-width="0.3"/>`);
+    const fs = t.fiducialSizeMm;
+    Object.values(G.fiducialCentersMm(t)).forEach(([x, y]) => parts.push(`<rect x="${x - fs / 2}" y="${y - fs / 2}" width="${fs}" height="${fs}" fill="#111"/>`));
+    const [qx0, qy0, qx1, qy1] = t.qrBoxMm;
+    parts.push(`<rect x="${qx0}" y="${qy0}" width="${qx1 - qx0}" height="${qy1 - qy0}" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.3" stroke-dasharray="1 0.8"/>`);
+    parts.push(`<text x="${(qx0 + qx1) / 2}" y="${(qy0 + qy1) / 2 + 1}" font-size="3" text-anchor="middle" fill="#94a3b8">QR</text>`);
+    parts.push(`<text x="${qx1 + 2.5}" y="${qy0 + 4}" font-size="3.2" font-weight="700" fill="#111">${_omrEsc(st.examTitle.slice(0, 22))}</text>`);
+    if (st.studentName) parts.push(`<text x="${qx1 + 2.5}" y="${qy0 + 8.5}" font-size="2.8" font-weight="600" fill="#334155">${_omrEsc(st.studentName.slice(0, 24))}</text>`);
+  }
+  const letters = G.CHOICES || ['A', 'B', 'C', 'D'];
+  const rowH = G.answerRowHMm(t);
+  st.questions.forEach(q => {
+    const outcome = _omrSheetOutcome(q);
+    const [ax, ay] = G.questionBubbleCenterMm(t, q.question, 0);
+    const [dx] = G.questionBubbleCenterMm(t, q.question, letters.length - 1);
+    if (outcome === 'multi' || outcome === 'ambiguous') {
+      parts.push(`<rect x="${ax - r - 5}" y="${ay - rowH / 2 + 0.6}" width="${dx - ax + 2 * r + 6}" height="${rowH - 1.2}" rx="1.2" fill="#f59e0b" fill-opacity="0.18" stroke="#f59e0b" stroke-width="0.35"/>`);
+    }
+    if (!photo) parts.push(`<text x="${ax - r - 1.2}" y="${ay + 1.1}" font-size="3.2" font-weight="700" text-anchor="end" fill="${outcome === 'blank' ? '#94a3b8' : '#111'}">${q.question}</text>`);
+    letters.forEach((L, i) => {
+      const [cx, cy] = G.questionBubbleCenterMm(t, q.question, i);
+      const marked = q.answer === L;
+      const isKey = q.keyAnswer === L;
+      const color = marked ? (OMR_SHEET_COLORS[outcome] || '#475569') : null;
+      // Öğrenci yanlış yaptıysa ya da boş bıraktıysa doğru şık yeşil halkayla gösterilir
+      const keyRing = isKey && outcome !== 'correct';
+      if (marked) {
+        parts.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="${photo ? 0.55 : 1}" stroke="${color}" stroke-width="0.3"/>`);
+      } else if (!photo) {
+        parts.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" stroke="#9ca3af" stroke-width="0.25"/>`);
+      }
+      if (keyRing) parts.push(`<circle cx="${cx}" cy="${cy}" r="${r + 0.55}" fill="none" stroke="#16a34a" stroke-width="0.7"/>`);
+      if (!photo || marked) parts.push(`<text x="${cx}" y="${cy + 0.95}" font-size="2.5" font-weight="700" text-anchor="middle" fill="${marked ? '#fff' : '#9ca3af'}" pointer-events="none">${L}</text>`);
+      if (!st.readOnly) parts.push(`<circle class="omr-bubble-hit" data-q="${q.question}" data-c="${L}" cx="${cx}" cy="${cy}" r="${r + 0.9}" fill="transparent" style="cursor:pointer"/>`);
+    });
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;border-radius:8px;background:#fff;touch-action:manipulation" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+}
+
+function _omrRenderSheet() {
+  const st = _omrSheetState;
+  if (!st) return;
+  const el = document.getElementById(`omr-sheet-${st.scanId}`);
+  if (!el) return;
+  if (!window.OmrGeometry) { el.innerHTML = '<p class="text-muted">Kağıt görünümü yüklenemedi.</p>'; return; }
+  const photoToggle = st.imageKind === 'rectified' ? `
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button type="button" class="btn btn-sm ${!st.showPhoto ? 'btn-primary' : ''}" onclick="_omrSheetTogglePhoto(false)">📝 Form</button>
+      <button type="button" class="btn btn-sm ${st.showPhoto ? 'btn-primary' : ''}" onclick="_omrSheetTogglePhoto(true)">📷 Kağıdın fotoğrafı</button>
+    </div>` : (st.imageKind === 'photo' ? `<a href="/api/teacher/omr/scans/${st.scanId}/image" target="_blank" rel="noopener" style="font-size:12.5px;display:inline-block;margin-bottom:8px">📷 Ham fotoğrafı aç</a>` : '');
+  el.innerHTML = photoToggle + _omrSheetSvg(st) + `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;margin-top:8px;color:var(--text-muted,#888)">
+      <span><b style="color:#16a34a">●</b> Doğru</span><span><b style="color:#dc2626">●</b> Yanlış</span>
+      <span><b style="color:#16a34a">◯</b> Doğru cevap</span><span><b style="color:#f59e0b">▬</b> Şüpheli okuma</span>
+    </div>
+    ${!st.readOnly ? '<p class="text-muted" style="font-size:12px;margin:6px 0 0">Yanlış okunan soruda doğru şıkkın balonuna dokunun; işaretli balona tekrar dokunmak o soruyu boş yapar.</p>' : ''}`;
+  if (!st.readOnly) {
+    el.querySelector('svg').addEventListener('click', (e) => {
+      const hit = e.target.closest('.omr-bubble-hit');
+      if (!hit) return;
+      const q = st.questions.find(x => x.question === Number(hit.dataset.q));
+      if (!q) return;
+      q.answer = q.answer === hit.dataset.c && !(q.status === 'multi' || q.status === 'ambiguous') ? null : hit.dataset.c;
+      q.status = q.answer ? 'single' : 'blank';
+      q.edited = true;
+      _omrRenderSheet();
+    });
+  }
+  _omrRenderSheetSummary();
+}
+
+window._omrSheetTogglePhoto = function (on) {
+  if (!_omrSheetState) return;
+  _omrSheetState.showPhoto = on;
+  _omrRenderSheet();
+};
+
+function _omrRenderSheetSummary() {
+  const st = _omrSheetState;
+  const el = st && document.getElementById(`omr-sheet-summary-${st.scanId}`);
+  if (!el) return;
+  const count = { correct: 0, wrong: 0, blank: 0, flagged: 0 };
+  st.questions.forEach(q => {
+    const o = _omrSheetOutcome(q);
+    if (o === 'multi' || o === 'ambiguous') count.flagged++; else count[o]++;
+  });
+  const net = Math.max(0, Math.round((count.correct - count.wrong / 3) * 100) / 100);
+  const changed = Object.keys(_omrSheetChanges()).length;
+  el.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;font-size:13px;font-weight:700;margin-bottom:6px">
+      <span style="padding:3px 9px;border-radius:99px;background:rgba(22,163,74,.15);color:#16a34a">✅ ${count.correct} doğru</span>
+      <span style="padding:3px 9px;border-radius:99px;background:rgba(220,38,38,.15);color:#dc2626">❌ ${count.wrong} yanlış</span>
+      <span style="padding:3px 9px;border-radius:99px;background:rgba(148,163,184,.18)">⬜ ${count.blank} boş</span>
+      ${count.flagged ? `<span style="padding:3px 9px;border-radius:99px;background:rgba(245,158,11,.18);color:#d97706">⚠️ ${count.flagged} şüpheli</span>` : ''}
+      <span style="padding:3px 9px;border-radius:99px;background:rgba(99,102,241,.15)">Net ${net}</span>
+    </div>
+    ${count.flagged && !st.readOnly ? '<p style="font-size:12.5px;color:#d97706;margin:0 0 6px">Turuncu satırlarda okuma emin değil - kağıda bakıp doğru şıkka dokunun.</p>' : ''}
+    ${changed ? `<p style="font-size:12.5px;margin:0">✏️ <b>${changed}</b> soruda kaydedilmemiş değişiklik var.</p>` : ''}`;
 }
 
 async function _omrAssignStudent(scanId, examDefId, examTitle) {
@@ -689,25 +824,34 @@ async function _omrAssignStudent(scanId, examDefId, examTitle) {
   _omrOpenScanDetail(scanId, examDefId, examTitle);
 }
 
-async function _omrSaveCorrections(scanId, examDefId, examTitle) {
+// Kağıt görünümünde değiştirilen soruları kaydeder. reopen=false: onaydan
+// hemen önce çağrıldığında detayı yeniden yüklemeden sonucu döner.
+async function _omrSaveCorrections(scanId, examDefId, examTitle, reopen = true) {
   const statusEl = document.getElementById(`omr-detail-status-${scanId}`);
-  const corrections = {};
-  document.querySelectorAll('.omr-correction-input').forEach(sel => {
-    if (sel.value) corrections[sel.dataset.q] = sel.value;
-  });
-  if (!Object.keys(corrections).length) { statusEl.textContent = 'Düzeltilecek soru seçilmedi.'; return; }
+  const corrections = (_omrSheetState && _omrSheetState.scanId === scanId) ? _omrSheetChanges() : {};
+  if (!Object.keys(corrections).length) {
+    if (reopen && statusEl) statusEl.textContent = 'Değiştirilmiş soru yok - kağıtta bir balona dokunarak düzeltin.';
+    return true;
+  }
   const res = await fetch(`/api/teacher/omr/scans/${scanId}/corrections`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ corrections }),
   });
   const data = await res.json();
-  if (!res.ok) { statusEl.textContent = '❌ ' + data.error; return; }
-  statusEl.textContent = '✅ Düzeltmeler kaydedildi.';
-  _omrOpenScanDetail(scanId, examDefId, examTitle);
+  if (!res.ok) { if (statusEl) statusEl.textContent = '❌ ' + data.error; return false; }
+  if (reopen) {
+    await _omrOpenScanDetail(scanId, examDefId, examTitle);
+    const el = document.getElementById(`omr-detail-status-${scanId}`);
+    if (el) el.textContent = '✅ Düzeltmeler kaydedildi.';
+  }
+  return true;
 }
 
 async function _omrApproveScan(scanId, examDefId, examTitle) {
   const statusEl = document.getElementById(`omr-detail-status-${scanId}`);
+  // Kaydedilmemiş kağıt düzeltmeleri varsa önce onlar - yoksa öğretmen
+  // ekranda düzelttiği halde ESKİ okumayla onaylanırdı.
+  if (!(await _omrSaveCorrections(scanId, examDefId, examTitle, false))) return;
   const res = await fetch(`/api/teacher/omr/scans/${scanId}/approve`, { method: 'POST' });
   const data = await res.json();
   if (!res.ok) { statusEl.textContent = '❌ ' + data.error; return; }
