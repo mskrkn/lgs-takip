@@ -6628,7 +6628,7 @@ def api_teacher_omr_get_scan(scan_id):
     if not scan:
         return jsonify({"error": "Tarama bulunamadı."}), 404
     exam_def = db.execute(
-        "SELECT title, question_count, answer_key_json FROM omr_exam_definitions WHERE id = ?",
+        "SELECT title, question_count, answer_key_json, form_template FROM omr_exam_definitions WHERE id = ?",
         (scan["exam_definition_id"],),
     ).fetchone()
     student = None
@@ -6641,6 +6641,15 @@ def api_teacher_omr_get_scan(scan_id):
     result = dict(scan)
     result["perQuestion"] = json.loads(result.pop("per_question_json") or "null")
     result["examTitle"] = exam_def["title"] if exam_def else None
+    # "Duzenle" ekrani cevaplari kagidin kendi yerlesimi uzerinde cizer
+    # (js/teacher/omrGeometry.js sablonu). imageKind: istemci-tarafi motorun
+    # gonderdigi onizleme (.png) DUZELTILMIS tam kagittir - sablon
+    # koordinatlariyla birebir ortusur, cevaplar ustune cizilebilir; eski
+    # sunucu-tarafi yuklemelerin (.jpg/.pdf) ham fotografi ortusmez.
+    result["formTemplate"] = (exam_def["form_template"] if exam_def else None) or "compact"
+    result["questionCount"] = exam_def["question_count"] if exam_def else None
+    image_path = scan["image_path"] or ""
+    result["imageKind"] = "rectified" if image_path.endswith(".png") else ("photo" if image_path else None)
     result["student"] = student
     # Kamera ekranindaki sonuc karti (js/teacher/omrScan.js) "Duzenle"den
     # donunce kartini yukleme yanitiyla AYNI sekilde bu alandan yeniler.
