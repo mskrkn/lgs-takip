@@ -169,6 +169,11 @@ function _omrHandleWorkerMessage(ev) {
   }
 }
 
+// Optik motor dosyalarinin surumu - Cloudflare ve telefonun HTTP onbellegi
+// /js/*.js'i 4 saat tutuyor; motor degisince bu deger (ve ogretmen.html'deki
+// omrScan.js?v=) arttirilir, Worker bunu importScripts'e de aktarir.
+const OMR_ENGINE_VERSION = '20261021';
+
 // Worker'ı (henüz yoksa) oluşturup hazır olmasını bekler - tek instance,
 // kamera ekranı kapanana kadar (kapatılınca terminate edilir) yaşar.
 function _omrEnsureWorker() {
@@ -176,7 +181,7 @@ function _omrEnsureWorker() {
   if (_omrWorkerState === 'error') return Promise.reject(new Error(_omrWorkerErrorMsg));
   if (!_omrWorker) {
     try {
-      _omrWorker = new Worker('/js/teacher/omrWorker.js');
+      _omrWorker = new Worker(`/js/teacher/omrWorker.js?v=${OMR_ENGINE_VERSION}`);
     } catch (err) {
       _omrWorkerState = 'error';
       _omrWorkerErrorMsg = 'Optik motor bu tarayıcıda başlatılamadı.';
