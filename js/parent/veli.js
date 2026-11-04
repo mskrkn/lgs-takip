@@ -314,7 +314,7 @@
         return;
       }
       el.innerHTML = Object.entries(last.subjects).map(([key, s]) => {
-        const q = (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key] && SUBJECT_LOOKUP[key].questions) || 20;
+        const q = (typeof getSubjectQuestionCount === 'function') ? getSubjectQuestionCount(key, s) : 20;
         const pct = Math.max(0, Math.min(100, Math.round(((s.net || 0) / q) * 100)));
         const color = pct < 50 ? '#EF4444' : pct < 70 ? '#F59E0B' : '#10b981';
         return `<div class="subject-progress-row">

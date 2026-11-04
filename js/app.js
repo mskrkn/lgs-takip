@@ -2216,7 +2216,7 @@ const App = {
     if (hasResults) {
       const lastResult = trend[trend.length - 1];
       const lastExamAvg = await db.getExamAverages(lastResult.examId);
-      Analysis.renderRadarChart('profile-radar-chart', lastResult, lastExamAvg, lastResult.exam.examType);
+      Analysis.renderRadarChart('profile-radar-chart', lastResult, lastExamAvg, lastResult.exam);
       Analysis.renderAllSubjectsTrendChart('profile-subject-trend', trend);
     }
   },
@@ -2319,7 +2319,7 @@ const App = {
         const lastResult = trend[trend.length - 1];
         const lastExamAvg = await db.getExamAverages(lastResult.examId);
         chartContainer.innerHTML = '<div class="chart-container" style="height:300px"><canvas id="profile-radar-chart"></canvas></div>';
-        Analysis.renderRadarChart('profile-radar-chart', lastResult, lastExamAvg, lastResult.exam.examType);
+        Analysis.renderRadarChart('profile-radar-chart', lastResult, lastExamAvg, lastResult.exam);
       } else {
         chartContainer.innerHTML = '<div class="empty-state" style="padding:40px"><div style="font-size:32px;margin-bottom:8px">📈</div><p class="text-muted">Grafik için en az 1 deneme sonucu gereklidir.</p></div>';
       }
@@ -2385,7 +2385,7 @@ const App = {
 
     // Update radar chart
     chartContainer.innerHTML = '<div class="chart-container" style="height:300px"><canvas id="profile-radar-chart"></canvas></div>';
-    Analysis.renderRadarChart('profile-radar-chart', result, averages, selectedExam.examType);
+    Analysis.renderRadarChart('profile-radar-chart', result, averages, selectedExam);
 
     // Konu analizi: bu denemenin cevap anahtarı Excel'den yüklenmişse
     // (bkz. db.getStudentTopicAnalysis), öğrencinin bu denemede zayıf olduğu
@@ -2428,7 +2428,7 @@ const App = {
     let selectedExamId = defaultExamId || (exams.length > 0 ? exams[0].id : null);
     let existingResult = selectedExamId ? await db.getResult(studentId, selectedExamId) : null;
     const selectedExam = selectedExamId ? exams.find(e => e.id === selectedExamId) : null;
-    this._modalActiveExamType = selectedExam?.examType || 'LGS';
+    this._modalActiveExamType = selectedExam || 'LGS'; // exam nesnesi: denemeye özel soru sayıları (questionCounts) korunur
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay active';
@@ -2550,7 +2550,7 @@ const App = {
         db.getResult(studentId, examId),
         db.getExam(examId),
       ]);
-      this._modalActiveExamType = exam?.examType || 'LGS';
+      this._modalActiveExamType = exam || 'LGS';
       if (inputsContainer) inputsContainer.innerHTML = this.buildModalSubjectInputsHtml(this._modalActiveExamType, existing);
       this.calcModalResultNets();
     }
