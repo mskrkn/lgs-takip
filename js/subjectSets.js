@@ -41,9 +41,31 @@ Object.values(SUBJECT_SETS).forEach(function (list) {
 });
 
 // examOrType: bir exam nesnesi ({examType:...}) ya da doğrudan 'LGS'|'TYT'|... string'i olabilir
+// Bir exam nesnesi `questionCounts` ({turkce: 15, ...}) taşıyorsa o denemenin
+// GERÇEK ders soru sayıları bunlardır (ör. 5-6. sınıf yayınevi denemelerinde
+// Türkçe/Mat/Fen 15 soru) - set'teki sabit LGS sayılarının üzerine yazılır.
+// questionCounts olmayan (tüm eski) denemeler aynen eski davranışı görür.
 function getSubjectsForExam(examOrType) {
   const type = (typeof examOrType === 'string') ? examOrType : ((examOrType && examOrType.examType) || 'LGS');
-  return SUBJECT_SETS[type] || SUBJECT_SETS.LGS;
+  const base = SUBJECT_SETS[type] || SUBJECT_SETS.LGS;
+  const counts = (examOrType && typeof examOrType === 'object') ? examOrType.questionCounts : null;
+  if (!counts) return base;
+  return base.map(function (s) {
+    const n = parseInt(counts[s.key], 10);
+    if (!(n > 0) || n === s.questions) return s;
+    const copy = {};
+    Object.keys(s).forEach(function (k) { copy[k] = s[k]; });
+    copy.questions = n;
+    return copy;
+  });
+}
+
+// Tek bir ders sonucunun soru sayısı: sonuç kaydı kendi `questions`'ını
+// taşıyorsa (denemeye özel sayı) o, yoksa ders setindeki varsayılan.
+function getSubjectQuestionCount(subjectKey, subjectResult) {
+  const n = subjectResult && parseInt(subjectResult.questions, 10);
+  if (n > 0) return n;
+  return (SUBJECT_LOOKUP[subjectKey] && SUBJECT_LOOKUP[subjectKey].questions) || 20;
 }
 
 function getTotalQuestions(examOrType) {

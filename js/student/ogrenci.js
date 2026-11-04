@@ -658,7 +658,7 @@
       }
       el.innerHTML = Object.entries(last.subjects).map(([key, sub]) => {
         const net = (sub && sub.net) || 0;
-        const q   = (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key] && SUBJECT_LOOKUP[key].questions) || 20;
+        const q   = (typeof getSubjectQuestionCount === 'function') ? getSubjectQuestionCount(key, sub) : 20;
         const pct = Math.max(0, Math.min(100, Math.round((net/q)*100)));
         const prevNet = (prev && prev.subjects && prev.subjects[key]) ? prev.subjects[key].net : null;
         const delta   = prevNet != null ? Math.round((net-prevNet)*100)/100 : null;

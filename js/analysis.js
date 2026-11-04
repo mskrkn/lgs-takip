@@ -60,12 +60,13 @@ const Analysis = {
   },
 
   // ---- Render Radar Chart (Student exam performance across subjects) ----
-  renderRadarChart(canvasId, result, averages, examType) {
+  // examOrType: exam nesnesi verilirse denemeye özel soru sayıları (questionCounts) eksen üst sınırı olur
+  renderRadarChart(canvasId, result, averages, examOrType) {
     this.destroyChart(canvasId);
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
 
-    const subjects = getSubjectsForExam(examType);
+    const subjects = getSubjectsForExam(examOrType);
     const labels = subjects.map(s => s.name);
     const studentNets = subjects.map(s => result.subjects?.[s.key]?.net || 0);
     const avgNets = subjects.map(s => averages?.[s.key] || 0);
