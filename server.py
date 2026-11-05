@@ -4742,6 +4742,57 @@ def api_register_student():
 # API: Admin - veri senkronizasyonu (tarayıcıdaki IndexedDB -> sunucu)
 # ============================================================
 
+@app.route("/api/admin/snapshot")
+@login_required(role="admin")
+def api_admin_snapshot():
+    """Okulun kendi (source='browser_sync') ogrenci/deneme/sonuc verisi,
+    TARAYICININ id'leriyle (bkz. _org_scoped_id'nin tersi). Admin paneli
+    acilirken bunu ceker ve - gonderilmemis yerel degisikligi yoksa - yerel
+    IndexedDB'yi sunucudakiyle degistirir (5A: "sunucudan geri yukleme").
+    Boylece: yeni bir cihaz bos acilmaz, bayat bir tarayici acildigi anda
+    eski verisini sunucuya geri yazamaz, sunucu tarafli degisiklikler (sinif
+    listesi aktarimi, sinif ogretmeni islemleri) tarayiciya yansir."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    offset = (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
+    cid = lambda server_id: (int(server_id) - offset) if server_id is not None else None
+
+    students = [{
+        "id": cid(r["id"]), "schoolNumber": r["school_number"], "firstName": r["first_name"],
+        "lastName": r["last_name"], "className": r["class_name"],
+    } for r in db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students "
+        "WHERE organization_id=? AND source='browser_sync' ORDER BY id", (org_id,)
+    ).fetchall()]
+
+    exams = []
+    for r in db.execute(
+        "SELECT id, name, date, exam_type, data_json FROM exams WHERE organization_id=? AND source='browser_sync' ORDER BY id",
+        (org_id,),
+    ).fetchall():
+        e = json.loads(r["data_json"]) if r["data_json"] else {}
+        e.update({"id": cid(r["id"]), "name": r["name"], "date": r["date"], "examType": r["exam_type"] or e.get("examType")})
+        exams.append(e)
+
+    results = []
+    for r in db.execute(
+        "SELECT id, student_id, exam_id, data_json FROM results WHERE organization_id=? AND source='browser_sync' ORDER BY id",
+        (org_id,),
+    ).fetchall():
+        d = json.loads(r["data_json"]) if r["data_json"] else {}
+        d.update({"id": cid(r["id"]), "studentId": cid(r["student_id"]), "examId": cid(r["exam_id"])})
+        results.append(d)
+
+    return jsonify({
+        "organizationId": org_id,
+        "students": students, "exams": exams, "results": results,
+        "counts": {"students": len(students), "exams": len(exams), "results": len(results)},
+        "generatedAt": datetime.now().isoformat(),
+    })
+
+
 @app.route("/api/admin/sync", methods=["POST"])
 @login_required(role="admin")
 def api_admin_sync():
@@ -4768,13 +4819,18 @@ def api_admin_sync():
     # "force" gonderebilir. Sayimlar SADECE bu okula ait - baska bir okulun
     # veri hacmi bu okulun senkronunu asla etkilemez.
     if not force:
+        # Sadece bu senkronun DEGISTIRECEGI satirlar (source='browser_sync')
+        # sayilir - platform sahibinin ekledigi (platform_admin) ya da kamera
+        # OMR (omr_scan) satirlari senkrondan etkilenmez; onlari da saymak,
+        # platform verisi olan bir okulun KENDI admininin her gonderimini
+        # (tek bir ogrenci eklese bile) reddettiriyordu.
         current_counts = {
             "students": db.execute(
-                "SELECT COUNT(*) FROM students WHERE organization_id=?", (org_id,)).fetchone()[0],
+                "SELECT COUNT(*) FROM students WHERE organization_id=? AND source='browser_sync'", (org_id,)).fetchone()[0],
             "exams": db.execute(
-                "SELECT COUNT(*) FROM exams WHERE organization_id=?", (org_id,)).fetchone()[0],
+                "SELECT COUNT(*) FROM exams WHERE organization_id=? AND source='browser_sync'", (org_id,)).fetchone()[0],
             "results": db.execute(
-                "SELECT COUNT(*) FROM results WHERE organization_id=?", (org_id,)).fetchone()[0],
+                "SELECT COUNT(*) FROM results WHERE organization_id=? AND source='browser_sync'", (org_id,)).fetchone()[0],
         }
         incoming_counts = {"students": len(students), "exams": len(exams), "results": len(results)}
         for key, current in current_counts.items():

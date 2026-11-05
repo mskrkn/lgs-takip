@@ -108,6 +108,13 @@ const App = {
     // dahil) ONCE, senkron modulunden de ONCE calismasi ZORUNLU.
     await db.switchToOrg(this.currentUser?.organizationId || null);
     db.setUserLimit(this.currentUser?.userLimit ?? null);
+    // 5A: okulun kendi admini için yerel veri sunucuyla eşlenir (bkz.
+    // reconcileWithServer) - yerel veriye DOKUNAN her şeyden (onarım, platform
+    // verisi, bulut senkronu) ÖNCE: bayat yerel veri üzerinde yapılan bir
+    // onarım "gönderilmemiş değişiklik" sayılıp sunucuya geri yazılmasın.
+    if (this.currentUser?.organizationId && this.currentUser?.role === 'admin') {
+      await this.reconcileWithServer();
+    }
     db.repairAndLinkStudents().catch(console.error);
 
     // Platform admin'in (Aktif Okul uzerinden) bu okula DOGRUDAN ekledigi
@@ -469,6 +476,37 @@ const App = {
         this.navigateTo(page);
       });
     });
+  },
+
+  // 5A: Gönderilmemiş yerel değişiklik VARSA önce o gönderilir (sunucu
+  // güvenlik kilidi hâlâ geçerli); YOKSA yerel veri sunucudakiyle değiştirilir.
+  // Böylece yeni cihaz boş açılmaz, bayat bir tarayıcı eski verisini sunucuya
+  // geri yazamaz, sunucu tarafı değişiklikler (sınıf listesi aktarımı vb.) gelir.
+  async reconcileWithServer() {
+    try {
+      if (db.getPendingSync && db.getPendingSync()) {
+        const st = (typeof AdminUsers !== 'undefined' && AdminUsers.syncToServer) ? await AdminUsers.syncToServer(true) : 'error';
+        if (st === 'requiresForce') {
+          // Sunucu kilidi: bu cihazın verisi sunucudakinden çok eksik (bayat/boş
+          // cihaz). Cihaz takılı kalmasın - yerel veri yedeklenip sunucudaki alınır.
+          db.clearPendingSync();
+        } else if (db.getPendingSync()) {
+          return; // çevrimdışı/geçici hata - yerel değişiklik korunur, sonra tekrar denenir
+        }
+      }
+      const res = await fetch('/api/admin/snapshot');
+      if (!res.ok) return;
+      const snap = await res.json();
+      const r = await db.replaceOwnDataFromServer(snap);
+      if (r && (r.before.students !== r.after.students || r.before.exams !== r.after.exams || r.before.results !== r.after.results)) {
+        console.info('Yerel veri sunucuyla eşlendi:', r);
+        if (r.before.students + r.before.exams + r.before.results > 0) {
+          UI.toast(`Bu cihazdaki veri sunucuyla eşlendi (${r.after.students} öğrenci, ${r.after.exams} deneme, ${r.after.results} sonuç).`, 'info', 6000);
+        }
+      }
+    } catch (e) {
+      console.warn('Sunucuyla eşleme yapılamadı (yerel veriyle devam):', e);
+    }
   },
 
   async navigateTo(page, data = {}, _isBack = false) {

@@ -474,6 +474,7 @@ const AdminUsers = {
     const statusEl = document.getElementById('sync-server-status');
     if (statusEl) statusEl.textContent = 'Gönderiliyor...';
     try {
+      const startedAt = Date.now();
       const fullData = await db.exportData();
       const res = await fetch('/api/admin/sync', {
         method: 'POST',
@@ -497,12 +498,15 @@ const AdminUsers = {
         }
         if (!silent) UI.toast('Gönderim güvenlik nedeniyle durduruldu - sistem yöneticinizle iletişime geçin.', 'danger');
         console.warn('Sync reddedildi (requiresForce):', result);
-        return;
+        return 'requiresForce';
       }
       if (!res.ok) throw new Error(result.error || 'Gönderim başarısız.');
+      // Gönderim sırasında yeni bir değişiklik olmadıysa "gönderilmemiş değişiklik" bayrağı kalkar
+      if (db.clearPendingSync) db.clearPendingSync(startedAt);
       const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       if (statusEl) statusEl.textContent = `✅ Otomatik gönderildi (${time}): ${result.counts.students} öğrenci, ${result.counts.exams} deneme, ${result.counts.results} sonuç.`;
       if (!silent) UI.toast('Veriler sunucuya gönderildi.', 'success');
+      return 'ok';
     } catch (err) {
       if (statusEl) statusEl.textContent = '❌ ' + err.message;
       // Otomatik gönderim sessizce başarısız olursa öğretmen/veli/öğrenci
@@ -514,6 +518,7 @@ const AdminUsers = {
         : 'Sunucuya gönderim başarısız: ' + err.message;
       if (typeof UI !== 'undefined') UI.toast(msg, 'danger');
       console.warn('Sunucu senkronizasyonu başarısız:', err.message);
+      return 'error';
     } finally {
       this._syncInFlight = false;
       if (this._syncQueued) {
