@@ -4672,6 +4672,9 @@ const App = {
     const q = this._qbCurrentQuestion;
     const s = this._qbState;
     if (!q) return;
+    // Konu bir derse bağlıdır - dersi belirlenmemiş soruda sunucu "subjectId
+    // gerekli" (400) dönüyordu; kullanıcıya anlaşılır uyarı verilir.
+    if (!q.subject_id) { UI.toast('Bu sorunun dersi belirlenmemiş - konu eklemeden önce sorunun dersini belirleyin.', 'warning'); return; }
     const name = await this._qbTextPromptModal('Yeni Konu Adı', 'Örn: Kesirler');
     if (!name) return;
     try {
