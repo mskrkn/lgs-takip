@@ -2972,6 +2972,66 @@ def can_view_student_readonly(db, student_id):
 
 
 # ============================================================
+# Ogretmen bransi (Faz 2) - users.subject serbest metin olarak tutuluyordu
+# ("Turkce", "türkçe", bos...). Admin artik sabit listeden secer; eski
+# serbest metinler branch_subject_key ile LGS ders anahtarina eslenir.
+# ============================================================
+TEACHER_BRANCHES = [
+    "Türkçe", "Matematik", "Fen Bilimleri", "Sosyal Bilgiler", "T.C. İnkılap Tarihi",
+    "Din Kültürü ve Ahlak Bilgisi", "İngilizce", "Rehberlik", "Diğer",
+]
+_TR_FOLD = str.maketrans("ıİşŞçÇğĞöÖüÜâÂîÎûÛ", "iissccggoouuaaiiuu")
+
+
+def branch_subject_key(branch):
+    """Brans metni -> LGS ders anahtari (turkce/matematik/fen/inkilap/din/
+    ingilizce) ya da None (rehberlik, diger, bos). Sosyal Bilgiler (5-7) ve
+    Inkilap Tarihi (8) ayni 'inkilap' anahtarini paylasir."""
+    t = (branch or "").translate(_TR_FOLD).lower()
+    if not t.strip():
+        return None
+    if "turk" in t and "tarih" not in t:
+        return "turkce"
+    if "mat" in t:
+        return "matematik"
+    if "fen" in t:
+        return "fen"
+    if "sosyal" in t or "inkilap" in t or "tarih" in t:
+        return "inkilap"
+    if "din" in t:
+        return "din"
+    if "ingiliz" in t or "english" in t:
+        return "ingilizce"
+    return None
+
+
+def _session_teacher_subject_key(db):
+    if session.get("role") != "teacher":
+        return None
+    row = db.execute("SELECT subject FROM users WHERE id = ?", (session.get("user_id"),)).fetchone()
+    return branch_subject_key(row["subject"]) if row else None
+
+
+@app.before_request
+def _refresh_teacher_scope():
+    """Ogretmenin sinif listesi/sinif ogretmenligi giriste oturuma yaziliyordu;
+    admin degistirse de (ya da bir sinifi geri alsa da) ogretmen yeniden giris
+    yapana kadar ESKI kapsamla calisiyordu. API isteklerinde DB'den tazelenir."""
+    if session.get("role") != "teacher" or not session.get("user_id") or not request.path.startswith("/api/"):
+        return None
+    row = get_db().execute(
+        "SELECT class_name, homeroom_class_name FROM users WHERE id = ?", (session["user_id"],)
+    ).fetchone()
+    if not row:
+        return None
+    if session.get("class_name") != row["class_name"]:
+        session["class_name"] = row["class_name"]
+    if session.get("homeroom_class_name") != row["homeroom_class_name"]:
+        session["homeroom_class_name"] = row["homeroom_class_name"]
+    return None
+
+
+# ============================================================
 # /api/ istekleri için JSON hata sayfaları
 # ============================================================
 # Flask'ın varsayılan 404/405/500 sayfaları HTML döner. Ön yüzdeki tüm kod
@@ -7056,6 +7116,8 @@ def api_admin_list_users():
             "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
             "isCoordinator": r["role"] == "teacher" and _has_v2_role(db, r["id"], "COORDINATOR"),
             "subject": r["subject"] if r["role"] == "teacher" else None,
+            "classList": (teacher_class_list(r["class_name"]) if teacher_class_list(r["class_name"]) is not None else "*") if r["role"] == "teacher" else None,
+            "subjectKey": branch_subject_key(r["subject"]) if r["role"] == "teacher" else None,
             "homeroomClassName": r["homeroom_class_name"] if r["role"] == "teacher" else None,
         })
     return jsonify(out)
@@ -7276,6 +7338,71 @@ def api_admin_set_coordinator(user_id):
     db.commit()
     log_audit(db, "COORDINATOR_GRANTED" if grant else "COORDINATOR_REVOKED", resource_type="user", resource_id=user_id)
     return jsonify({"ok": True, "isCoordinator": grant})
+
+
+@app.route("/api/admin/class-names", methods=["GET"])
+@login_required(role=("admin", "super_admin"), permission="users.manage")
+def api_admin_class_names():
+    """Okulun ogrenci listesindeki sinif adlari + brans secenekleri (ogretmen
+    'Brans / Siniflar' duzenleme penceresi icin)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    names = sorted({r[0] for r in db.execute(
+        "SELECT DISTINCT class_name FROM students WHERE organization_id = ? AND class_name IS NOT NULL AND TRIM(class_name) != ''",
+        (org_id,),
+    )}, key=_class_sort_key)
+    return jsonify({"classNames": names, "branches": TEACHER_BRANCHES})
+
+
+@app.route("/api/admin/users/<int:user_id>/teaching", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="users.manage")
+def api_admin_set_teaching(user_id):
+    """Ogretmenin bransini ve girdigi siniflari duzenler (Faz 2). Daha once
+    ikisi de yalnizca hesap acilirken girilebiliyordu. classes: sinif adlari
+    listesi ya da "*" (tum siniflar). Degisiklik ogretmenin bir sonraki API
+    isteginde gecerli olur (bkz. _refresh_teacher_scope)."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    target = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role = 'teacher' AND organization_id = ?", (user_id, org_id)
+    ).fetchone()
+    if not target:
+        return jsonify({"error": "Öğretmen bulunamadı."}), 404
+
+    subject = (data.get("subject") or "").strip()
+    if subject and subject not in TEACHER_BRANCHES:
+        return jsonify({"error": "Geçersiz branş."}), 400
+    classes = data.get("classes")
+    if classes == "*":
+        class_value = "*"
+    elif isinstance(classes, list):
+        valid = {r[0] for r in db.execute(
+            "SELECT DISTINCT class_name FROM students WHERE organization_id = ?", (org_id,)
+        )}
+        cleaned = []
+        for c in classes:
+            c = (c or "").strip()
+            if not c:
+                continue
+            if c not in valid:
+                return jsonify({"error": f"'{c}' bu okulun sınıf listesinde yok."}), 400
+            if c not in cleaned:
+                cleaned.append(c)
+        if not cleaned:
+            return jsonify({"error": "En az bir sınıf seçin (ya da tüm sınıflar)."}), 400
+        class_value = ",".join(sorted(cleaned, key=_class_sort_key))
+    else:
+        return jsonify({"error": "Sınıflar gerekli."}), 400
+
+    db.execute("UPDATE users SET subject = ?, class_name = ? WHERE id = ?", (subject or None, class_value, user_id))
+    db.commit()
+    log_audit(db, "TEACHER_TEACHING_UPDATED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "subject": subject or None, "className": teacher_class_display(class_value)})
 
 
 @app.route("/api/admin/users/<int:user_id>/homeroom", methods=["POST"])
@@ -8091,7 +8218,7 @@ def _exam_meta(e, keys=("id", "name", "date", "questionCounts")):
     return {k: e.get(k) for k in keys} if e else None
 
 
-def _grade_block(grade, exam, prev_exam, results_by_exam, students, visible_classes, own_classes):
+def _grade_block(grade, exam, prev_exam, results_by_exam, students, visible_classes, own_classes, focus_key=None):
     """Tek kademe + tek deneme: kademe istatistigi ve gorunur siniflarin kartlari."""
     grade_students = [s for s in students if _grade_of_class(s["class_name"]) == grade]
     by_class = {}
@@ -8109,19 +8236,37 @@ def _grade_block(grade, exam, prev_exam, results_by_exam, students, visible_clas
     ranked, stats = [], {}
     for cls, lst in by_class.items():
         enrolled, part, avg, subj = stats_of(lst, res)
-        prev_avg = stats_of(lst, prev_res)[2] if prev_exam else None
-        stats[cls] = (enrolled, part, avg, subj, prev_avg)
+        prev = stats_of(lst, prev_res) if prev_exam else (0, 0, None, {})
+        prev_avg, prev_subj = prev[2], prev[3]
+        stats[cls] = (enrolled, part, avg, subj, prev_avg, prev_subj)
         if part:
             ranked.append((avg, cls))
     ranked.sort(key=lambda t: -t[0])
     rank_of = {cls: i + 1 for i, (_, cls) in enumerate(ranked)}
+    # Ogretmenin kendi dersine gore (Faz 2) sube sirasi
+    focus_rank_of, focus_ranked = {}, []
+    if focus_key:
+        focus_ranked = sorted(((st[3][focus_key], cls) for cls, st in stats.items()
+                               if st[1] and st[3].get(focus_key) is not None), key=lambda t: -t[0])
+        focus_rank_of = {cls: i + 1 for i, (_, cls) in enumerate(focus_ranked)}
 
     cards = []
     for cls in sorted(visible_classes, key=_class_sort_key):
         if _grade_of_class(cls) != grade:
             continue
-        enrolled, part, avg, subj, prev_avg = stats.get(cls, (0, 0, None, {}, None))
+        enrolled, part, avg, subj, prev_avg, prev_subj = stats.get(cls, (0, 0, None, {}, None, {}))
+        focus = None
+        if focus_key and subj.get(focus_key) is not None:
+            f_avg, g_f = subj[focus_key], g_subj.get(focus_key)
+            p_f = prev_subj.get(focus_key) if prev_subj else None
+            focus = {
+                "key": focus_key, "avgNet": f_avg, "gradeAvgNet": g_f,
+                "diffFromGrade": round(f_avg - g_f, 2) if g_f is not None else None,
+                "rank": focus_rank_of.get(cls), "rankOf": len(focus_ranked),
+                "changeFromPrev": round(f_avg - p_f, 2) if p_f is not None else None,
+            }
         cards.append({
+            "focus": focus,
             "className": cls,
             "enrolled": enrolled,
             "participated": part,
@@ -8180,6 +8325,7 @@ def api_teacher_class_summary():
     visible = all_classes if school_wide else [c for c in (own or []) if c]
     only_grade = (request.args.get("grade") or "").strip() or None
     exam_id = request.args.get("exam_id", type=int)
+    my_subject = _session_teacher_subject_key(db)
 
     grades = []
     for g in sorted({_grade_of_class(c) for c in visible if _grade_of_class(c)}, key=int):
@@ -8187,10 +8333,11 @@ def api_teacher_class_summary():
             continue
         g_exams = _exams_for_grade(exams, g)
         exam, prev = _pick_exam(g_exams, exam_id if only_grade else None)
-        block = _grade_block(g, exam, prev, results_by_exam, students, visible, own)
+        block = _grade_block(g, exam, prev, results_by_exam, students, visible, own, focus_key=my_subject)
         block["exams"] = [_exam_meta(e, ("id", "name", "date")) for e in g_exams]
         grades.append(block)
     return jsonify({
+        "mySubject": my_subject,
         "scope": "school" if school_wide else "own",
         "isCoordinator": is_coordinator(db),
         "myClasses": own,
@@ -8218,7 +8365,8 @@ def api_teacher_class_detail():
     exams, results_by_exam, students, student_by_id = _load_general_exam_data(db, org_id)
     g_exams = _exams_for_grade(exams, grade) if grade else []
     exam, prev = _pick_exam(g_exams, request.args.get("exam_id", type=int))
-    block = _grade_block(grade, exam, prev, results_by_exam, students, [class_name], own) if grade else None
+    my_subject = _session_teacher_subject_key(db)
+    block = _grade_block(grade, exam, prev, results_by_exam, students, [class_name], own, focus_key=my_subject) if grade else None
 
     roster = sorted([s for s in students if s["class_name"] == class_name],
                     key=lambda s: ((s["last_name"] or ""), (s["first_name"] or "")))
@@ -8252,6 +8400,7 @@ def api_teacher_class_detail():
         "participants": participants,
         "absent": absent,
         "isMine": own is None or class_name in (own or []),
+        "mySubject": my_subject,
     })
 
 
@@ -8283,6 +8432,89 @@ def api_teacher_absent_report():
         "exam": _exam_meta(exam, ("id", "name", "date")),
         "classes": [{"className": c, "students": sorted(v, key=lambda x: (x["lastName"] or "", x["firstName"] or ""))}
                     for c, v in sorted(by_class.items(), key=lambda kv: _class_sort_key(kv[0]))],
+    })
+
+
+@app.route("/api/teacher/subject-report")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_teacher_subject_report():
+    """Okul Geneli > Brans Gorunumu (Faz 2): secili dersin her kademede sube
+    ortalamalari, kademe ortalamasina fark, o dersin o subedeki ogretmen(ler)i
+    ve ogretmen bazinda ozet. Sadece okul geneli goruntuleyiciler.
+    ?subject=matematik [&grade=7&exam_id=X: tek kademenin denemesini degistir]"""
+    db = get_db()
+    org_id, own, school_wide = _summary_scope(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not school_wide:
+        return jsonify({"error": "Bu rapor yalnızca okul geneli yetkisi olan hesaplar içindir."}), 403
+    subject = (request.args.get("subject") or "").strip()
+    if subject not in ("turkce", "inkilap", "din", "ingilizce", "matematik", "fen"):
+        return jsonify({"error": "Geçersiz ders."}), 400
+    only_grade = (request.args.get("grade") or "").strip() or None
+    exam_id = request.args.get("exam_id", type=int)
+
+    # bu dersin ogretmenleri ve siniflari ('*' ogretmenler bir subeye atanamaz)
+    teachers = []
+    for t in db.execute(
+        "SELECT id, display_name, username, subject, class_name FROM users "
+        "WHERE organization_id = ? AND role = 'teacher' AND active = 1", (org_id,)
+    ).fetchall():
+        if branch_subject_key(t["subject"]) != subject:
+            continue
+        cls = teacher_class_list(t["class_name"])
+        teachers.append({"id": t["id"], "name": t["display_name"] or t["username"],
+                         "classes": cls if cls is not None else [], "allClasses": cls is None})
+    teachers_of = {}
+    for t in teachers:
+        for c in t["classes"]:
+            teachers_of.setdefault(c, []).append(t["name"])
+
+    exams, results_by_exam, students, _ = _load_general_exam_data(db, org_id)
+    all_classes = sorted({s["class_name"] for s in students if s["class_name"]}, key=_class_sort_key)
+    grades = []
+    for g in sorted({_grade_of_class(c) for c in all_classes if _grade_of_class(c)}, key=int):
+        if only_grade and g != only_grade:
+            continue
+        g_exams = _exams_for_grade(exams, g)
+        exam, prev = _pick_exam(g_exams, exam_id if only_grade else None)
+        block = _grade_block(g, exam, prev, results_by_exam, students, all_classes, None, focus_key=subject)
+        rows = []
+        for c in block["classes"]:
+            f = c.get("focus")
+            rows.append({
+                "className": c["className"], "participated": c["participated"], "enrolled": c["enrolled"],
+                "avgNet": f and f["avgNet"], "diffFromGrade": f and f["diffFromGrade"],
+                "rank": f and f["rank"], "rankOf": f and f["rankOf"], "changeFromPrev": f and f["changeFromPrev"],
+                "teachers": teachers_of.get(c["className"], []),
+            })
+        grades.append({
+            "grade": g, "exam": block["exam"], "prevExam": block["prevExam"],
+            "exams": [_exam_meta(e, ("id", "name", "date")) for e in g_exams],
+            "gradeAvgNet": block["gradeStats"]["subjects"].get(subject),
+            "classes": rows,
+        })
+
+    # ogretmen ozeti: siniflarinin bu dersteki ortalama farki (katilimci agirlikli)
+    summary = []
+    for t in teachers:
+        diffs, n = 0.0, 0
+        cls_rows = []
+        for gb in grades:
+            for r in gb["classes"]:
+                if r["className"] in t["classes"]:
+                    cls_rows.append(r["className"])
+                    if r["diffFromGrade"] is not None and r["participated"]:
+                        diffs += r["diffFromGrade"] * r["participated"]
+                        n += r["participated"]
+        summary.append({"name": t["name"], "classes": t["classes"], "allClasses": t["allClasses"],
+                        "students": n, "avgDiffFromGrade": round(diffs / n, 2) if n else None})
+    summary.sort(key=lambda x: (x["avgDiffFromGrade"] is None, -(x["avgDiffFromGrade"] or 0)))
+    return jsonify({
+        "subject": subject,
+        "teachers": summary,
+        "unassigned": [r["className"] for gb in grades for r in gb["classes"] if not r["teachers"]],
+        "grades": grades,
     })
 
 
