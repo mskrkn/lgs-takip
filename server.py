@@ -2302,7 +2302,14 @@ def sync_derived_tables(conn, org_id):
     conn.execute("DELETE FROM exam_subjects")
 
     exam_rows = conn.execute("SELECT id, data_json FROM exams").fetchall()
-    result_rows_all = conn.execute("SELECT id, student_id, exam_id, data_json FROM results").fetchall()
+    # Ogrencisi olmayan (yetim) sonuclar atlanir: exam_results.student_id ->
+    # students FK'si yuzunden tek bir yetim sonuc butun yeniden kurulumu
+    # (ve o okulun her senkronunu) "FOREIGN KEY constraint failed" ile
+    # dusuruyordu (or. admin, platform sonucu olan bir ogrenciyi sildiginde).
+    result_rows_all = conn.execute(
+        "SELECT r.id, r.student_id, r.exam_id, r.data_json FROM results r "
+        "JOIN students s ON s.id = r.student_id"
+    ).fetchall()
 
     for exam in exam_rows:
         exam_data = json.loads(exam["data_json"]) if exam["data_json"] else {}
@@ -4791,6 +4798,175 @@ def api_admin_snapshot():
         "counts": {"students": len(students), "exams": len(exams), "results": len(results)},
         "generatedAt": datetime.now().isoformat(),
     })
+
+
+@app.route("/api/admin/sync-delta", methods=["POST"])
+@login_required(role="admin")
+def api_admin_sync_delta():
+    """5B: admin tarayicisindaki DEGISIKLIKLERI (tam veri degil) uygular.
+    ops: [{table: students|exams|results, op: put|delete, id: <tarayici id>,
+    obj: {...}, isNew: bool, mass: bool}]. Bos/bayat bir cihazin gonderecek
+    islemi olmadigi icin hicbir seyi silemez - silme yalnizca kullanici bir
+    kaydi gercekten sildiginde gelir. Yalnizca source='browser_sync'
+    satirlara dokunur (platform_admin / omr_scan etkilenmez).
+    isNew + sunucuda ayni id dolu (iki cihaz ayni anda yeni kayit actiysa) ->
+    sunucu yeni id verir, idMap ile doner; tarayici yerel kaydi yeniden numaralar."""
+    payload = request.get_json(silent=True) or {}
+    ops = [o for o in (payload.get("ops") or []) if isinstance(o, dict)]
+    db = get_db()
+    org_id = _current_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    tables = ("students", "exams", "results")
+    ops = [o for o in ops if o.get("table") in tables and o.get("op") in ("put", "delete") and o.get("id")]
+    # Her senkron sonrasi run_v2_migration yazma kilidini birkac saniye tutar;
+    # es zamanli ikinci bir senkron varsayilan 5 sn'de "database is locked"
+    # verip duseceğine onu bekler.
+    db.execute("PRAGMA busy_timeout=20000")
+    offset = (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
+
+    def sid(cid):
+        return _org_scoped_id(org_id, int(cid))
+
+    # Toplu silme kilidi: tek gonderimde bir tablonun yarisindan fazlasini
+    # silmek ancak kullanicinin onayladigi bir islemden (Tumunu Sil) gelirse.
+    for t in tables:
+        dels = [o for o in ops if o["table"] == t and o["op"] == "delete"]
+        if not dels:
+            continue
+        current = db.execute(
+            f"SELECT COUNT(*) FROM {t} WHERE organization_id=? AND source='browser_sync'", (org_id,)
+        ).fetchone()[0]
+        if current >= 10 and len(dels) > current * 0.5 and not all(o.get("mass") for o in dels):
+            return jsonify({
+                "error": f"Güvenlik: bu gönderim {t} tablosundaki {current} kaydın {len(dels)} tanesini siliyor. "
+                         f"Toplu silme yalnızca 'Tümünü Sil' gibi onaylı bir işlemle yapılabilir.",
+                "requiresConfirm": True,
+            }), 409
+
+    tomb_ids = {r[0] for r in db.execute(
+        "SELECT student_id FROM student_tombstones WHERE organization_id=?", (org_id,)).fetchall()}
+    reserve = _org_scoped_id(org_id, PLATFORM_ADMIN_ID_RESERVE_START)  # tarayici id'leri bunun altinda kalir
+
+    def next_client_id(t):
+        # Okulun kendi (browser_sync) satirlarindaki en buyuk id + 1; bos oldugu
+        # dogrulanir ve platform rezervinin altinda kalir.
+        row = db.execute(f"SELECT MAX(id) FROM {t} WHERE organization_id=? AND source='browser_sync'", (org_id,)).fetchone()
+        cand = ((row[0] or offset) - offset) + 1
+        while db.execute(f"SELECT 1 FROM {t} WHERE id=?", (sid(cand),)).fetchone():
+            cand += 1
+        if sid(cand) >= reserve:
+            raise ValueError(f"{t} icin tarayici id araligi doldu (org {org_id})")
+        return cand
+
+    id_map = {t: {} for t in tables}
+    skipped = []
+    applied = 0
+
+    def put_students(o):
+        nonlocal applied
+        cid = int(o["id"])
+        obj = o.get("obj") or {}
+        if sid(cid) in tomb_ids:
+            skipped.append({"table": "students", "id": cid, "reason": "sınıf öğretmeni tarafından silinmiş"})
+            return
+        existing = db.execute("SELECT source FROM students WHERE id=?", (sid(cid),)).fetchone()
+        if existing and (o.get("isNew") or existing["source"] != "browser_sync"):
+            new = next_client_id("students")
+            id_map["students"][str(cid)] = new
+            cid = new
+        db.execute(
+            "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+            "VALUES (?,?,?,?,?,?,'browser_sync') ON CONFLICT(id) DO UPDATE SET school_number=excluded.school_number, "
+            "first_name=excluded.first_name, last_name=excluded.last_name, class_name=excluded.class_name",
+            (sid(cid), org_id, obj.get("schoolNumber"), obj.get("firstName"), obj.get("lastName"), obj.get("className")),
+        )
+        applied += 1
+
+    def put_exams(o):
+        nonlocal applied
+        cid = int(o["id"])
+        obj = dict(o.get("obj") or {})
+        existing = db.execute("SELECT source FROM exams WHERE id=?", (sid(cid),)).fetchone()
+        if existing and (o.get("isNew") or existing["source"] != "browser_sync"):
+            new = next_client_id("exams")
+            id_map["exams"][str(cid)] = new
+            cid = new
+        obj["id"] = cid
+        db.execute(
+            "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) "
+            "VALUES (?,?,?,?,?,?,'browser_sync') ON CONFLICT(id) DO UPDATE SET name=excluded.name, date=excluded.date, "
+            "exam_type=excluded.exam_type, data_json=excluded.data_json",
+            (sid(cid), org_id, obj.get("name"), obj.get("date"), obj.get("examType"), json.dumps(obj)),
+        )
+        applied += 1
+
+    def put_results(o):
+        nonlocal applied
+        cid = int(o["id"])
+        obj = dict(o.get("obj") or {})
+        st = id_map["students"].get(str(obj.get("studentId")), obj.get("studentId"))
+        ex = id_map["exams"].get(str(obj.get("examId")), obj.get("examId"))
+        if st is None or ex is None:
+            skipped.append({"table": "results", "id": cid, "reason": "öğrenci/deneme yok"})
+            return
+        if sid(st) in tomb_ids:
+            skipped.append({"table": "results", "id": cid, "reason": "öğrenci silinmiş"})
+            return
+        existing = db.execute("SELECT source FROM results WHERE id=?", (sid(cid),)).fetchone()
+        if existing and (o.get("isNew") or existing["source"] != "browser_sync"):
+            new = next_client_id("results")
+            id_map["results"][str(cid)] = new
+            cid = new
+        obj.update({"id": cid, "studentId": st, "examId": ex})
+        db.execute(
+            "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) "
+            "VALUES (?,?,?,?,?,'browser_sync') ON CONFLICT(id) DO UPDATE SET student_id=excluded.student_id, "
+            "exam_id=excluded.exam_id, data_json=excluded.data_json",
+            (sid(cid), org_id, sid(st), sid(ex), json.dumps(obj)),
+        )
+        applied += 1
+
+    def delete(o):
+        nonlocal applied
+        t, cid = o["table"], int(o["id"])
+        cur = db.execute(f"DELETE FROM {t} WHERE id=? AND organization_id=? AND source='browser_sync'", (sid(cid), org_id))
+        if cur.rowcount and t == "students":
+            # Ogrenci silindiyse sonuclari da (platform kaynakli olanlar dahil) silinir -
+            # ogrencisi olmayan sonuc hem anlamsiz hem de turetilmis tablolari bozar.
+            db.execute("DELETE FROM results WHERE student_id=? AND organization_id=?", (sid(cid), org_id))
+        elif cur.rowcount and t == "exams":
+            db.execute("DELETE FROM results WHERE exam_id=? AND organization_id=? AND source='browser_sync'", (sid(cid), org_id))
+        applied += cur.rowcount
+
+    # Sira: once ogrenci/deneme eklemeleri (sonuclarin baglanacagi id'ler
+    # netlesir), sonra sonuclar, en son silmeler (sonuc -> deneme -> ogrenci).
+    puts = {"students": put_students, "exams": put_exams, "results": put_results}
+    try:
+        for t in tables:
+            for o in ops:
+                if o["table"] == t and o["op"] == "put":
+                    puts[t](o)
+        for t in ("results", "exams", "students"):
+            for o in ops:
+                if o["table"] == t and o["op"] == "delete":
+                    delete(o)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    if applied:
+        run_v2_migration(db)
+        now = datetime.now().isoformat()
+        # 'Son senkron' gostergesi (bkz. admin ozeti lastSync) fark senkronunu da gorsun
+        db.execute(
+            "INSERT INTO imports (organization_id, uploaded_by, file_type, status, total_records, "
+            "success_records, failed_records, created_at, completed_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (org_id, session.get("user_id"), "admin_sync", "completed", applied, applied, len(skipped), now, now),
+        )
+        db.commit()
+    log_audit(db, "DATA_DELTA_SYNCED", resource_type="admin_sync")
+    return jsonify({"ok": True, "applied": applied, "idMap": id_map, "skipped": skipped})
 
 
 @app.route("/api/admin/sync", methods=["POST"])

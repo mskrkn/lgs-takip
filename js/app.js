@@ -158,16 +158,14 @@ const App = {
     // sunucudan o okul için token almaya çalışıp başarısız oluyor, header'da
     // kırmızı "Bağlantı Hatası" gösteriyordu - saf platform hesabı için bu
     // özellik zaten anlamsız olduğundan artık rozet tamamen gizleniyor.
+    // 5B: Firestore "bulut eşitleme" katmanı devreden çıkarıldı - okulun TÜM
+    // verisini tek bir Firestore belgesine yazıyordu (1 MB sınırı; büyük okulda
+    // çalışmıyordu) ve sunucunun yanında ikinci bir "gerçek kaynak" yaratıyordu.
+    // Cihazlar arası eşitlik artık sunucu üzerinden: açılışta geri yükleme (5A)
+    // + her değişikliğin anında sunucuya gitmesi (5B).
     const syncBadge = document.getElementById('sync-status-badge');
-    if (this.currentUser?.organizationId) {
-      if (typeof SyncModule !== 'undefined') {
-        await SyncModule.init();
-        SyncModule.updateStatus();
-      }
-    } else {
-      localStorage.removeItem('lgs_sync_key');
-      if (syncBadge) syncBadge.style.display = 'none';
-    }
+    if (syncBadge) syncBadge.style.display = 'none';
+    if (!this.currentUser?.organizationId) localStorage.removeItem('lgs_sync_key');
 
     // PWA Install Prompt Listener
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -484,15 +482,11 @@ const App = {
   // geri yazamaz, sunucu tarafı değişiklikler (sınıf listesi aktarımı vb.) gelir.
   async reconcileWithServer() {
     try {
-      if (db.getPendingSync && db.getPendingSync()) {
+      // 5B: bekleyen değişiklikler giden kutusunda - önce onlar gönderilir.
+      const pending = (await db.readOutbox()).ops.length > 0 || (db.getPendingSync && db.getPendingSync());
+      if (pending) {
         const st = (typeof AdminUsers !== 'undefined' && AdminUsers.syncToServer) ? await AdminUsers.syncToServer(true) : 'error';
-        if (st === 'requiresForce') {
-          // Sunucu kilidi: bu cihazın verisi sunucudakinden çok eksik (bayat/boş
-          // cihaz). Cihaz takılı kalmasın - yerel veri yedeklenip sunucudaki alınır.
-          db.clearPendingSync();
-        } else if (db.getPendingSync()) {
-          return; // çevrimdışı/geçici hata - yerel değişiklik korunur, sonra tekrar denenir
-        }
+        if (st !== 'ok') return; // çevrimdışı / onay bekleyen toplu silme - yerel değişiklikler korunur
       }
       const res = await fetch('/api/admin/snapshot');
       if (!res.ok) return;
@@ -507,6 +501,20 @@ const App = {
     } catch (e) {
       console.warn('Sunucuyla eşleme yapılamadı (yerel veriyle devam):', e);
     }
+  },
+
+  // Bu cihazdaki gönderilmemiş değişiklikleri atıp sunucudaki veriyi yükler
+  // (5B kaçış yolu: ör. onaylanmamış toplu silme bu cihazda takılı kaldıysa).
+  async reloadFromServer() {
+    const pending = (await db.readOutbox()).ops.length;
+    const ok = await UI.confirm(
+      pending
+        ? `Bu cihazda sunucuya gönderilmemiş <b>${pending}</b> değişiklik var; bunlar <b>atılacak</b> ve sunucudaki veri yüklenecek. Devam edilsin mi?`
+        : 'Sunucudaki güncel veri bu cihaza yeniden yüklenecek. Devam edilsin mi?',
+      'Sunucudaki veriyi yeniden yükle');
+    if (!ok) return;
+    await db.discardOutbox();
+    window.location.reload();
   },
 
   async navigateTo(page, data = {}, _isBack = false) {
@@ -4941,11 +4949,6 @@ const App = {
     const examCount = await db.getExamCount();
     const resultCount = await db.getResultCount();
 
-    const isConnected = typeof SyncModule !== 'undefined' && SyncModule.isConnected();
-    const autoSync = typeof SyncModule !== 'undefined' && SyncModule.autoSync;
-    const syncKey = typeof SyncModule !== 'undefined' ? (SyncModule.syncKey || '') : '';
-    const lastSync = typeof SyncModule !== 'undefined' ? (SyncModule.lastSyncTime || 'Henüz yapılmadı') : '-';
-    const hasConfig = !!localStorage.getItem('lgs_firebase_config');
 
     container.innerHTML = `
       <!-- Yetkilendirme / Kullanıcı Yönetimi Kısayolu -->
@@ -4961,66 +4964,20 @@ const App = {
         <button class="btn btn-primary" onclick="App.navigateTo('users')">🔐 Kullanıcılar Sayfasına Git</button>
       </div>
 
-      <!-- Cloud Synchronization & Multi-Device Card -->
+      <!-- Çoklu Cihaz: sunucu üzerinden eşitleme (5A/5B) -->
       <div class="card mt-2" style="border: 1px solid rgba(20,184,166,0.3);background:rgba(15,23,42,0.75)">
-        <div class="card-header flex justify-between items-center">
-          <h3 class="card-title"><span class="card-icon">☁️</span> Bulut Senkronizasyonu & Çoklu Cihaz</h3>
-          <span class="sync-status-pill ${isConnected ? 'sync-connected' : 'sync-offline'}">
-            <span class="sync-dot"></span>
-            <span>${isConnected ? '🟢 Buluta Bağlı' : '⚪ Çevrimdışı (Yerel)'}</span>
-          </span>
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-icon">🔄</span> Çoklu Cihaz & Sunucu Eşitlemesi</h3>
         </div>
-
-        <p class="text-muted mb-2">
-          Verilerinizi telefonunuz, evdeki veya okuldaki diğer bilgisayarlarınız arasında anında eşitleyin. 
-          Bir cihazda girdiğiniz deneme diğer tüm cihazlarınızda otomatik olarak görünür.
+        <p class="text-muted" style="font-size:13px;line-height:1.6">
+          Verileriniz sunucuda tutulur. Yaptığınız her değişiklik (öğrenci, deneme, sonuç) birkaç saniye
+          içinde otomatik olarak sunucuya gönderilir; bağlantı yoksa bu cihazda bekletilir ve bağlantı
+          gelince gönderilir. Paneli başka bir bilgisayarda ya da telefonda açtığınızda en güncel veri
+          sunucudan yüklenir - ek bir ayar ya da eşitleme anahtarı gerekmez.
         </p>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;margin-bottom:16px">
-          <!-- Sync Key & Actions -->
-          <div style="background:rgba(255,255,255,0.03);padding:16px;border-radius:12px;border:1px solid var(--bg-glass-border)">
-            <label class="form-label" style="font-weight:700">🔑 Senkronizasyon Kimliği</label>
-            <div style="display:flex;gap:8px;margin-top:6px">
-              <input type="text" id="setting-sync-key" class="form-control" value="${syncKey}" readonly disabled style="opacity:0.7;cursor:not-allowed">
-            </div>
-            <small class="text-muted" style="display:block;margin-top:6px">
-              💡 Bu okula özel, otomatik atanır - değiştirilemez. Aynı okulun tüm cihazları
-              (telefon/bilgisayar) giriş yaptığında otomatik olarak birbiriyle eşitlenir;
-              başka bir okulun verisiyle asla karışmaz.
-            </small>
-          </div>
-
-          <!-- Auto-Sync & Status -->
-          <div style="background:rgba(255,255,255,0.03);padding:16px;border-radius:12px;border:1px solid var(--bg-glass-border)">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <label class="form-label" style="font-weight:700;margin:0">⚡ Otomatik Canlı Eşitleme</label>
-              <input type="checkbox" id="setting-auto-sync" style="width:20px;height:20px;accent-color:#0D9488;cursor:pointer" ${autoSync ? 'checked' : ''} onchange="SyncModule.setAutoSync(this.checked)">
-            </div>
-            <div style="font-size:13px;color:var(--text-muted)">
-              <div>Son Eşitlenme: <b style="color:var(--text-primary)">${lastSync}</b></div>
-              <div style="margin-top:4px">Durum: <b style="color:${isConnected ? '#34d399' : '#94a3b8'}">${isConnected ? 'Otomatik senkronizasyon devrede' : 'Bulut yapılandırması bekleniyor'}</b></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Manual Push & Pull Buttons -->
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
-          <button class="btn btn-primary" onclick="App.syncPush()">📤 Verileri Buluta Yükle (Gönder)</button>
-          <button class="btn btn-secondary" onclick="App.syncPull()">📥 Buluttan Verileri Çek (İndir)</button>
-          <button class="btn btn-secondary" onclick="App.toggleFirebaseConfigModal()">⚙️ Firebase / Bulut Ayarları</button>
-        </div>
-
-        <!-- Firebase Config Details (Collapsible) -->
-        <div id="firebase-config-box" style="display:${hasConfig ? 'none' : 'block'};background:rgba(0,0,0,0.25);padding:16px;border-radius:12px;border:1px solid var(--bg-glass-border);margin-top:12px">
-          <h4 style="font-size:14px;font-weight:700;margin-bottom:8px">🔥 Firebase Firestore Yapılandırması</h4>
-          <p class="text-muted" style="font-size:12px;margin-bottom:8px">
-            Ücretsiz Google Firebase (Firestore) projenizin yapılandırma nesnesini yapıştırın:
-          </p>
-          <textarea id="setting-firebase-config" class="form-control font-mono" rows="4" placeholder='{\n  "apiKey": "AIzaSy...",\n  "authDomain": "proje.firebaseapp.com",\n  "projectId": "proje-id"\n}'>${localStorage.getItem('lgs_firebase_config') || ''}</textarea>
-          <div style="display:flex;gap:10px;margin-top:10px">
-            <button class="btn btn-primary btn-sm" onclick="App.saveFirebaseConfig()">💾 Bağlantıyı Kaydet & Başlat</button>
-            ${hasConfig ? '<button class="btn btn-danger btn-sm" onclick="App.disconnectFirebase()">❌ Bağlantıyı Sıfırla</button>' : ''}
-          </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="AdminUsers.syncToServer()">📤 Bekleyen değişiklikleri şimdi gönder</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.reloadFromServer()">⬇️ Sunucudaki veriyi yeniden yükle</button>
         </div>
       </div>
 
@@ -5043,9 +5000,9 @@ const App = {
             </p>
           </div>
           <div style="padding:14px;background:rgba(59,130,246,0.06);border-radius:10px">
-            <h4 style="font-weight:700;font-size:14px;margin-bottom:6px">3. Çoklu PC Senkronizasyonu</h4>
+            <h4 style="font-weight:700;font-size:14px;margin-bottom:6px">3. Birden Fazla Bilgisayar</h4>
             <p class="text-muted" style="font-size:13px">
-              Yukarıdaki <b>Ortak Senkronizasyon Anahtarını</b> diğer bilgisayarınızda da Ayarlar sayfasına girin. İki bilgisayar birbiriyle otomatik eşitlensin.
+              Diğer bilgisayarda aynı hesapla giriş yapmanız yeterli - veriler sunucudan otomatik yüklenir.
             </p>
           </div>
         </div>

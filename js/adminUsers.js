@@ -463,61 +463,92 @@ const AdminUsers = {
 
   _syncInFlight: false,
   _syncQueued: false,
+  // Geçici hata (çevrimdışı, sunucu meşgul) sonrası artan aralıklarla otomatik
+  // tekrar deneme - değişiklikler giden kutusunda beklediği için kaybolmaz.
+  _retryCount: 0,
+  _retryTimer: null,
+  _scheduleRetry() {
+    if (this._retryTimer) clearTimeout(this._retryTimer);
+    const delays = [5000, 15000, 30000, 60000];
+    const d = delays[Math.min(this._retryCount, delays.length - 1)];
+    this._retryCount++;
+    this._retryTimer = setTimeout(() => { this._retryTimer = null; this.syncToServer(true); }, d);
+  },
   async syncToServer(silent = false) {
     if (this._syncInFlight) {
-      // Zaten devam eden bir gönderim var; bitince en güncel veriyle tekrar gönder.
+      // Zaten devam eden bir gönderim var; bitince giden kutusu tekrar gönderilir.
       this._syncQueued = true;
-      return;
+      return 'queued';
     }
     this._syncInFlight = true;
 
     const statusEl = document.getElementById('sync-server-status');
     if (statusEl) statusEl.textContent = 'Gönderiliyor...';
     try {
-      const startedAt = Date.now();
-      const fullData = await db.exportData();
-      const res = await fetch('/api/admin/sync', {
+      // 5B: TAM veri değil, yalnızca giden kutusundaki değişiklikler gönderilir
+      // (bkz. db._installOutboxHooks, server.py api_admin_sync_delta).
+      const { ops, maxSeq } = await db.readOutbox();
+      if (!ops.length) {
+        if (maxSeq) await db.removeOutboxUpTo(maxSeq); // birbirini götüren işlemler (aç-sil)
+        db.clearPendingSync();
+        if (statusEl) statusEl.textContent = '✅ Gönderilecek değişiklik yok - sunucu güncel.';
+        if (!silent) UI.toast('Sunucu güncel, gönderilecek değişiklik yok.', 'success');
+        return 'ok';
+      }
+      let res = await fetch('/api/admin/sync-delta', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullData),
+        body: JSON.stringify({ ops }),
       });
-      const result = await res.json();
-      if (res.status === 409 && result.requiresForce) {
-        // Sunucu, mevcut veriyi buyuk olcude azaltacak (or: bu cihazin yerel
-        // verisi eksik/bos) bir gonderimi guvenlik icin reddetti (bkz.
-        // server.py api_admin_sync). KASITLI OLARAK burada bir "yine de
-        // gonder" secenegi YOK - bir confirm() penceresi kolayca dusunmeden
-        // tiklanip gecilebiliyor ve 2026-09-04'te tam olarak boyle gercek
-        // veri yeniden silindi. Bu durumda TEK gunvenli yol: sistem
-        // yoneticisiyle iletisime gecmek (sunucu tarafinda elle kontrol
-        // gerektirir).
-        if (statusEl) {
-          statusEl.innerHTML = `⚠️ Gönderim güvenlik nedeniyle durduruldu: bu cihazdaki veri `
-            + `sunucudakinden çok daha az görünüyor (muhtemelen bu cihaz/tarayıcı güncel değil). `
-            + `<b>Lütfen sistem yöneticinizle iletişime geçin, kendiniz üzerine yazmayı denemeyin.</b>`;
+      let result = await res.json();
+      if (res.status === 409 && result.requiresConfirm && !silent) {
+        // Elle gönderimde kullanıcıya açıkça sorulur (otomatik gönderimde ASLA).
+        const delCount = ops.filter(o => o.op === 'delete').length;
+        const ok = await UI.confirm(
+          `${result.error}<br><br>Bu cihazda bekleyen <b>${delCount} silme</b> işlemi var. Bunlar gerçekten sizin yaptığınız silmelerse ` +
+          `onaylayın; emin değilseniz <b>Vazgeç</b>'e basın ve Ayarlar'dan "Sunucudaki veriyi yeniden yükle"yi kullanın.`,
+          'Toplu silme onayı');
+        if (ok) {
+          res = await fetch('/api/admin/sync-delta', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ops: ops.map(o => o.op === 'delete' ? { ...o, mass: true } : o) }),
+          });
+          result = await res.json();
         }
-        if (!silent) UI.toast('Gönderim güvenlik nedeniyle durduruldu - sistem yöneticinizle iletişime geçin.', 'danger');
-        console.warn('Sync reddedildi (requiresForce):', result);
-        return 'requiresForce';
+      }
+      if (res.status === 409 && result.requiresConfirm) {
+        // Onaysız toplu silme: değişiklikler giden kutusunda KALIR (kaybolmaz).
+        if (statusEl) statusEl.innerHTML = `⚠️ ${result.error} <b>Değişiklikler bu cihazda bekletiliyor.</b> Ayarlar'dan "Şimdi gönder" ile onaylayabilir ya da "Sunucudaki veriyi yeniden yükle" ile bu cihazdaki değişiklikleri atabilirsiniz.`;
+        UI.toast('Çok sayıda silme güvenlik nedeniyle gönderilmedi - Ayarlar\'dan onaylayın ya da sunucudaki veriyi yeniden yükleyin.', 'danger', 10000);
+        console.warn('Fark senkronu reddedildi (requiresConfirm):', result);
+        return 'requiresConfirm';
       }
       if (!res.ok) throw new Error(result.error || 'Gönderim başarısız.');
-      // Gönderim sırasında yeni bir değişiklik olmadıysa "gönderilmemiş değişiklik" bayrağı kalkar
-      if (db.clearPendingSync) db.clearPendingSync(startedAt);
+      this._retryCount = 0;
+      await db.applyIdMap(result.idMap);
+      const remaining = await db.removeOutboxUpTo(maxSeq);
+      if (!remaining) db.clearPendingSync();
+      if (result.skipped && result.skipped.length) {
+        console.info('Sunucu bazı kayıtları atladı:', result.skipped);
+      }
       const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      if (statusEl) statusEl.textContent = `✅ Otomatik gönderildi (${time}): ${result.counts.students} öğrenci, ${result.counts.exams} deneme, ${result.counts.results} sonuç.`;
-      if (!silent) UI.toast('Veriler sunucuya gönderildi.', 'success');
+      if (statusEl) statusEl.textContent = `✅ ${time}: ${ops.length} değişiklik sunucuya gönderildi.`;
+      if (!silent) UI.toast(`${ops.length} değişiklik sunucuya gönderildi.`, 'success');
+      if (remaining) this.scheduleAutoSync(); // gönderim sırasında yeni değişiklik geldi
       return 'ok';
     } catch (err) {
-      if (statusEl) statusEl.textContent = '❌ ' + err.message;
-      // Otomatik gönderim sessizce başarısız olursa öğretmen/veli/öğrenci
-      // eski veriyi görmeye devam eder ve kimse fark etmez - bu yüzden hata
-      // durumunda (silent=true olsa bile) kullanıcıya mutlaka bir toast
-      // gösteriyoruz; yalnızca başarı durumunda sessiz kalınır.
+      if (statusEl) statusEl.textContent = '❌ ' + err.message + ' (değişiklikler bu cihazda bekletiliyor, tekrar denenecek)';
+      // Otomatik gönderim sessizce başarısız olursa kimse fark etmez - hata
+      // durumunda (silent=true olsa bile) toast gösterilir. Değişiklikler giden
+      // kutusunda kalır, sonraki değişiklikte ya da açılışta tekrar gönderilir.
       const msg = silent
-        ? 'Değişiklikler otomatik olarak sunucuya gönderilemedi: ' + err.message + ' (Kullanıcılar sayfasından "Şimdi Gönder" ile tekrar deneyebilirsiniz.)'
+        ? 'Değişiklikler sunucuya gönderilemedi: ' + err.message + ' (bu cihazda bekletiliyor, otomatik tekrar denenecek)'
         : 'Sunucuya gönderim başarısız: ' + err.message;
-      if (typeof UI !== 'undefined') UI.toast(msg, 'danger');
+      // Toast yalnızca ilk başarısızlıkta - otomatik tekrar denemeler sessiz.
+      if (typeof UI !== 'undefined' && !this._retryCount) UI.toast(msg, 'danger');
       console.warn('Sunucu senkronizasyonu başarısız:', err.message);
+      this._scheduleRetry();
       return 'error';
     } finally {
       this._syncInFlight = false;
