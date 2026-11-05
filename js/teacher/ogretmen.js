@@ -57,6 +57,8 @@
     // ---- Sayfa Geçişleri ----
     const PAGE_TITLES = {
       dashboard: ['Ana Sayfa', 'Kontrol Merkezi'],
+      'class-detail': ['Sınıf Detayı', ''],
+      school: ['Okul Geneli', 'Kademe × Şube Görünümü'],
       analytics: ['Analizler', 'Sınıf Karşılaştırma & Konu Analizi'],
       students: ['Öğrenciler', 'Sıralı Öğrenci Listesi & Detaylı İnceleme'],
       exams: ['Denemeler', 'Deneme Sonuçları'],
@@ -191,6 +193,10 @@
       const greetingName = me.displayName || 'Öğretmenim';
       document.getElementById('greeting-title').textContent = `👋 Hoş Geldiniz, ${greetingName} öğretmenim! 🧭`;
       document.getElementById('greeting-date').textContent = '📅 ' + new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+      // Sınıflarım / Sınıf Detayı / Okul Geneli (js/teacher/siniflarim.js) -
+      // kendi verisini ayrı çeker, overview'i beklemez.
+      if (typeof Siniflarim !== 'undefined') Siniflarim.init(me);
 
       const [overview, insights] = await Promise.all([
         fetch('/api/teacher/overview').then(r => r.json()),

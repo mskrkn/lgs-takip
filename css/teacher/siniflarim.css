@@ -1,0 +1,77 @@
+/* ============================================
+   Öğretmen Paneli - Sınıflarım / Sınıf Detayı / Okul Geneli
+   ============================================ */
+.sn-grade { margin-top: 18px; }
+.sn-grade-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.sn-grade-title { font-size: 15px; font-weight: 800; letter-spacing: .02em; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sn-grade-title small { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.sn-exam-select { max-width: 100%; min-width: 220px; padding: 6px 10px; font-size: 13px; }
+
+.sn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.sn-card {
+  background: var(--bg-card); border: 1px solid var(--bg-glass-border); border-radius: 14px;
+  padding: 14px 16px; cursor: pointer; transition: border-color .15s, transform .15s; text-align: left;
+  color: inherit; font: inherit; width: 100%;
+}
+.sn-card:hover, .sn-card:focus-visible { border-color: var(--bg-glass-border-hover); transform: translateY(-1px); outline: none; }
+.sn-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sn-card-class { font-size: 20px; font-weight: 800; }
+.sn-rank { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: var(--bg-glass); color: var(--text-secondary); white-space: nowrap; }
+.sn-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; margin-top: 4px; }
+.sn-row .k { color: var(--text-muted); }
+.sn-big { font-size: 22px; font-weight: 800; }
+.sn-up { color: var(--success-light); }
+.sn-down { color: var(--danger-light); }
+.sn-flat { color: var(--text-muted); }
+.sn-absent { color: var(--warning-light); font-weight: 700; }
+.sn-subjects { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bg-glass-border); font-size: 12px; }
+.sn-subjects span { white-space: nowrap; }
+.sn-empty { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
+.sn-other-title { margin: 26px 0 4px; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+
+/* Kademe × şube tablosu */
+.sn-matrix-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.sn-matrix { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(96px, 1fr); gap: 8px; min-width: min-content; }
+.sn-cell {
+  border-radius: 12px; padding: 10px; border: 1px solid var(--bg-glass-border); cursor: pointer;
+  background: var(--bg-glass); color: inherit; font: inherit; text-align: left;
+}
+.sn-cell:hover, .sn-cell:focus-visible { border-color: var(--bg-glass-border-hover); outline: none; }
+.sn-cell b { display: block; font-size: 15px; }
+.sn-cell .n { font-size: 18px; font-weight: 800; }
+.sn-cell .p { font-size: 11px; color: var(--text-muted); }
+.sn-cell.good { background: rgba(16, 185, 129, 0.14); border-color: rgba(16, 185, 129, 0.35); }
+.sn-cell.bad { background: rgba(244, 63, 94, 0.12); border-color: rgba(244, 63, 94, 0.32); }
+.sn-cell.mine { box-shadow: inset 0 0 0 2px var(--accent-primary); }
+.sn-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+.sn-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+
+/* Sınıf detayı */
+.sn-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.sn-detail-head h3 { font-size: 22px; font-weight: 800; margin: 0; }
+.sn-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.sn-tile { background: var(--bg-card); border: 1px solid var(--bg-glass-border); border-radius: 12px; padding: 12px 14px; }
+.sn-tile .v { font-size: 22px; font-weight: 800; }
+.sn-tile .l { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.sn-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sn-table th { text-align: left; color: var(--text-muted); font-weight: 600; padding: 8px 6px; border-bottom: 1px solid var(--bg-glass-border); white-space: nowrap; }
+.sn-table td { padding: 8px 6px; border-bottom: 1px solid var(--bg-glass-border); }
+.sn-table td.num, .sn-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sn-table tr[data-open-student] { cursor: pointer; }
+.sn-table tr[data-open-student]:hover td { background: var(--bg-glass); }
+.sn-bar { position: relative; height: 8px; border-radius: 4px; background: var(--bg-glass); min-width: 80px; }
+.sn-bar > span { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.sn-bar > i { position: absolute; top: -3px; bottom: -3px; width: 2px; left: 50%; background: var(--text-muted); }
+.sn-absent-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.sn-absent-list span { background: var(--warning-bg); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+.sn-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+@media (max-width: 600px) {
+  .sn-cards { grid-template-columns: 1fr; }
+  .sn-exam-select { min-width: 0; width: 100%; }
+  .sn-grade-head { align-items: stretch; flex-direction: column; }
+  .sn-hide-sm { display: none; }
+}
