@@ -8188,6 +8188,7 @@ def _load_general_exam_data(db, org_id):
         exams.append({
             "id": e["id"], "name": e["name"], "date": e["date"], "grade": grade,
             "gradeCounts": grade_counts, "questionCounts": data.get("questionCounts"),
+            "topicMap": data.get("topicMap") or {},
         })
     return exams, results_by_exam, students, student_by_id
 
@@ -8305,6 +8306,45 @@ def _pick_exam(grade_exams, exam_id):
     return grade_exams[idx], (grade_exams[idx + 1] if idx + 1 < len(grade_exams) else None)
 
 
+def _kazanim_stats(exam, results_by_exam, class_ids, grade_ids):
+    """Denemenin kazanim haritasi (topicMap, A kitapcigi sirasinda) + sonuclarin
+    soru bazli D/Y/B dizileri (answers) -> her kazanim icin sinif ve kademe
+    basari yuzdesi. answers'i olmayan sonuc (ör. B sirasi bilinmeyen eski
+    optik) o derste sayilmaz."""
+    tmap = (exam or {}).get("topicMap") or {}
+    if not tmap:
+        return []
+    res = results_by_exam.get(exam["id"], {})
+    out = {}
+    for skey, entries in tmap.items():
+        for idx, entry in enumerate(entries or []):
+            label = (entry or {}).get("kazanim") or "(Kazanım belirtilmemiş)"
+            row = out.setdefault((skey, label), {"subject": skey, "kazanim": label, "questions": [],
+                                                 "class": [0, 0, 0], "grade": [0, 0, 0]})
+            row["questions"].append((entry or {}).get("dizilim") or idx + 1)
+            for scope, ids in (("class", class_ids), ("grade", grade_ids)):
+                agg = row[scope]
+                for sid in ids:
+                    ans = ((res.get(sid) or {}).get(skey) or {}).get("answers")
+                    if not ans or idx >= len(ans) or ans[idx] not in ("D", "Y", "B"):
+                        continue
+                    agg[0] += ans[idx] == "D"
+                    agg[1] += ans[idx] == "Y"
+                    agg[2] += 1
+    rows = []
+    for r in out.values():
+        c, g = r["class"], r["grade"]
+        if not c[2]:
+            continue
+        rows.append({
+            "subject": r["subject"], "kazanim": r["kazanim"], "questions": r["questions"],
+            "classRate": round(c[0] / c[2] * 100, 1), "gradeRate": round(g[0] / g[2] * 100, 1) if g[2] else None,
+            "classAnswers": c[2], "classWrongRate": round(c[1] / c[2] * 100, 1),
+        })
+    rows.sort(key=lambda r: (r["classRate"], r["kazanim"]))
+    return rows
+
+
 def _num_str(s):
     n = (s["school_number"] or "").strip()
     return str(int(n)) if n.isdigit() else (n or None)
@@ -8401,6 +8441,11 @@ def api_teacher_class_detail():
         "absent": absent,
         "isMine": own is None or class_name in (own or []),
         "mySubject": my_subject,
+        "kazanim": _kazanim_stats(
+            exam, results_by_exam,
+            [s["id"] for s in roster],
+            [sid for sid in res if _grade_of_class(student_by_id[sid]["class_name"]) == grade],
+        ) if exam else [],
     })
 
 
