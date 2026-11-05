@@ -344,17 +344,23 @@ const AdminUsers = {
         ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setDelegate(${u.id}, ${!u.isDelegate})">
             ${u.isDelegate ? '⬇️ Yönetici Yardımcılığını Kaldır' : '⬆️ Yönetici Yardımcısı Yap'}
           </button>` : '';
+      // Koordinatör (müdür / müdür yrd. / rehber öğretmen): öğretmen panelinde
+      // okulun tüm sınıflarını SALT OKUNUR görür ("Okul Geneli" sayfası).
+      const coordinatorBtn = (isRealAdmin && u.role === 'teacher')
+        ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setCoordinator(${u.id}, ${!u.isCoordinator})">
+            ${u.isCoordinator ? '🏫 Koordinatörlüğü Kaldır' : '🏫 Koordinatör Yap'}
+          </button>` : '';
       const homeroomBtn = (isRealAdmin && u.role === 'teacher')
         ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setHomeroom(${u.id}, '${(u.homeroomClassName || '').replace(/'/g, "\\'")}')">🏠 Sınıf Öğretmenliği</button>`
         : '';
       html += `<tr style="border-top:1px solid var(--bg-glass-border);font-size:13px">
-        <td style="padding:8px">${this._roleLabel(u.role)}${u.isDelegate ? ' <span style="color:#2DD4BF;font-size:11px">(Yönetici Yrd.)</span>' : ''}</td>
+        <td style="padding:8px">${this._roleLabel(u.role)}${u.isDelegate ? ' <span style="color:#2DD4BF;font-size:11px">(Yönetici Yrd.)</span>' : ''}${u.isCoordinator ? ' <span style="color:#a78bfa;font-size:11px">(Koordinatör)</span>' : ''}</td>
         <td style="padding:8px">${u.displayName || '-'}</td>
         <td style="padding:8px">${u.username}</td>
         <td style="padding:8px">${u.subject || '-'}</td>
         <td style="padding:8px">${scope}${u.homeroomClassName ? ` <span title="Sınıf Öğretmeni" style="color:#f59e0b;font-size:11px">🏠 ${u.homeroomClassName}</span>` : ''}</td>
         <td style="padding:8px">${u.active ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
-        <td style="padding:8px;text-align:right;white-space:nowrap">${homeroomBtn}${delegateBtn}${adminOnlyActions}</td>
+        <td style="padding:8px;text-align:right;white-space:nowrap">${homeroomBtn}${coordinatorBtn}${delegateBtn}${adminOnlyActions}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -582,6 +588,19 @@ const AdminUsers = {
     const result = await res.json();
     if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast(grant ? 'Yönetici yardımcısı yapıldı.' : 'Yönetici yardımcılığı kaldırıldı.', 'success');
+    this.render();
+  },
+
+  async setCoordinator(id, grant) {
+    if (grant && !confirm('Bu öğretmen, öğretmen panelinde okulun TÜM sınıflarının sonuçlarını görebilecek ("Okul Geneli" sayfası). Veri girme/silme yetkisi olmaz; ödev ve mesaj yine yalnızca kendi sınıflarına gider. Onaylıyor musunuz?')) return;
+    const res = await fetch(`/api/admin/users/${id}/coordinator${this._schoolQuery()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant }),
+    });
+    const result = await res.json();
+    if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
+    UI.toast(grant ? 'Koordinatör yapıldı. Öğretmen paneli yenilenince "Okul Geneli" görünür.' : 'Koordinatörlük kaldırıldı.', 'success');
     this.render();
   },
 

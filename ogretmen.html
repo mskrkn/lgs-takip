@@ -8,7 +8,8 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <script src="js/vendor/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="css/teacher/ogretmen.css">
+  <link rel="stylesheet" href="css/teacher/ogretmen.css?v=20261105">
+  <link rel="stylesheet" href="css/teacher/siniflarim.css?v=20261105">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#070913">
   <meta name="mobile-web-app-capable" content="yes">
@@ -40,6 +41,9 @@
         <div class="nav-section-title">Ana Menü</div>
         <div class="nav-item active" data-page="dashboard">
           <span class="nav-icon">🏠</span><span>Ana Sayfa</span>
+        </div>
+        <div class="nav-item" data-page="school" id="nav-school" style="display:none">
+          <span class="nav-icon">🏫</span><span>Okul Geneli</span>
         </div>
         <div class="nav-item" data-page="analytics">
           <span class="nav-icon">📊</span><span>Analizler</span>
@@ -114,6 +118,9 @@
             <div class="greeting-date" id="greeting-date">📅 -</div>
           </div>
 
+          <div id="dash-classes"><div class="card"><p class="text-muted">Sınıflarınız yükleniyor...</p></div></div>
+          <div class="sn-other-title">Diğer analizler</div>
+
           <div class="stats-grid stats-grid-compact">
             <div class="stat-card">
               <div class="stat-icon purple">👨‍🎓</div>
@@ -178,6 +185,16 @@
         </section>
 
         <!-- ============ ANALİZLER ============ -->
+        <!-- ============ SINIF DETAYI (Sınıflarım kartından açılır) ============ -->
+        <section class="page-section" id="page-class-detail">
+          <div id="class-detail-body"><p class="text-muted">Yükleniyor...</p></div>
+        </section>
+
+        <!-- ============ OKUL GENELİ (admin / tüm sınıflar / koordinatör) ============ -->
+        <section class="page-section" id="page-school">
+          <div id="school-overview-body"><p class="text-muted">Yükleniyor...</p></div>
+        </section>
+
         <section class="page-section" id="page-analytics">
           <div class="card">
             <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Tüm Sınıfların Ortalaması (Genel Bilgi)</h3></div>
@@ -460,6 +477,7 @@
   <script src="js/teacher/omrScan.js?v=20261021"></script>
   <script src="js/pwGuard.js"></script>
   <script src="js/navHistory.js"></script>
+  <script src="js/teacher/siniflarim.js?v=20261105"></script>
   <script src="js/teacher/ogretmen.js"></script>
 </body>
 </html>
