@@ -344,6 +344,8 @@ const AdminUsers = {
         ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.setDelegate(${u.id}, ${!u.isDelegate})">
             ${u.isDelegate ? '⬇️ Yönetici Yardımcılığını Kaldır' : '⬆️ Yönetici Yardımcısı Yap'}
           </button>` : '';
+      const teachingBtn = (isRealAdmin && u.role === 'teacher')
+        ? `<button class="btn btn-secondary btn-sm" onclick="AdminUsers.editTeaching(${u.id})">✏️ Branş / Sınıflar</button>` : '';
       // Koordinatör (müdür / müdür yrd. / rehber öğretmen): öğretmen panelinde
       // okulun tüm sınıflarını SALT OKUNUR görür ("Okul Geneli" sayfası).
       const coordinatorBtn = (isRealAdmin && u.role === 'teacher')
@@ -360,7 +362,7 @@ const AdminUsers = {
         <td style="padding:8px">${u.subject || '-'}</td>
         <td style="padding:8px">${scope}${u.homeroomClassName ? ` <span title="Sınıf Öğretmeni" style="color:#f59e0b;font-size:11px">🏠 ${u.homeroomClassName}</span>` : ''}</td>
         <td style="padding:8px">${u.active ? '<span style="color:#4ade80">● Aktif</span>' : '<span style="color:#fb7185">● Pasif</span>'}</td>
-        <td style="padding:8px;text-align:right;white-space:nowrap">${homeroomBtn}${coordinatorBtn}${delegateBtn}${adminOnlyActions}</td>
+        <td style="padding:8px;text-align:right;white-space:nowrap">${teachingBtn}${homeroomBtn}${coordinatorBtn}${delegateBtn}${adminOnlyActions}</td>
       </tr>`;
     });
     html += '</table></div>';
@@ -589,6 +591,85 @@ const AdminUsers = {
     if (!res.ok) { UI.toast(result.error || 'İşlem başarısız.', 'danger'); return; }
     UI.toast(grant ? 'Yönetici yardımcısı yapıldı.' : 'Yönetici yardımcılığı kaldırıldı.', 'success');
     this.render();
+  },
+
+  // Branş + girdiği sınıflar (Faz 2): daha önce ikisi de yalnızca hesap
+  // açılırken girilebiliyordu. Değişiklik öğretmenin panelinde hemen geçerli.
+  async editTeaching(id) {
+    const u = (this._users || []).find(x => x.id === id);
+    if (!u) { UI.toast('Öğretmen bulunamadı, listeyi yenileyin.', 'warning'); return; }
+    let meta;
+    try {
+      const res = await fetch(`/api/admin/class-names${this._schoolQuery()}`);
+      meta = await res.json();
+      if (!res.ok) throw new Error(meta.error || 'Sınıf listesi alınamadı.');
+    } catch (err) { UI.toast(err.message, 'danger'); return; }
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const all = u.classList === '*';
+    const mine = new Set(Array.isArray(u.classList) ? u.classList : []);
+    const legacy = u.subject && !meta.branches.includes(u.subject) ? u.subject : null;
+    const byGrade = {};
+    meta.classNames.forEach(c => { const g = (c.match(/^\s*(\d+)/) || [])[1] || 'Diğer'; (byGrade[g] = byGrade[g] || []).push(c); });
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h2>✏️ ${esc(u.displayName || u.username)}: Branş ve Sınıflar</h2><button class="modal-close" data-close>✕</button></div>
+        <div class="modal-body">
+          <label style="font-weight:600;font-size:13px">Branş</label>
+          <select id="teach-subject" class="form-control" style="margin:6px 0 4px">
+            <option value="">(Seçilmedi)</option>
+            ${meta.branches.map(b => `<option value="${esc(b)}" ${u.subject === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+          </select>
+          ${legacy ? `<div style="font-size:12px;color:var(--text-muted)">Şu an kayıtlı: "${esc(legacy)}" - listeden doğru branşı seçip kaydedin.</div>` : ''}
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">Öğretmen panelindeki sınıf kartlarında bu dersin netleri öne çıkar.</div>
+          <label style="font-weight:600;font-size:13px">Girdiği sınıflar</label>
+          <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px"><input type="checkbox" id="teach-all" ${all ? 'checked' : ''}> Tüm sınıflar (okulun tamamını görür)</label>
+          <div id="teach-classes" style="${all ? 'opacity:.4;pointer-events:none' : ''}">
+            ${Object.keys(byGrade).map(g => `
+              <div style="margin:8px 0 4px;font-size:12px;font-weight:700;color:var(--text-muted)">${esc(g)}. SINIF
+                <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;margin-left:6px" data-grade-toggle="${esc(g)}">hepsi</button></div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${byGrade[g].map(c => `<label style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bg-glass-border);border-radius:10px;font-size:13px;cursor:pointer">
+                  <input type="checkbox" value="${esc(c)}" data-grade="${esc(g)}" ${mine.has(c) ? 'checked' : ''}> ${esc(c)}</label>`).join('')}
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding:14px 20px">
+          <button class="btn btn-secondary" data-close>Vazgeç</button>
+          <button class="btn btn-primary" id="teach-save">Kaydet</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-close]')) close(); });
+    overlay.querySelector('#teach-all').addEventListener('change', (e) => {
+      const box = overlay.querySelector('#teach-classes');
+      box.style.opacity = e.target.checked ? '.4' : ''; box.style.pointerEvents = e.target.checked ? 'none' : '';
+    });
+    overlay.querySelectorAll('[data-grade-toggle]').forEach(b => b.addEventListener('click', () => {
+      const boxes = [...overlay.querySelectorAll(`input[data-grade="${b.dataset.gradeToggle}"]`)];
+      const on = !boxes.every(x => x.checked);
+      boxes.forEach(x => { x.checked = on; });
+    }));
+    overlay.querySelector('#teach-save').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const classes = overlay.querySelector('#teach-all').checked ? '*'
+        : [...overlay.querySelectorAll('#teach-classes input:checked')].map(x => x.value);
+      if (classes !== '*' && !classes.length) { UI.toast('En az bir sınıf seçin ya da "Tüm sınıflar"ı işaretleyin.', 'warning'); return; }
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/admin/users/${id}/teaching${this._schoolQuery()}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subject: overlay.querySelector('#teach-subject').value, classes }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || 'Kaydedilemedi.');
+        UI.toast(`Kaydedildi: ${result.subject || 'branş yok'} · ${result.className}`, 'success');
+        close();
+        this.render();
+      } catch (err) { UI.toast(err.message, 'danger'); btn.disabled = false; }
+    });
   },
 
   async setCoordinator(id, grant) {
