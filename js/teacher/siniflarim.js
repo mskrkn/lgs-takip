@@ -12,7 +12,9 @@
 const Siniflarim = (function () {
   let me = null;
   let summary = null;               // son /class-summary yanıtı (tüm kademeler)
-  let detailState = null;           // { className, examId }
+  let detailState = null;           // { className, examId, returnPage }
+  let subjectReport = { key: null, data: null };  // Okul Geneli > Branş Görünümü
+  let detailSort = null;            // null = öğretmenin dersi varsa o, yoksa toplam; 'total' | ders anahtarı
 
   const ORDER = ['turkce', 'inkilap', 'din', 'ingilizce', 'matematik', 'fen'];
   // Sunucu JSON anahtarlarını alfabetik sıralıyor - dersler optik formdaki sırayla gösterilir
@@ -60,12 +62,28 @@ const Siniflarim = (function () {
           ${c.rank ? `<span class="sn-rank" title="Kademedeki şubeler arasında sıra">Kademede ${c.rank}./${c.rankOf}</span>` : ''}
         </div>
         <div class="sn-row"><span class="k">Katılım</span><span><b>${c.participated}</b>/${c.enrolled}${c.absent ? ` · <span class="sn-absent">${c.absent} girmedi</span>` : ''}</span></div>
-        ${noData ? '<div class="sn-empty">Bu denemeye bu sınıftan katılım yok.</div>' : `
+        ${noData ? '<div class="sn-empty">Bu denemeye bu sınıftan katılım yok.</div>' : (c.focus ? focusHtml(c, g) : `
         <div class="sn-row"><span class="k">Sınıf ortalaması</span><span class="sn-big">${fmt(c.avgNet)}</span></div>
         <div class="sn-row"><span class="k">Kademe ort. ${fmt(g.gradeStats.avgNet)}</span><span>${signed(c.diffFromGrade, ' net')}</span></div>
-        ${c.changeFromPrev != null ? `<div class="sn-row"><span class="k">Önceki denemeye göre</span><span>${signed(c.changeFromPrev)}</span></div>` : ''}
+        ${c.changeFromPrev != null ? `<div class="sn-row"><span class="k">Önceki denemeye göre</span><span>${signed(c.changeFromPrev)}</span></div>` : ''}`) + `
         <div class="sn-subjects">${subj}</div>`}
       </button>`;
+  }
+
+  // Öğretmenin kendi dersi (Faz 2): kartın ana bilgisi o dersin neti olur,
+  // toplam net tek satıra iner.
+  function focusHtml(c, g) {
+    const f = c.focus;
+    const q = g.exam && g.exam.questionCounts && g.exam.questionCounts[f.key];
+    return `
+        <div class="sn-focus">
+          <div class="sn-focus-title"><span>${esc(subjLabel(f.key, g.grade))} <small>· dersiniz</small></span>
+            ${f.rank ? `<span class="sn-rank" title="Bu derste kademedeki şubeler arasında sıra">Derste ${f.rank}./${f.rankOf}</span>` : ''}</div>
+          <div class="sn-row"><span class="k">Sınıf ortalaması${q ? ` (${q} soru)` : ''}</span><span class="sn-big">${fmt(f.avgNet)}</span></div>
+          <div class="sn-row"><span class="k">Kademe ort. ${fmt(f.gradeAvgNet)}</span><span>${signed(f.diffFromGrade, ' net')}</span></div>
+          ${f.changeFromPrev != null ? `<div class="sn-row"><span class="k">Önceki denemeye göre</span><span>${signed(f.changeFromPrev)}</span></div>` : ''}
+        </div>
+        <div class="sn-row"><span class="k">Toplam net</span><span><b>${fmt(c.avgNet)}</b> · ${signed(c.diffFromGrade)}</span></div>`;
   }
 
   function gradeHeadHtml(g, extra) {
@@ -128,7 +146,17 @@ const Siniflarim = (function () {
       host.innerHTML = '<p class="sn-empty">Bu sayfa yalnızca okul geneli yetkisi olan hesaplar içindir.</p>';
       return;
     }
-    let html = `<div class="sn-legend">
+    const subjKey = subjectReport.key || summary.mySubject || 'matematik';
+    let html = `<div class="card" id="sn-subject-card">
+        <div class="card-header" style="flex-wrap:wrap;gap:8px">
+          <h3 class="card-title"><span class="card-icon">🎓</span> Branş Görünümü</h3>
+          <select class="form-input sn-exam-select" style="min-width:180px" data-sn-subject-select aria-label="Ders seç">
+            ${ORDER.map(k => `<option value="${k}" ${k === subjKey ? 'selected' : ''}>${esc(k === 'inkilap' ? 'Sosyal Bilgiler / İnkılap' : subjLabel(k, '8'))}</option>`).join('')}
+          </select>
+        </div>
+        <div id="sn-subject-body"><p class="text-muted">Yükleniyor...</p></div>
+      </div>
+      <div class="sn-legend">
         <span><i style="background:rgba(16,185,129,.5)"></i>Kademe ortalamasının 3+ net üstü</span>
         <span><i style="background:rgba(244,63,94,.5)"></i>3+ net altı</span>
         ${summary.myClasses ? '<span><i style="background:var(--accent-primary)"></i>Kendi sınıflarınız</span>' : ''}
@@ -152,6 +180,55 @@ const Siniflarim = (function () {
       html += `<div id="sn-absent-${esc(g.grade)}"></div></div>`;
     });
     host.innerHTML = html;
+    loadSubjectReport(subjKey);
+  }
+
+  async function loadSubjectReport(key, grade, examId) {
+    const body = document.getElementById('sn-subject-body');
+    if (!body) return;
+    if (!grade && subjectReport.key === key && subjectReport.data) { body.innerHTML = subjectReportHtml(subjectReport.data); return; }
+    body.innerHTML = '<p class="text-muted">Yükleniyor...</p>';
+    try {
+      const q = `subject=${encodeURIComponent(key)}${grade ? `&grade=${encodeURIComponent(grade)}&exam_id=${examId}` : ''}`;
+      const d = await fetch(`/api/teacher/subject-report?${q}`).then(r => r.json());
+      if (d.error) throw new Error(d.error);
+      if (grade && subjectReport.data && subjectReport.key === key) {
+        subjectReport.data.grades = subjectReport.data.grades.map(g => g.grade === grade ? d.grades[0] : g);
+        subjectReport.data.teachers = (await fetch(`/api/teacher/subject-report?subject=${encodeURIComponent(key)}`).then(r => r.json())).teachers;
+      } else {
+        subjectReport = { key, data: d };
+      }
+      body.innerHTML = subjectReportHtml(subjectReport.data);
+    } catch (err) {
+      body.innerHTML = `<p class="sn-empty">Branş raporu alınamadı: ${esc(err.message)}</p>`;
+    }
+  }
+
+  function subjectReportHtml(d) {
+    const lbl = (g) => subjLabel(d.subject, g || '8');
+    let html = '';
+    if (d.teachers.length) {
+      html += `<div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th>Öğretmen</th><th>Sınıfları</th><th class="num">Öğrenci</th><th class="num" title="Sınıflarının bu dersteki ortalamasının kademe ortalamasından farkı (öğrenci sayısıyla ağırlıklı)">Kademeye göre</th></tr></thead><tbody>
+        ${d.teachers.map(t => `<tr><td>${esc(t.name)}</td><td>${t.allClasses ? '<span class="text-muted">Tüm sınıflar</span>' : esc(t.classes.join(', '))}</td><td class="num">${t.students || '-'}</td><td class="num">${signed(t.avgDiffFromGrade)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+    } else {
+      html += '<p class="sn-empty">Bu derse branşı girilmiş öğretmen yok. Okul yöneticisi, kullanıcı listesindeki "✏️ Branş / Sınıflar" ile atayabilir.</p>';
+    }
+    d.grades.forEach(g => {
+      if (!g.exam) return;
+      const rows = g.classes.slice().sort((a, b) => (a.rank || 99) - (b.rank || 99));
+      html += `<div class="sn-grade">
+          <div class="sn-grade-head"><div class="sn-grade-title">${esc(g.grade)}. SINIF <small>${esc(lbl(g.grade))} kademe ort. ${fmt(g.gradeAvgNet)} net</small></div>
+            ${g.exams.length > 1 ? `<select class="form-input sn-exam-select" data-sn-subj-grade="${esc(g.grade)}">${examOptions(g.exams, g.exam.id)}</select>` : `<small class="text-muted">${esc(g.exam.name)}</small>`}</div>
+          <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="num">Sıra</th><th>Şube</th><th>Öğretmen</th><th class="num">Katılım</th><th class="num">${esc(lbl(g.grade))}</th><th class="num">Fark</th><th class="num sn-hide-sm">Önceki</th></tr></thead><tbody>
+          ${rows.map(r => `<tr data-sn-class="${esc(r.className)}" data-sn-exam="${g.exam.id}" style="cursor:pointer">
+              <td class="num">${r.rank || '-'}</td><td><b>${esc(r.className)}</b></td>
+              <td>${r.teachers.length ? esc(r.teachers.join(', ')) : '<span class="sn-absent">atanmamış</span>'}</td>
+              <td class="num">${r.participated}/${r.enrolled}</td><td class="num"><b>${fmt(r.avgNet)}</b></td><td class="num">${signed(r.diffFromGrade)}</td>
+              <td class="num sn-hide-sm">${signed(r.changeFromPrev)}</td></tr>`).join('')}
+          </tbody></table></div></div>`;
+    });
+    return html;
   }
 
   async function showAbsent(grade, examId, btn) {
@@ -233,20 +310,10 @@ const Siniflarim = (function () {
         const diff = c.subjects[k] != null ? c.subjects[k] - g.gradeStats.subjects[k] : null;
         const w = diff == null ? 0 : Math.abs(diff) / maxAbs * 50;
         const bar = diff == null ? '' : `<div class="sn-bar"><i></i><span style="${diff >= 0 ? `left:50%;width:${w}%;background:var(--success)` : `right:50%;width:${w}%;background:var(--danger)`}"></span></div>`;
-        return `<tr><td>${esc(subjLabel(k, d.grade))}</td><td class="num">${qc[k] || '-'}</td><td class="num"><b>${fmt(c.subjects[k])}</b></td><td class="num">${fmt(g.gradeStats.subjects[k])}</td><td class="num">${signed(diff)}</td><td class="sn-hide-sm">${bar}</td></tr>`;
+        return `<tr class="${k === d.mySubject ? 'sn-focus-row' : ''}"><td>${esc(subjLabel(k, d.grade))}${k === d.mySubject ? ' <small class="sn-mine-tag">dersiniz</small>' : ''}</td><td class="num">${qc[k] || '-'}</td><td class="num"><b>${fmt(c.subjects[k])}</b></td><td class="num">${fmt(g.gradeStats.subjects[k])}</td><td class="num">${signed(diff)}</td><td class="sn-hide-sm">${bar}</td></tr>`;
       }).join('')}
       </tbody></table></div></div>`;
-    // Sınıf içi sıralama
-    const pKeys = keys;
-    html += `<div class="card mt-2"><div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">🏅</span> ${esc(g.exam.name)} - Sınıf Sıralaması</h3>
-        <button type="button" class="btn btn-secondary btn-sm" data-sn-detail-csv>⬇️ Excel'e aktar</button></div>
-      <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="num">Sıra</th><th class="num">No</th><th>Ad Soyad</th>
-        ${pKeys.map(k => `<th class="num sn-hide-sm">${esc(subjLabel(k, d.grade, true))}</th>`).join('')}<th class="num">Toplam</th><th class="num" title="Kademedeki ${d.gradeParticipants} katılımcı arasında">Kademe</th></tr></thead><tbody>
-      ${d.participants.map(p => `<tr data-open-student data-student-id="${p.id}" data-student-name="${esc(p.firstName + ' ' + p.lastName)}">
-          <td class="num">${p.classRank}</td><td class="num">${esc(p.schoolNumber || '-')}</td><td>${esc(p.firstName)} ${esc(p.lastName)}</td>
-          ${pKeys.map(k => `<td class="num sn-hide-sm">${fmt(p.subjects[k] && p.subjects[k].net)}</td>`).join('')}
-          <td class="num"><b>${fmt(p.totalNet)}</b></td><td class="num">${p.gradeRank}/${d.gradeParticipants}</td></tr>`).join('')}
-      </tbody></table></div></div>`;
+    html += `<div class="card mt-2" id="sn-ranking">${rankingHtml(d)}</div>`;
     // Girmeyenler
     html += `<div class="card mt-2"><div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">📋</span> Sınava Girmeyenler (${d.absent.length})</h3>
         ${d.absent.length ? '<button type="button" class="btn btn-secondary btn-sm" data-sn-detail-absent-csv>⬇️ Excel\'e aktar</button>' : ''}</div>
@@ -255,6 +322,39 @@ const Siniflarim = (function () {
       </div>`;
     host.innerHTML = html;
     host._data = d;
+  }
+
+  // Sınıf içi sıralama: öğretmenin dersi varsa varsayılan o derse göre,
+  // "Toplam"a geçilebilir. Sıra, seçilen ölçüte göre (eşitlerde aynı sıra).
+  function sortKeyFor(d) {
+    if (detailSort === 'total') return 'total';
+    if (detailSort) return detailSort;
+    return d.mySubject && d.summary.gradeStats.subjects[d.mySubject] != null ? d.mySubject : 'total';
+  }
+  function sortedParticipants(d, key) {
+    const val = (p) => key === 'total' ? p.totalNet : ((p.subjects[key] && p.subjects[key].net) || 0);
+    const list = d.participants.slice().sort((a, b) => val(b) - val(a) || b.totalNet - a.totalNet);
+    return list.map(p => ({ ...p, sortRank: 1 + list.filter(q => val(q) > val(p)).length, sortVal: val(p) }));
+  }
+  function rankingHtml(d) {
+    const g = d.summary;
+    const keys = subjKeys(g.gradeStats.subjects);
+    const key = sortKeyFor(d);
+    const rows = sortedParticipants(d, key);
+    const sortBtns = d.mySubject && g.gradeStats.subjects[d.mySubject] != null ? `
+        <div class="sn-sort" role="group" aria-label="Sıralama ölçütü">
+          <button type="button" class="filter-pill ${key === d.mySubject ? 'active' : ''}" data-sn-sort="${esc(d.mySubject)}">${esc(subjLabel(d.mySubject, d.grade))}</button>
+          <button type="button" class="filter-pill ${key === 'total' ? 'active' : ''}" data-sn-sort="total">Toplam</button>
+        </div>` : '';
+    return `<div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">🏅</span> ${esc(g.exam.name)} - Sınıf Sıralaması${key !== 'total' ? ` <small style="font-weight:600;color:var(--text-muted)">(${esc(subjLabel(key, d.grade))})</small>` : ''}</h3>
+        <div class="sn-actions">${sortBtns}<button type="button" class="btn btn-secondary btn-sm" data-sn-detail-csv>⬇️ Excel'e aktar</button></div></div>
+      <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="num">Sıra</th><th class="num">No</th><th>Ad Soyad</th>
+        ${keys.map(k => `<th class="num ${k === key ? 'sn-focus-col' : 'sn-hide-sm'}">${esc(subjLabel(k, d.grade, true))}</th>`).join('')}<th class="num ${key === 'total' ? 'sn-focus-col' : ''}">Toplam</th><th class="num" title="Kademedeki ${d.gradeParticipants} katılımcı arasında (toplam nete göre)">Kademe</th></tr></thead><tbody>
+      ${rows.map(p => `<tr data-open-student data-student-id="${p.id}" data-student-name="${esc(p.firstName + ' ' + p.lastName)}">
+          <td class="num">${p.sortRank}</td><td class="num">${esc(p.schoolNumber || '-')}</td><td>${esc(p.firstName)} ${esc(p.lastName)}</td>
+          ${keys.map(k => `<td class="num ${k === key ? 'sn-focus-col' : 'sn-hide-sm'}">${fmt(p.subjects[k] && p.subjects[k].net)}</td>`).join('')}
+          <td class="num ${key === 'total' ? 'sn-focus-col' : ''}"><b>${fmt(p.totalNet)}</b></td><td class="num">${p.gradeRank}/${d.gradeParticipants}</td></tr>`).join('')}
+      </tbody></table></div>`;
   }
 
   // ---------- Excel (CSV, Türkçe Excel uyumlu) ----------
@@ -307,6 +407,14 @@ const Siniflarim = (function () {
       }
       const openSt = e.target.closest('[data-sn-open-students]');
       if (openSt) { showPage('students'); if (typeof setStudentClass === 'function') setStudentClass(openSt.dataset.snOpenStudents); return; }
+      const sortBtn = e.target.closest('[data-sn-sort]');
+      if (sortBtn) {
+        detailSort = sortBtn.dataset.snSort;
+        const box = document.getElementById('sn-ranking');
+        const dd = document.getElementById('class-detail-body')._data;
+        if (box && dd) box.innerHTML = rankingHtml(dd);
+        return;
+      }
       const absBtn = e.target.closest('[data-sn-absent-grade]');
       if (absBtn) { showAbsent(absBtn.dataset.snAbsentGrade, absBtn.dataset.snExam, absBtn); return; }
       const absCsv = e.target.closest('[data-sn-absent-csv]');
@@ -324,7 +432,8 @@ const Siniflarim = (function () {
       if (d && e.target.closest('[data-sn-detail-csv]')) {
         const keys = subjKeys(d.summary.gradeStats.subjects);
         const rows = [['Sıra', 'Okul No', 'Ad', 'Soyad', ...keys.flatMap(k => [subjLabel(k, d.grade) + ' D', subjLabel(k, d.grade) + ' Y', subjLabel(k, d.grade) + ' Net']), 'Toplam Net', 'Kademe Sırası']];
-        d.participants.forEach(p => rows.push([p.classRank, p.schoolNumber, p.firstName, p.lastName,
+        const sk = sortKeyFor(d);
+        sortedParticipants(d, sk).forEach(p => rows.push([p.sortRank, p.schoolNumber, p.firstName, p.lastName,
           ...keys.flatMap(k => { const s = p.subjects[k] || {}; return [s.correct, s.wrong, n2(s.net)]; }), n2(p.totalNet), `${p.gradeRank}/${d.gradeParticipants}`]));
         downloadCsv(`${d.summary.exam.name} - ${d.className} sıralama.csv`, rows);
         return;
@@ -338,6 +447,10 @@ const Siniflarim = (function () {
     document.body.addEventListener('change', (e) => {
       const sel = e.target.closest('[data-sn-grade-select]');
       if (sel) { changeGradeExam(sel.dataset.snGradeSelect, Number(sel.value)); return; }
+      const ssel = e.target.closest('[data-sn-subject-select]');
+      if (ssel) { loadSubjectReport(ssel.value); return; }
+      const sgsel = e.target.closest('[data-sn-subj-grade]');
+      if (sgsel) { loadSubjectReport(subjectReport.key, sgsel.dataset.snSubjGrade, Number(sgsel.value)); return; }
       const dsel = e.target.closest('[data-sn-detail-exam]');
       if (dsel && detailState) openClass(detailState.className, Number(dsel.value));
     });
