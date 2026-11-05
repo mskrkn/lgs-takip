@@ -472,3 +472,9 @@
   border-color: var(--accent-primary);
   color: #fff;
 }
+
+/* Dar ekranda üst bar yatay taşıyordu (pasif "Ara... (yakında)" kutusu +
+   butonlar 390px'e sığmıyor). Arama henüz çalışmadığı için mobilde gizlenir. */
+@media (max-width: 600px) {
+  .header-search { display: none; }
+}

@@ -2925,6 +2925,52 @@ def can_view_student(db, student_id):
     return allowed is None or student_id in allowed
 
 
+def _has_v2_role(db, user_id, role_name):
+    if not user_id:
+        return False
+    return db.execute(
+        "SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ? AND r.name = ?",
+        (user_id, role_name),
+    ).fetchone() is not None
+
+
+def is_coordinator(db):
+    """Ogretmen hesabina ek v2 COORDINATOR rolu verilmis mi (mudur/mudur yrd./
+    rehber ogretmen - bkz. grant_coordinator.py, /api/admin/users/<id>/coordinator)."""
+    return session.get("role") == "teacher" and _has_v2_role(db, session.get("user_id"), "COORDINATOR")
+
+
+def is_school_wide_viewer(db):
+    """Okulun TUM siniflarini (salt okunur) gorebilen kisi mi: okul admini /
+    okula girmis super_admin, tum siniflara yetkili ('*') ogretmen ya da
+    koordinator. Sinif Ozeti/Okul Geneli bu kapsami kullanir."""
+    role = session.get("role")
+    if role in ("admin", "super_admin"):
+        return True
+    if role != "teacher":
+        return False
+    if teacher_class_list(session.get("class_name")) is None:
+        return True
+    return is_coordinator(db)
+
+
+def get_viewable_student_ids(db):
+    """get_allowed_student_ids'in SADECE OKUMA uclari icin genisletilmis hali:
+    koordinator ogretmen okulun tum ogrencilerini gorur. Yazma/islem uclari
+    (mesaj, odev, sinif ogretmeni islemleri, AI) BILEREK get_allowed_student_ids
+    kullanmaya devam eder - koordinatorluk gorme yetkisini genisletir, islem
+    yetkisini degil."""
+    if is_coordinator(db):
+        org_id = _current_org_id(db)
+        return {r["id"] for r in db.execute("SELECT id FROM students WHERE organization_id = ?", (org_id,)).fetchall()}
+    return get_allowed_student_ids(db)
+
+
+def can_view_student_readonly(db, student_id):
+    allowed = get_viewable_student_ids(db)
+    return allowed is None or student_id in allowed
+
+
 # ============================================================
 # /api/ istekleri için JSON hata sayfaları
 # ============================================================
@@ -3184,6 +3230,9 @@ def api_me():
         "homeroomClassName": session.get("homeroom_class_name") if session.get("role") == "teacher" else None,
         "studentId": session.get("student_id"),
         "isDelegateAdmin": is_delegate,
+        # Ogretmen paneli: "Okul Geneli" sayfasi ve sinif ozeti kapsami (bkz. is_school_wide_viewer)
+        "isCoordinator": is_coordinator(db),
+        "isSchoolWideViewer": is_school_wide_viewer(db),
         "canManageSchools": can_manage_schools,
         "canManageAdmins": can_manage_admins,
         "organizationId": own_org_id,
@@ -7005,6 +7054,7 @@ def api_admin_list_users():
             "studentId": r["student_id"], "studentName": ", ".join(student_names) or None,
             "active": bool(r["active"]),
             "isDelegate": r["role"] == "teacher" and has_permission(db, r["id"], "users.manage"),
+            "isCoordinator": r["role"] == "teacher" and _has_v2_role(db, r["id"], "COORDINATOR"),
             "subject": r["subject"] if r["role"] == "teacher" else None,
             "homeroomClassName": r["homeroom_class_name"] if r["role"] == "teacher" else None,
         })
@@ -7194,6 +7244,38 @@ def api_admin_set_delegate(user_id):
     log_audit(db, "DELEGATE_GRANTED" if grant else "DELEGATE_REVOKED",
               resource_type="user", resource_id=user_id)
     return jsonify({"ok": True, "isDelegate": grant})
+
+
+@app.route("/api/admin/users/<int:user_id>/coordinator", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="users.manage")
+def api_admin_set_coordinator(user_id):
+    """Okul admini bir ogretmeni Koordinator yapar/kaldirir (mudur, mudur yrd.,
+    rehber ogretmen): okulun TUM siniflarini SALT OKUNUR gorur - ogretmen
+    paneline "Okul Geneli" sayfasi eklenir. Islem yetkileri (odev/mesaj)
+    kendi atanmis siniflariyla sinirli kalir (bkz. get_viewable_student_ids)."""
+    data = request.get_json(silent=True) or {}
+    grant = bool(data.get("grant"))
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    target = db.execute(
+        "SELECT id FROM users WHERE id = ? AND role = 'teacher' AND organization_id = ?",
+        (user_id, org_id),
+    ).fetchone()
+    if not target:
+        return jsonify({"error": "Öğretmen bulunamadı."}), 404
+    role_row = db.execute("SELECT id FROM roles WHERE name = 'COORDINATOR'").fetchone()
+    if not role_row:
+        run_v2_migration(db)
+        role_row = db.execute("SELECT id FROM roles WHERE name = 'COORDINATOR'").fetchone()
+    if grant:
+        db.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)", (user_id, role_row["id"]))
+    else:
+        db.execute("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", (user_id, role_row["id"]))
+    db.commit()
+    log_audit(db, "COORDINATOR_GRANTED" if grant else "COORDINATOR_REVOKED", resource_type="user", resource_id=user_id)
+    return jsonify({"ok": True, "isCoordinator": grant})
 
 
 @app.route("/api/admin/users/<int:user_id>/homeroom", methods=["POST"])
@@ -7760,7 +7842,7 @@ def _build_teacher_insights(db, student_ids):
 @login_required(role="teacher", permission="students.view")
 def api_teacher_insights():
     db = get_db()
-    insights = _build_teacher_insights(db, get_allowed_student_ids(db))
+    insights = _build_teacher_insights(db, get_viewable_student_ids(db))
     if not insights:
         return jsonify({"error": "Sınıfınıza kayıtlı öğrenci bulunamadı."}), 404
     return jsonify(insights)
@@ -7771,10 +7853,10 @@ def api_teacher_insights():
 def api_teacher_overview():
     db = get_db()
     org_id = _effective_org_id(db)
-    classes = None if session.get("role") in ("admin", "super_admin") else teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
+    classes = None if (session.get("role") in ("admin", "super_admin") or is_coordinator(db)) else teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
     my_class = "Tüm Sınıflar" if classes is None else ", ".join(classes)
 
-    allowed_ids = get_allowed_student_ids(db)
+    allowed_ids = get_viewable_student_ids(db)
     # None => sinirsiz (admin/class_name='*' degil, sadece admin - bkz.
     # get_allowed_student_ids) - okulun TUM ogrencileri. `if not allowed_ids`
     # ile bunu bos kumeyle KARISTIRMAMAK kritik, aksi halde admin kendi
@@ -7909,6 +7991,301 @@ def api_teacher_overview():
     })
 
 
+# ============================================================
+# Sinif Ozeti / Sinif Detayi / Okul Geneli (ogretmen paneli Faz 1 + 1b)
+# ============================================================
+# Ogretmenin girdigi siniflari KADEMEYE gore gruplu, secili denemede
+# katilim / ortalama / kademe ortalamasina gore fark / kademe ici sira ile
+# ozetler. Kademe ortalamalari okulun TUM ogrencilerinden hesaplanir ama
+# yalnizca TOPLAM rakam olarak doner - baska siniflarin ogrenci isimleri
+# sadece okul geneli goruntuleyicilere (is_school_wide_viewer) acilir.
+# Sadece Genel Deneme (Kazanim Denemesi/OMR haric, bkz. _is_mastery_exam_type).
+
+def _grade_of_class(class_name):
+    m = re.match(r"^\s*(\d+)", class_name or "")
+    return m.group(1) if m else None
+
+
+def _class_sort_key(class_name):
+    g = _grade_of_class(class_name)
+    return (int(g) if g else 99, class_name or "")
+
+
+def _summary_scope(db):
+    """(org_id, own_classes(list|None), school_wide(bool))."""
+    org_id = _effective_org_id(db)
+    school_wide = is_school_wide_viewer(db)
+    own = None
+    if session.get("role") == "teacher":
+        own = teacher_effective_classes(session.get("class_name"), session.get("homeroom_class_name"))
+    return org_id, own, school_wide
+
+
+def _load_general_exam_data(db, org_id):
+    """Okulun Genel Denemeleri + sonuclari tek seferde: (exams, results_by_exam,
+    students, student_by_id). exams: yeniden eskiye, her birinde grade."""
+    students = db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students WHERE organization_id = ?",
+        (org_id,),
+    ).fetchall()
+    student_by_id = {s["id"]: s for s in students}
+    exam_rows = db.execute(
+        "SELECT id, name, date, data_json FROM exams WHERE organization_id = ? "
+        "AND (exam_type IS NULL OR exam_type != 'optik_kamera') ORDER BY date DESC, id DESC",
+        (org_id,),
+    ).fetchall()
+    results_by_exam = {}
+    for r in db.execute(
+        "SELECT r.exam_id, r.student_id, r.data_json FROM results r JOIN exams e ON e.id = r.exam_id "
+        "WHERE e.organization_id = ? AND (e.exam_type IS NULL OR e.exam_type != 'optik_kamera')",
+        (org_id,),
+    ).fetchall():
+        if r["student_id"] not in student_by_id:
+            continue
+        data = json.loads(r["data_json"]) if r["data_json"] else {}
+        results_by_exam.setdefault(r["exam_id"], {})[r["student_id"]] = data.get("subjects") or {}
+    exams = []
+    for e in exam_rows:
+        data = json.loads(e["data_json"]) if e["data_json"] else {}
+        part = results_by_exam.get(e["id"], {})
+        grade_counts = {}
+        for sid in part:
+            g = _grade_of_class(student_by_id[sid]["class_name"])
+            if g:
+                grade_counts[g] = grade_counts.get(g, 0) + 1
+        grade = str(data.get("gradeLevel")) if data.get("gradeLevel") else None
+        if not grade and grade_counts:
+            top, cnt = max(grade_counts.items(), key=lambda kv: kv[1])
+            if cnt / max(1, len(part)) >= 0.6:
+                grade = top
+        exams.append({
+            "id": e["id"], "name": e["name"], "date": e["date"], "grade": grade,
+            "gradeCounts": grade_counts, "questionCounts": data.get("questionCounts"),
+        })
+    return exams, results_by_exam, students, student_by_id
+
+
+def _exams_for_grade(exams, grade):
+    """Bu kademeye ait ve bu kademeden katilimcisi olan denemeler (yeniden
+    eskiye): kademesi bu olanlar ya da kademesi belirsiz olanlar."""
+    return [e for e in exams
+            if e["gradeCounts"].get(grade) and (e["grade"] == grade or e["grade"] is None)]
+
+
+def _agg(subject_maps):
+    """Katilimcilarin toplam ve ders net ortalamalari."""
+    n = len(subject_maps)
+    if not n:
+        return None, {}
+    totals = [calc_total_net(s) for s in subject_maps]
+    keys = []
+    for s in subject_maps:
+        for k in s:
+            if k not in keys:
+                keys.append(k)
+    subj = {k: round(sum(((s.get(k) or {}).get("net") or 0) for s in subject_maps) / n, 2) for k in keys}
+    return round(sum(totals) / n, 2), subj
+
+
+def _exam_meta(e, keys=("id", "name", "date", "questionCounts")):
+    return {k: e.get(k) for k in keys} if e else None
+
+
+def _grade_block(grade, exam, prev_exam, results_by_exam, students, visible_classes, own_classes):
+    """Tek kademe + tek deneme: kademe istatistigi ve gorunur siniflarin kartlari."""
+    grade_students = [s for s in students if _grade_of_class(s["class_name"]) == grade]
+    by_class = {}
+    for s in grade_students:
+        by_class.setdefault(s["class_name"], []).append(s)
+    res = results_by_exam.get(exam["id"], {}) if exam else {}
+    prev_res = results_by_exam.get(prev_exam["id"], {}) if prev_exam else {}
+
+    def stats_of(lst, rmap):
+        maps = [rmap[s["id"]] for s in lst if s["id"] in rmap]
+        avg, subj = _agg(maps)
+        return len(lst), len(maps), avg, subj
+
+    g_enrolled, g_part, g_avg, g_subj = stats_of(grade_students, res)
+    ranked, stats = [], {}
+    for cls, lst in by_class.items():
+        enrolled, part, avg, subj = stats_of(lst, res)
+        prev_avg = stats_of(lst, prev_res)[2] if prev_exam else None
+        stats[cls] = (enrolled, part, avg, subj, prev_avg)
+        if part:
+            ranked.append((avg, cls))
+    ranked.sort(key=lambda t: -t[0])
+    rank_of = {cls: i + 1 for i, (_, cls) in enumerate(ranked)}
+
+    cards = []
+    for cls in sorted(visible_classes, key=_class_sort_key):
+        if _grade_of_class(cls) != grade:
+            continue
+        enrolled, part, avg, subj, prev_avg = stats.get(cls, (0, 0, None, {}, None))
+        cards.append({
+            "className": cls,
+            "enrolled": enrolled,
+            "participated": part,
+            "absent": enrolled - part,
+            "avgNet": avg,
+            "subjects": subj,
+            "diffFromGrade": round(avg - g_avg, 2) if avg is not None and g_avg is not None else None,
+            "rank": rank_of.get(cls),
+            "rankOf": len(ranked),
+            "prevAvgNet": prev_avg,
+            "changeFromPrev": round(avg - prev_avg, 2) if avg is not None and prev_avg is not None else None,
+            "isMine": own_classes is None or cls in own_classes,
+        })
+    return {
+        "grade": grade,
+        "exam": _exam_meta(exam),
+        "prevExam": _exam_meta(prev_exam, ("id", "name", "date")),
+        "gradeStats": {
+            "enrolled": g_enrolled, "participated": g_part,
+            "avgNet": g_avg, "subjects": g_subj, "classCount": len(by_class),
+        },
+        "classes": cards,
+    }
+
+
+def _pick_exam(grade_exams, exam_id):
+    """Secili (yoksa en yeni) deneme + ondan bir onceki (ayni kademe)."""
+    if not grade_exams:
+        return None, None
+    idx = 0
+    if exam_id:
+        for i, e in enumerate(grade_exams):
+            if e["id"] == exam_id:
+                idx = i
+                break
+    return grade_exams[idx], (grade_exams[idx + 1] if idx + 1 < len(grade_exams) else None)
+
+
+def _num_str(s):
+    n = (s["school_number"] or "").strip()
+    return str(int(n)) if n.isdigit() else (n or None)
+
+
+@app.route("/api/teacher/class-summary")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_teacher_class_summary():
+    """Sinif Ozeti. ?grade=7&exam_id=X verilirse sadece o kademe o denemeyle
+    doner (kartlardaki deneme secicisi icin), verilmezse tum kademeler en
+    yeni denemeleriyle."""
+    db = get_db()
+    org_id, own, school_wide = _summary_scope(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exams, results_by_exam, students, _ = _load_general_exam_data(db, org_id)
+    all_classes = sorted({s["class_name"] for s in students if s["class_name"]}, key=_class_sort_key)
+    visible = all_classes if school_wide else [c for c in (own or []) if c]
+    only_grade = (request.args.get("grade") or "").strip() or None
+    exam_id = request.args.get("exam_id", type=int)
+
+    grades = []
+    for g in sorted({_grade_of_class(c) for c in visible if _grade_of_class(c)}, key=int):
+        if only_grade and g != only_grade:
+            continue
+        g_exams = _exams_for_grade(exams, g)
+        exam, prev = _pick_exam(g_exams, exam_id if only_grade else None)
+        block = _grade_block(g, exam, prev, results_by_exam, students, visible, own)
+        block["exams"] = [_exam_meta(e, ("id", "name", "date")) for e in g_exams]
+        grades.append(block)
+    return jsonify({
+        "scope": "school" if school_wide else "own",
+        "isCoordinator": is_coordinator(db),
+        "myClasses": own,
+        "grades": grades,
+    })
+
+
+def _can_view_class(own, school_wide, class_name):
+    return school_wide or (own is not None and class_name in own)
+
+
+@app.route("/api/teacher/class-detail")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_teacher_class_detail():
+    """Tek sinif + tek deneme: ders ders sinif vs kademe, sinif ici sira
+    (kademe sirasiyla birlikte), girmeyenler."""
+    db = get_db()
+    org_id, own, school_wide = _summary_scope(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    class_name = (request.args.get("class_name") or "").strip()
+    if not class_name or not _can_view_class(own, school_wide, class_name):
+        return jsonify({"error": "Bu sınıfa erişim yetkiniz yok."}), 403
+    grade = _grade_of_class(class_name)
+    exams, results_by_exam, students, student_by_id = _load_general_exam_data(db, org_id)
+    g_exams = _exams_for_grade(exams, grade) if grade else []
+    exam, prev = _pick_exam(g_exams, request.args.get("exam_id", type=int))
+    block = _grade_block(grade, exam, prev, results_by_exam, students, [class_name], own) if grade else None
+
+    roster = sorted([s for s in students if s["class_name"] == class_name],
+                    key=lambda s: ((s["last_name"] or ""), (s["first_name"] or "")))
+    res = results_by_exam.get(exam["id"], {}) if exam else {}
+    grade_nets = [calc_total_net(subj) for sid, subj in res.items()
+                  if _grade_of_class(student_by_id[sid]["class_name"]) == grade]
+
+    participants, absent = [], []
+    for s in roster:
+        base = {"id": s["id"], "schoolNumber": _num_str(s), "firstName": s["first_name"], "lastName": s["last_name"]}
+        if s["id"] in res:
+            subj = res[s["id"]]
+            total = calc_total_net(subj)
+            participants.append({
+                **base, "totalNet": total,
+                "subjects": {k: {"correct": (v or {}).get("correct"), "wrong": (v or {}).get("wrong"), "net": (v or {}).get("net")}
+                             for k, v in subj.items()},
+                "gradeRank": 1 + sum(1 for x in grade_nets if x > total),
+            })
+        else:
+            absent.append(base)
+    participants.sort(key=lambda p: -p["totalNet"])
+    for p in participants:
+        p["classRank"] = 1 + sum(1 for q in participants if q["totalNet"] > p["totalNet"])
+    return jsonify({
+        "className": class_name,
+        "grade": grade,
+        "summary": block,
+        "exams": [_exam_meta(e, ("id", "name", "date")) for e in g_exams],
+        "gradeParticipants": len(grade_nets),
+        "participants": participants,
+        "absent": absent,
+        "isMine": own is None or class_name in (own or []),
+    })
+
+
+@app.route("/api/teacher/absent-report")
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_teacher_absent_report():
+    """Okul Geneli: bir kademenin secili denemesine girmeyenler, subeye gore
+    gruplu. Sadece okul geneli goruntuleyiciler (admin, '*' ogretmen, koordinator)."""
+    db = get_db()
+    org_id, own, school_wide = _summary_scope(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    if not school_wide:
+        return jsonify({"error": "Bu rapor yalnızca okul geneli yetkisi olan hesaplar içindir."}), 403
+    grade = (request.args.get("grade") or "").strip()
+    exams, results_by_exam, students, _ = _load_general_exam_data(db, org_id)
+    exam, _ = _pick_exam(_exams_for_grade(exams, grade), request.args.get("exam_id", type=int))
+    if not exam:
+        return jsonify({"grade": grade, "exam": None, "classes": []})
+    res = results_by_exam.get(exam["id"], {})
+    by_class = {}
+    for s in students:
+        if _grade_of_class(s["class_name"]) == grade and s["id"] not in res:
+            by_class.setdefault(s["class_name"], []).append({
+                "id": s["id"], "schoolNumber": _num_str(s), "firstName": s["first_name"], "lastName": s["last_name"],
+            })
+    return jsonify({
+        "grade": grade,
+        "exam": _exam_meta(exam, ("id", "name", "date")),
+        "classes": [{"className": c, "students": sorted(v, key=lambda x: (x["lastName"] or "", x["firstName"] or ""))}
+                    for c, v in sorted(by_class.items(), key=lambda kv: _class_sort_key(kv[0]))],
+    })
+
+
 @app.route("/api/teacher/exam/<int:exam_id>")
 @login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
 def api_teacher_exam_detail(exam_id):
@@ -7929,7 +8306,7 @@ def api_teacher_exam_detail(exam_id):
     # None => sinirsiz (admin) - okulun TUM ogrencileri. `or set()` bunu bos
     # kumeyle karistirip admin'in kendi "siralama" tablosunu hep bos
     # dondururdu (bkz. api_teacher_overview'deki ayni sinif hata).
-    _allowed = get_allowed_student_ids(db)
+    _allowed = get_viewable_student_ids(db)
     if _allowed is None:
         my_student_ids = {r["id"] for r in db.execute(
             "SELECT id FROM students WHERE organization_id = ?", (org_id,)
@@ -8038,7 +8415,7 @@ def api_teacher_student_detail(student_id):
     _build_student_report ile aynı veri şekli, yalnızca kendi sınıfıyla
     sınırlı erişim (bkz. can_view_student -> get_allowed_student_ids)."""
     db = get_db()
-    if not can_view_student(db, student_id):
+    if not can_view_student_readonly(db, student_id):
         return jsonify({"error": "Bu öğrenciye erişim yetkiniz yok."}), 403
     exam_id = request.args.get("exam_id", type=int)
     report = _build_student_report(db, student_id, exam_id=exam_id)
@@ -8059,7 +8436,7 @@ def api_teacher_student_skills(student_id):
     bağlanmadı (bölüm 10.13/10.14, ayrı bir iş) - bu, veri katmanının
     (10.6) test edilebilir/erişilebilir olması için minimal bir okuma ucu."""
     db = get_db()
-    if not can_view_student(db, student_id):
+    if not can_view_student_readonly(db, student_id):
         return jsonify({"error": "Bu öğrenciye erişim yetkiniz yok."}), 403
     rows = db.execute(
         "SELECT ss.skill_id, sk.name, ss.mastery_percentage, ss.attempts_count, "
