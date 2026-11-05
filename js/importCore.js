@@ -25,6 +25,7 @@ const ImportCore = {
         <button class="tab-btn" data-tab="import-pdf">📄 PDF</button>
         <button class="tab-btn" data-tab="import-optical">🔤 Optik / TXT Değerlendirme</button>
         <button class="tab-btn" data-tab="import-kazanim">🎯 Kazanım Testi (Optik Okuma)</button>
+        <button class="tab-btn" data-tab="import-wizard">🧙 Yayınevi Denemesi (Sihirbaz)</button>
       </div>
 
       <!-- Manuel Giriş -->
@@ -50,6 +51,11 @@ const ImportCore = {
       <!-- Kazanım Testi (kamera ile Optik Okuma - Öğretmen Paneli) -->
       <div class="tab-content" id="import-kazanim">
         ${this.renderKazanimTab()}
+      </div>
+
+      <!-- Yayınevi Denemesi Yükleme Sihirbazı (js/importWizard.js) -->
+      <div class="tab-content" id="import-wizard">
+        ${typeof DenemeSihirbazi !== 'undefined' ? DenemeSihirbazi.render() : ''}
       </div>
     `;
   },
@@ -94,6 +100,7 @@ const ImportCore = {
     this.loadExamSelects();
     this.calcManualNets();
     this.initOpticalTab();
+    if (typeof DenemeSihirbazi !== 'undefined') DenemeSihirbazi.init();
 
     // Manual student search
     const searchInput = document.getElementById('manual-student-search');

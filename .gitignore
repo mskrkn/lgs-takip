@@ -16,6 +16,7 @@ deneme_sonuclari.csv
 !omr_pipeline.py
 !omr_reports.py
 !backup_db.py
+!deneme_sihirbazi.py
 yedekler/
 __pycache__/
 
