@@ -5,6 +5,7 @@
 
     // ----- Yardımcı: konu/ders adı ve ikonu -----
     function subjectName(key) {
+      if (typeof subjectDisplayName === 'function') return subjectDisplayName(key);
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
     }
     function subjectIcon(key) {
@@ -1533,6 +1534,7 @@
       studentData = data;
 
       const s = data.student;
+      if (typeof setSubjectGradeContext === 'function') setSubjectGradeContext(s.className || s.class_name || null); // 5-7: Sosyal Bilgiler
       document.getElementById('header-sub').innerHTML = `<span class="sync-dot"></span><span>${s.firstName} ${s.lastName}</span>`;
       document.getElementById('header-sub').className = 'sync-status-pill sync-ok';
       document.getElementById('greeting-title').textContent = `${s.firstName} ${s.lastName}!`;

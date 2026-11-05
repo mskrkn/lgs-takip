@@ -194,10 +194,11 @@ const UI = {
   },
 
   // ---- Subject badge ----
-  subjectBadge(key) {
+  subjectBadge(key, gradeOrClass) {
     const sub = SUBJECT_LOOKUP[key];
     if (!sub) return '';
-    return `<span class="subject-tag" style="background:${sub.color}29;color:${sub.color};border-color:${sub.color}4d">${sub.name}</span>`;
+    const name = (typeof subjectDisplayName === 'function') ? subjectDisplayName(key, gradeOrClass) : sub.name;
+    return `<span class="subject-tag" style="background:${sub.color}29;color:${sub.color};border-color:${sub.color}4d">${name}</span>`;
   },
 
   // ---- Alert badge ----

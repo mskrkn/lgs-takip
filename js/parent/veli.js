@@ -124,6 +124,7 @@
     }
 
     function subjectName(key) {
+      if (typeof subjectDisplayName === 'function') return subjectDisplayName(key);
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
     }
 
@@ -473,6 +474,7 @@
       }
 
       const s = data.student;
+      if (typeof setSubjectGradeContext === 'function') setSubjectGradeContext(s.className || s.class_name || null); // 5-7: Sosyal Bilgiler
       // Genel Deneme (Kazanım Denemesi/OMR HARİÇ) - özet kartları/radar/ders
       // ilerlemesi karışmasın diye sunucunun ayrı döndürdüğü generalResults
       // kullanılır (bkz. Faz 1: Genel Deneme/Kazanım Denemesi ayrımı).

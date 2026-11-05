@@ -472,6 +472,8 @@ const App = {
   },
 
   async navigateTo(page, data = {}, _isBack = false) {
+    // Öğrenci profilinden çıkınca ders adı bağlamı sıfırlanır (bkz. setSubjectGradeContext)
+    if (page !== 'student-profile' && typeof setSubjectGradeContext === 'function') setSubjectGradeContext(null);
     // "Geri" ile gelinmiyorsa ve gerçekten farklı bir sayfaya geçiliyorsa,
     // ayrıldığımız sayfayı (ve verisini) geçmiş yığınına ekle - bkz. goBack().
     // Aynı sayfa içi veri değişiklikleri (ör. refreshCurrentPage) geçmişe
@@ -2091,6 +2093,7 @@ const App = {
     }
 
     const student = await db.getStudent(studentId);
+    if (typeof setSubjectGradeContext === 'function') setSubjectGradeContext(student ? student.className : null); // 5-7: Sosyal Bilgiler
     if (!student) {
       container.innerHTML = '<div class="card"><div class="empty-state"><h3>Öğrenci bulunamadı</h3></div></div>';
       return;
