@@ -269,7 +269,63 @@ class Database {
     return newId;
   }
 
+  // ---- 5A: sunucudan geri yükleme ----
+  // "Gönderilmemiş yerel değişiklik var" bayrağı (okul bazında). Her yerel
+  // değişiklikte konur, sunucuya başarılı gönderimde kaldırılır (bkz.
+  // AdminUsers.syncToServer). Admin paneli açılırken bayrak YOKSA yerel veri
+  // sunucudakiyle değiştirilir; VARSA önce yerel değişiklik gönderilir.
+  _pendingSyncKey() {
+    return this._openOrgId ? `edupusula_pending_sync_org${this._openOrgId}` : null;
+  }
+  markPendingSync() {
+    const k = this._pendingSyncKey();
+    try { if (k) localStorage.setItem(k, String(Date.now())); } catch (e) { /* depolama kapalı */ }
+  }
+  getPendingSync() {
+    const k = this._pendingSyncKey();
+    try { return k ? Number(localStorage.getItem(k) || 0) : 0; } catch (e) { return 0; }
+  }
+  clearPendingSync(ifNotNewerThan) {
+    const k = this._pendingSyncKey();
+    try {
+      if (!k) return;
+      const v = Number(localStorage.getItem(k) || 0);
+      if (!ifNotNewerThan || v <= ifNotNewerThan) localStorage.removeItem(k);
+    } catch (e) { /* depolama kapalı */ }
+  }
+
+  // Yerel (okulun kendi, platform_admin OLMAYAN) öğrenci/deneme/sonuç verisini
+  // sunucudaki kopyayla değiştirir. Değiştirmeden önce eski yerel veri ayrı bir
+  // yedek veritabanına konur (yanlışlıkla kayıp ihtimaline karşı). _notifyChange
+  // ÇAĞRILMAZ - bu sunucudan gelen veri, geri gönderilmemeli.
+  async replaceOwnDataFromServer(snap) {
+    if (!snap || !Array.isArray(snap.students)) return null;
+    const before = await this.exportData();
+    try {
+      const bk = new Dexie(`edupusula_yerel_yedek_org${this._openOrgId || 0}`);
+      bk.version(1).stores({ snapshots: 'id' });
+      await bk.open();
+      await bk.snapshots.put({ id: 'son', savedAt: new Date().toISOString(), data: before });
+      bk.close();
+    } catch (e) { console.warn('Yerel yedek alınamadı:', e); }
+    const own = (r) => r.source !== 'platform_admin';
+    await this.db.transaction('rw', this.db.students, this.db.exams, this.db.results, async () => {
+      for (const t of [this.db.students, this.db.exams, this.db.results]) {
+        const ids = await t.filter(own).primaryKeys();
+        if (ids.length) await t.bulkDelete(ids);
+      }
+      if (snap.students.length) await this.db.students.bulkPut(snap.students);
+      if (snap.exams.length) await this.db.exams.bulkPut(snap.exams.map(e => ({ ...e, examType: e.examType || 'LGS' })));
+      if (snap.results.length) await this.db.results.bulkPut(snap.results);
+    });
+    return {
+      before: { students: before.students.length, exams: before.exams.length, results: before.results.length },
+      after: { students: snap.students.length, exams: snap.exams.length, results: snap.results.length },
+    };
+  }
+
   _notifyChange() {
+    this.markPendingSync();
     if (typeof SyncModule !== 'undefined' && SyncModule.notifyLocalChange) {
       SyncModule.notifyLocalChange();
     }
@@ -1090,7 +1146,10 @@ class Database {
         await table.bulkPut(rows.map(r => ({ ...r, source: 'platform_admin' })));
       }
     }
-    this._notifyChange();
+    // _notifyChange BİLEREK çağrılmaz: platform_admin satırları sunucuya hiç
+    // gönderilmez (exportData onları ayıklar) - eskiden her açılışta gereksiz
+    // bir TAM gönderim tetikleniyor, bayat bir tarayıcının verisini sunucuya
+    // geri yazıyordu (bkz. 5A, replaceOwnDataFromServer).
   }
 
   // Import data from JSON
