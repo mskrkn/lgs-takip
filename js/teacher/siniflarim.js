@@ -14,6 +14,7 @@ const Siniflarim = (function () {
   let summary = null;               // son /class-summary yanıtı (tüm kademeler)
   let detailState = null;           // { className, examId, returnPage }
   let subjectReport = { key: null, data: null };  // Okul Geneli > Branş Görünümü
+  let kazState = { subject: null, all: false };  // Sınıf Detayı > Kazanım Analizi filtresi
   let detailSort = null;            // null = öğretmenin dersi varsa o, yoksa toplam; 'total' | ders anahtarı
 
   const ORDER = ['turkce', 'inkilap', 'din', 'ingilizce', 'matematik', 'fen'];
@@ -313,6 +314,8 @@ const Siniflarim = (function () {
         return `<tr class="${k === d.mySubject ? 'sn-focus-row' : ''}"><td>${esc(subjLabel(k, d.grade))}${k === d.mySubject ? ' <small class="sn-mine-tag">dersiniz</small>' : ''}</td><td class="num">${qc[k] || '-'}</td><td class="num"><b>${fmt(c.subjects[k])}</b></td><td class="num">${fmt(g.gradeStats.subjects[k])}</td><td class="num">${signed(diff)}</td><td class="sn-hide-sm">${bar}</td></tr>`;
       }).join('')}
       </tbody></table></div></div>`;
+    kazState = { subject: d.mySubject && (d.kazanim || []).some(k => k.subject === d.mySubject) ? d.mySubject : 'ALL', all: false };
+    if ((d.kazanim || []).length) html += `<div class="card mt-2" id="sn-kazanim">${kazanimHtml(d)}</div>`;
     html += `<div class="card mt-2" id="sn-ranking">${rankingHtml(d)}</div>`;
     // Girmeyenler
     html += `<div class="card mt-2"><div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">📋</span> Sınava Girmeyenler (${d.absent.length})</h3>
@@ -322,6 +325,30 @@ const Siniflarim = (function () {
       </div>`;
     host.innerHTML = html;
     host._data = d;
+  }
+
+  // Kazanım analizi: sınıfın en zayıf kazanımları (kademeyle karşılaştırmalı).
+  function kazanimHtml(d) {
+    const all = d.kazanim || [];
+    const subjects = subjKeys(Object.fromEntries(all.map(k => [k.subject, 1])));
+    const list = all.filter(k => kazState.subject === 'ALL' || k.subject === kazState.subject);
+    const shown = kazState.all ? list : list.slice(0, 10);
+    const pill = (val, label) => `<button type="button" class="filter-pill ${kazState.subject === val ? 'active' : ''}" data-sn-kaz-subject="${esc(val)}">${esc(label)}</button>`;
+    const bar = (rate) => `<div class="sn-rate"><span style="width:${Math.max(0, Math.min(100, rate))}%;background:${rate < 40 ? 'var(--danger)' : rate < 60 ? 'var(--warning)' : 'var(--success)'}"></span></div>`;
+    return `<div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">🎯</span> Kazanım Analizi <small style="font-weight:600;color:var(--text-muted)">(en zayıftan güçlüye)</small></h3>
+        <button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-csv>⬇️ Excel'e aktar</button></div>
+      <div class="sn-sort" style="margin-bottom:10px">${pill('ALL', 'Tüm dersler')}${subjects.map(k => pill(k, subjLabel(k, d.grade))).join('')}</div>
+      <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="sn-hide-sm">Ders</th><th>Kazanım</th><th class="num">Soru</th><th class="num">Sınıf</th><th class="sn-hide-sm" style="width:18%"></th><th class="num">Kademe</th><th class="num">Fark</th></tr></thead><tbody>
+      ${shown.map(k => {
+        const diff = k.gradeRate == null ? null : k.classRate - k.gradeRate;
+        return `<tr class="${k.subject === d.mySubject ? 'sn-focus-row' : ''}"><td class="sn-hide-sm">${esc(subjLabel(k.subject, d.grade, true))}</td>
+          <td style="min-width:220px">${esc(k.kazanim)}</td><td class="num">${esc(k.questions.join(', '))}</td>
+          <td class="num"><b>%${Math.round(k.classRate)}</b></td><td class="sn-hide-sm">${bar(k.classRate)}</td>
+          <td class="num">${k.gradeRate == null ? '-' : '%' + Math.round(k.gradeRate)}</td><td class="num">${signed(diff, '')}</td></tr>`;
+      }).join('')}
+      </tbody></table></div>
+      ${list.length > 10 ? `<div style="margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-all>${kazState.all ? 'Yalnızca ilk 10' : `Tümünü göster (${list.length})`}</button></div>` : ''}
+      <p class="text-muted" style="font-size:12px;margin-top:8px">Başarı: soruyu doğru yapan öğrencilerin oranı. Fark yüzde puan olarak kademeye göredir.</p>`;
   }
 
   // Sınıf içi sıralama: öğretmenin dersi varsa varsayılan o derse göre,
@@ -407,6 +434,23 @@ const Siniflarim = (function () {
       }
       const openSt = e.target.closest('[data-sn-open-students]');
       if (openSt) { showPage('students'); if (typeof setStudentClass === 'function') setStudentClass(openSt.dataset.snOpenStudents); return; }
+      const kazSubj = e.target.closest('[data-sn-kaz-subject]');
+      const kazAll = e.target.closest('[data-sn-kaz-all]');
+      if (kazSubj || kazAll) {
+        if (kazSubj) { kazState.subject = kazSubj.dataset.snKazSubject; kazState.all = false; } else kazState.all = !kazState.all;
+        const box = document.getElementById('sn-kazanim');
+        const dd = document.getElementById('class-detail-body')._data;
+        if (box && dd) box.innerHTML = kazanimHtml(dd);
+        return;
+      }
+      if (e.target.closest('[data-sn-kaz-csv]')) {
+        const dd = document.getElementById('class-detail-body')._data;
+        if (!dd) return;
+        const rows = [['Ders', 'Kazanım', 'Soru', 'Sınıf Başarı %', 'Kademe Başarı %', 'Fark (puan)']];
+        (dd.kazanim || []).forEach(k => rows.push([subjLabel(k.subject, dd.grade), k.kazanim, k.questions.join(', '), n2(k.classRate), n2(k.gradeRate), k.gradeRate == null ? '' : n2(k.classRate - k.gradeRate)]));
+        downloadCsv(`${dd.summary.exam.name} - ${dd.className} kazanım analizi.csv`, rows);
+        return;
+      }
       const sortBtn = e.target.closest('[data-sn-sort]');
       if (sortBtn) {
         detailSort = sortBtn.dataset.snSort;
