@@ -656,9 +656,11 @@ const OptikProfiles = {
         case 'lastName': rec.lastName = get(field); break;
         case 'className': rec.className = get(field); break;
         case 'booklet': {
+          // Boş/okunamayan kitapçık harfi artık sessizce 'A' sayılmaz - '' (bilinmiyor)
+          // bırakılır; evaluateOpticalData iki kitapçıkla da puanlayıp tutarlı olanı seçer.
           const raw = get(field);
-          const letter = raw ? raw[raw.length - 1].toUpperCase() : 'A';
-          rec.booklet = /^[A-E]$/.test(letter) ? letter : 'A';
+          const letter = raw ? raw[raw.length - 1].toUpperCase() : '';
+          rec.booklet = /^[A-E]$/.test(letter) ? letter : '';
           break;
         }
         case 'tcNo': case 'tcNo2': rec.meta[field.role] = get(field); break;

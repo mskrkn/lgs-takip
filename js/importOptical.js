@@ -729,38 +729,56 @@ const ImportOptical = {
         return;
       }
 
-      const headerRow = (data[0] || []).map(h => normalizeTrText(h));
+      // Başlık satırı her zaman ilk satır değil (ör. Mozaik kazanım tablosunda
+      // ilk iki satır deneme adı/kodu) - "Ders" ile "Dizilim" ya da "A Soru"
+      // içeren ilk satır başlık kabul edilir.
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(data.length, 10); i++) {
+        const h = (data[i] || []).map(x => normalizeTrText(x));
+        if (h.some(x => x.includes('ders')) && h.some(x => x.includes('dizilim') || x === 'a soru' || x.startsWith('a soru'))) { headerIdx = i; break; }
+      }
+      const headerRow = (data[headerIdx] || []).map(h => normalizeTrText(h));
       const findCol = (matcher) => headerRow.findIndex(matcher);
       const colDers = findCol(h => h.includes('ders'));
       const colSoruId = findCol(h => h.includes('soru') && h.includes('id'));
-      const colKazanim = findCol(h => h.includes('kazan'));
+      const colKazanimKod = findCol(h => h.includes('kazan') && h.includes('kod'));
+      const colKazanim = findCol(h => h.includes('kazan') && !h.includes('kod'));
       const colDizilim = findCol(h => h.includes('dizilim'));
       const colA = findCol(h => h.startsWith('a ') && (h.includes('kitap') || h.includes('cevap') || h.includes('anahtar')));
       const colB = findCol(h => h.startsWith('b ') && (h.includes('kitap') || h.includes('cevap') || h.includes('anahtar')));
+      // Mozaik biçimi: "A Soru" (A kitapçığındaki sıra), "B Soru" (aynı sorunun
+      // B kitapçığındaki sırası), tek "Cevap" sütunu.
+      const colASoru = findCol(h => h === 'a soru' || h.startsWith('a soru'));
+      const colBSoru = findCol(h => h === 'b soru' || h.startsWith('b soru'));
+      const colCevap = findCol(h => h === 'cevap' || h === 'doğru cevap');
+      const mozaikFormat = colDizilim === -1 && colASoru !== -1 && colCevap !== -1;
 
-      if (colDers === -1 || colDizilim === -1) {
-        setInfo('Excel\'de "Ders" ve "Dizilim" sütunları bulunamadı - dosya formatını kontrol edin.', true);
+      if (colDers === -1 || (colDizilim === -1 && !mozaikFormat)) {
+        setInfo('Excel\'de "Ders" ve "Dizilim" (ya da "A Soru" + "Cevap") sütunları bulunamadı - dosya formatını kontrol edin.', true);
         return;
       }
 
-      const bySubject = {}; // subjectKey -> [{dizilim, soruId, kazanim, a, b}]
+      const bySubject = {}; // subjectKey -> [{dizilim, soruId, kazanim, a, b, bPos}]
       const unmatchedDers = new Set();
 
-      data.slice(1).forEach((row, i) => {
+      data.slice(headerIdx + 1).forEach((row, i) => {
         const dersRaw = row?.[colDers];
         if (dersRaw == null || String(dersRaw).trim() === '') return;
         const dersNorm = normalizeTrText(dersRaw);
         const subject = this._matchSubjectByDersName(dersNorm, subjects);
         if (!subject) { unmatchedDers.add(String(dersRaw).trim()); return; }
 
-        const dizilimRaw = colDizilim !== -1 ? row[colDizilim] : null;
-        const dizilim = parseInt(dizilimRaw);
+        const dizilim = parseInt(mozaikFormat ? row[colASoru] : row[colDizilim]);
+        const bPos = colBSoru !== -1 ? parseInt(row[colBSoru]) : NaN;
+        const kod = colKazanimKod !== -1 ? String(row[colKazanimKod] || '').trim() : '';
+        const metin = colKazanim !== -1 ? String(row[colKazanim] || '').trim() : '';
         (bySubject[subject.key] ||= []).push({
           dizilim: isNaN(dizilim) ? i : dizilim,
           soruId: colSoruId !== -1 ? row[colSoruId] : null,
-          kazanim: colKazanim !== -1 ? String(row[colKazanim] || '').trim() : '',
-          a: colA !== -1 ? String(row[colA] ?? '').trim() : '',
-          b: colB !== -1 ? String(row[colB] ?? '').trim() : '',
+          kazanim: kod && metin ? `${kod} - ${metin}` : (metin || kod),
+          a: mozaikFormat ? String(row[colCevap] ?? '').trim() : (colA !== -1 ? String(row[colA] ?? '').trim() : ''),
+          b: mozaikFormat ? '' : (colB !== -1 ? String(row[colB] ?? '').trim() : ''),
+          bPos: isNaN(bPos) ? null : bPos,
         });
       });
 
@@ -779,15 +797,31 @@ const ImportOptical = {
         entries.sort((a, b) => a.dizilim - b.dizilim);
 
         const keyA = entries.map(e => (e.a ? e.a.charAt(0).toUpperCase() : ' ')).join('');
-        const keyB = entries.map(e => (e.b ? e.b.charAt(0).toUpperCase() : ' ')).join('');
+        // B sırası (bPos): A'daki her sorunun B kitapçığındaki yeri. Geçerli bir
+        // permütasyonsa B'li öğrencilerin soru bazlı sonucu A sırasına çevrilir
+        // (bkz. evaluateOpticalData) - yoksa kazanım analizine yazılmaz.
+        const bPositions = entries.map(e => e.bPos);
+        const validBOrder = bPositions.every(Number.isInteger) &&
+          [...bPositions].sort((x, y) => x - y).every((v, i) => v === i + 1);
+        this._opticalBOrder = this._opticalBOrder || {};
+        if (validBOrder) this._opticalBOrder[sub.key] = bPositions; else delete this._opticalBOrder[sub.key];
+        let keyB = entries.map(e => (e.b ? e.b.charAt(0).toUpperCase() : ' ')).join('');
+        if (mozaikFormat && validBOrder) {
+          const arr = new Array(entries.length).fill(' ');
+          entries.forEach(e => { arr[e.bPos - 1] = e.a ? e.a.charAt(0).toUpperCase() : ' '; });
+          keyB = arr.join('');
+        }
         const inputA = document.getElementById(`key-a-${sub.key}`);
         const inputB = document.getElementById(`key-b-${sub.key}`);
         if (inputA && keyA.trim()) inputA.value = keyA;
         if (inputB && keyB.trim()) inputB.value = keyB;
 
         this._opticalTopicMap[sub.key] = entries.map(e => ({ dizilim: e.dizilim, soruId: e.soruId, kazanim: e.kazanim }));
-        filledSubjects.push(`${sub.name} (${entries.length})`);
-        if (entries.length !== sub.questions) mismatches.push(`${sub.name}: ${entries.length} satır bulundu, beklenen ${sub.questions}`);
+        // Denemeye özel soru sayısı (ör. 5-6. sınıf yayınevi denemelerinde 15 soru) -
+        // deneme kaydına questionCounts olarak yazılır (bkz. subjectSets.js).
+        (this._opticalQuestionCounts ||= {})[sub.key] = entries.length;
+        filledSubjects.push(`${sub.name} (${entries.length}${validBOrder ? ', B sırası ✓' : ''})`);
+        if (entries.length !== sub.questions) mismatches.push(`${sub.name}: ${entries.length} soru (LGS'de ${sub.questions}) - deneme ${entries.length} soru olarak kaydedilecek`);
       });
 
       if (unmatchedDers.size > 0) mismatches.push(`Eşlenemeyen ders adı: ${[...unmatchedDers].join(', ')}`);
@@ -1031,6 +1065,8 @@ const ImportOptical = {
 
     const rawRows = [];
     const failedLines = [];
+    const bWithoutOrder = new Set(); // B sırası bilinmeyen dersler (kazanım analizine yazılmadı)
+    const guessedBooklet = []; // kitapçık harfi boş olup netten seçilen satırlar
     allLines.forEach((line, idx) => {
       if (line.trim().length <= 5) return; // boş/anlamsız satır - sessizce atlanır
       const rec = OptikProfiles.extractLine(profile, line, this._opticalBlockOverrides);
@@ -1040,15 +1076,49 @@ const ImportOptical = {
         return;
       }
 
-      const activeKey = keys[rec.booklet] || keys['A'];
-      const rowSubjects = {};
-      rec.answerBlocks.forEach(block => {
-        if (!block.subjectKey) return;
-        if (!block.raw || !block.raw.trim()) return; // bu ders bu satırda boş (ör. sayısal dosyasında sözel bloğu) - atla ki birleştirmede diğer dosyanın gerçek verisinin üzerine yazmasın
-        const keyAns = activeKey[block.subjectKey];
-        if (!keyAns) return; // cevap anahtarı girilmemiş blok atlanır
-        rowSubjects[block.subjectKey] = OptikProfiles.evaluateAnswers(block.raw, keyAns);
-      });
+      // Satırı tek bir kitapçık harfiyle değerlendirir; B ise soru bazlı sonucu
+      // A sırasına çevirir (kazanım haritası A sırasındadır).
+      const evalWith = (letter) => {
+        const activeKey = keys[letter] || keys['A'];
+        const out = {};
+        let net = 0;
+        const missingOrder = [];
+        rec.answerBlocks.forEach(block => {
+          if (!block.subjectKey) return;
+          if (!block.raw || !block.raw.trim()) return; // bu ders bu satırda boş (ör. sayısal dosyasında sözel bloğu) - atla ki birleştirmede diğer dosyanın gerçek verisinin üzerine yazmasın
+          const keyAns = activeKey[block.subjectKey];
+          if (!keyAns) return; // cevap anahtarı girilmemiş blok atlanır
+          const ev = OptikProfiles.evaluateAnswers(block.raw, keyAns);
+          // B kitapçığında: B sırası biliniyorsa A sırasına çevrilir, bilinmiyorsa
+          // kazanım analizine HİÇ yazılmaz (yanlış kazanıma yazmaktansa).
+          if (letter === 'B' && this._opticalTopicMap && this._opticalTopicMap[block.subjectKey]) {
+            const bOrder = this._opticalBOrder && this._opticalBOrder[block.subjectKey];
+            if (bOrder && bOrder.length === ev.perQuestion.length) {
+              ev.perQuestion = bOrder.map(pos => ev.perQuestion[pos - 1]);
+            } else {
+              ev.perQuestion = null;
+              missingOrder.push(block.subjectKey);
+            }
+          }
+          out[block.subjectKey] = ev;
+          net += ev.net;
+        });
+        return { subjects: out, net, missingOrder };
+      };
+      let booklet = rec.booklet;
+      let evaluated;
+      const hasB = Object.values(keys.B || {}).some(v => v);
+      if (booklet !== 'A' && booklet !== 'B' && hasB) {
+        // Kitapçık harfi boş/okunamamış: iki kitapçıkla da puanlanır, tutarlı
+        // olan (neti yüksek) seçilir - yayınevi raporları da böyle yapıyor.
+        const ea = evalWith('A'), eb = evalWith('B');
+        [booklet, evaluated] = eb.net > ea.net ? ['B', eb] : ['A', ea];
+        guessedBooklet.push(`${rec.firstName} ${rec.lastName}`.trim() + ` → ${booklet}`);
+      } else {
+        evaluated = evalWith(booklet === 'B' ? 'B' : 'A');
+      }
+      evaluated.missingOrder.forEach(k => bWithoutOrder.add(k));
+      const rowSubjects = evaluated.subjects;
 
       rawRows.push({
         schoolNumber: rec.schoolNumber || '',
@@ -1056,7 +1126,7 @@ const ImportOptical = {
         lastName: rec.lastName,
         fullName: `${rec.firstName} ${rec.lastName}`.trim(),
         className: normalizeClassName(rec.className),
-        booklet: rec.booklet,
+        booklet,
         subjects: rowSubjects,
       });
     });
@@ -1078,6 +1148,12 @@ const ImportOptical = {
     results.sort((a, b) => b.totalNet - a.totalNet);
     this._renderFailedLinesWarning(failedLines, collisions, highFailureRate);
 
+    if (guessedBooklet.length) {
+      UI.toast(`${guessedBooklet.length} satırda kitapçık harfi boştu; iki kitapçıkla da puanlanıp tutarlı olan seçildi: ${guessedBooklet.slice(0, 5).join(', ')}${guessedBooklet.length > 5 ? '...' : ''}`, 'info', 8000);
+    }
+    if (bWithoutOrder.size) {
+      UI.toast(`B kitapçığı soru sırası bilinmediği için ${[...bWithoutOrder].map(k => (SUBJECT_LOOKUP[k] || {}).name || k).join(', ')} dersinde B kitapçıklı öğrencilerin soru bazlı sonuçları kazanım analizine eklenmeyecek (netler etkilenmez). Kazanım Excel'inde "B Soru" sütunu varsa bu sorun olmaz.`, 'warning', 9000);
+    }
     this.opticalResults = results;
     this._opticalResultsExamType = examType;
     this.renderOpticalPreview(results, examType);
@@ -1265,6 +1341,8 @@ const ImportOptical = {
       this._opticalDetectedEncoding = null;
       this._opticalLines = [];
       this._opticalTopicMap = null;
+      this._opticalBOrder = null;
+      this._opticalQuestionCounts = null;
       document.getElementById('optical-answer-keys').innerHTML = '';
       const excelInfoEl = document.getElementById('optical-answer-key-excel-info');
       if (excelInfoEl) excelInfoEl.innerHTML = '';
@@ -1284,6 +1362,12 @@ const ImportOptical = {
 
     const examId = await this.getOrCreateExam('optical');
     if (!examId) return;
+    // Excel'den gelen ders soru sayıları sonuçlar yazılmadan ÖNCE denemeye
+    // işlenir - commitBatchResults boş sayısını getSubjectsForExam(exam)'dan hesaplar.
+    if (!App.actingSchool && this._opticalQuestionCounts && Object.keys(this._opticalQuestionCounts).length > 0) {
+      const exam = await db.getExam(examId);
+      await db.updateExam(examId, { questionCounts: { ...(exam?.questionCounts || {}), ...this._opticalQuestionCounts } });
+    }
 
     const examType = this._opticalResultsExamType || 'LGS';
     const rowsToImport = this.opticalResults.map(r => {
@@ -1321,6 +1405,8 @@ const ImportOptical = {
       const exam = await db.getExam(examId);
       await db.updateExam(examId, { topicMap: { ...(exam?.topicMap || {}), ...this._opticalTopicMap } });
       this._opticalTopicMap = null;
+      this._opticalBOrder = null;
+      this._opticalQuestionCounts = null;
     }
 
     const extra = [
