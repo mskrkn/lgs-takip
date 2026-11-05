@@ -25,6 +25,7 @@
     let studentDetailRequestSeq = 0; // eski isteğin yanıtı yeni öğrencinin üzerine yazmasın
 
     function subjectName(key) {
+      if (typeof subjectDisplayName === 'function') return subjectDisplayName(key);
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
     }
 
@@ -88,6 +89,8 @@
       document.querySelectorAll('.mobile-nav-item[data-page]').forEach(item => {
         item.classList.toggle('active', item.dataset.page === navKey);
       });
+      // Öğrenci detayından çıkınca ders adı bağlamı sıfırlanır (çok sınıflı görünümler)
+      if (page !== 'student-detail' && typeof setSubjectGradeContext === 'function') setSubjectGradeContext(null);
       if (page !== 'student-detail' && document.body.classList.contains('student-detail-open')) {
         document.body.classList.remove('student-detail-open');
         destroyStudentCharts();
@@ -1573,6 +1576,7 @@
 
       currentStudentDetailData = data;
       const s = data.student;
+      if (typeof setSubjectGradeContext === 'function') setSubjectGradeContext(s.className || s.class_name || null); // 5-7: Sosyal Bilgiler
       const results = data.results || [];
       // Genel Deneme (Kazanım Denemesi/OMR HARİÇ) - özet kartları ve "Tüm
       // Deneme Geçmişi" tablosu karışmasın diye sunucunun ayrı döndürdüğü

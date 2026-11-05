@@ -137,8 +137,14 @@ class Database {
     const targetName = orgId ? `${DB_NAME}_org${orgId}` : DB_NAME;
     this.db = new Dexie(targetName);
     this._defineSchema(this.db);
+    this._installOutboxHooks(this.db);
     await this.db.open();
     this._openOrgId = orgId || null;
+    // 5B: kalıcı giden kutusu (sunucuya henüz gitmemiş değişiklikler) - okul bazında
+    if (this._outbox) { try { this._outbox.close(); } catch (e) { /* zaten kapalı */ } }
+    this._outbox = new Dexie(`edupusula_outbox_org${orgId || 0}`);
+    this._outbox.version(1).stores({ ops: '++seq' });
+    await this._outbox.open();
     if (orgId) {
       await this._migrateLegacyDbIfNeeded(orgId);
     }
@@ -269,7 +275,189 @@ class Database {
     return newId;
   }
 
+  // ---- 5B: değişiklik (fark) senkronu ----
+  // students/exams/results tablolarındaki HER ekleme/güncelleme/silme, hangi
+  // db.* fonksiyonundan gelirse gelsin, Dexie kancalarıyla yakalanır ve işlem
+  // (transaction) BAŞARIYLA tamamlanınca kalıcı giden kutusuna yazılır.
+  // AdminUsers.syncToServer giden kutusunu /api/admin/sync-delta'ya gönderir.
+  // Sunucudan gelen veri uygulanırken (5A geri yükleme, platform verisi, id
+  // yeniden numaralama) _suppressOutbox ile kancalar susturulur.
+  _installOutboxHooks(dexieDb) {
+    const self = this;
+    this._transOps = this._transOps || new WeakMap();
+    ['students', 'exams', 'results'].forEach(name => {
+      const t = dexieDb.table(name);
+      t.hook('creating', function (primKey, obj, trans) {
+        if (self._suppressOutbox || (obj && obj.source === 'platform_admin')) return;
+        const isNew = primKey === undefined; // id'yi Dexie verdiyse gerçekten yeni kayıt
+        this.onsuccess = (key) => self._queueOp(trans, { table: name, op: 'put', id: key, obj: { ...obj, id: key }, isNew });
+      });
+      t.hook('updating', function (mods, primKey, obj, trans) {
+        if (self._suppressOutbox || (obj && obj.source === 'platform_admin')) return;
+        this.onsuccess = (updated) => self._queueOp(trans, { table: name, op: 'put', id: primKey, obj: updated });
+      });
+      t.hook('deleting', function (primKey, obj, trans) {
+        if (self._suppressOutbox || (obj && obj.source === 'platform_admin')) return;
+        const mass = !!self._massDelete;
+        this.onsuccess = () => self._queueOp(trans, { table: name, op: 'delete', id: primKey, mass });
+      });
+    });
+  }
+
+  _queueOp(trans, op) {
+    let list = this._transOps.get(trans);
+    if (!list) {
+      list = [];
+      this._transOps.set(trans, list);
+      trans.on('complete', () => {
+        this._transOps.delete(trans);
+        if (!this._outbox) return;
+        const at = Date.now();
+        // Bekleme durumu eşzamanlı işaretlenir - sekme hemen kapatılırsa
+        // beforeunload uyarısı (bkz. aşağısı) bunu görür.
+        this.markPendingSync();
+        this._outboxWritesInFlight = (this._outboxWritesInFlight || 0) + 1;
+        this._outbox.ops.bulkAdd(list.map(o => ({ ...o, at })))
+          .catch(e => console.warn('Giden kutusuna yazılamadı:', e))
+          .finally(() => { this._outboxWritesInFlight--; });
+      });
+    }
+    list.push(op);
+  }
+
+  // Giden kutusundaki işlemleri sadeleştirir: aynı kayda ait işlemlerden
+  // sonuncusu kalır (ilk işlem "yeni" ise yenilik korunur; yeni açılıp
+  // sunucuya gitmeden silinen kayıt hiç gönderilmez).
+  async readOutbox() {
+    if (!this._outbox) return { ops: [], maxSeq: 0 };
+    const rows = await this._outbox.ops.orderBy('seq').toArray();
+    const byKey = new Map();
+    rows.forEach(r => {
+      const k = `${r.table}:${r.id}`;
+      const prev = byKey.get(k);
+      if (!prev) { byKey.set(k, { ...r }); return; }
+      if (r.op === 'delete' && prev.isNew) { byKey.delete(k); return; }
+      byKey.set(k, { ...r, isNew: !!prev.isNew && r.op === 'put', mass: !!(r.mass || prev.mass) });
+    });
+    const ops = [...byKey.values()].map(r => { const o = { ...r }; delete o.seq; delete o.at; return o; });
+    return { ops, maxSeq: rows.length ? rows[rows.length - 1].seq : 0 };
+  }
+
+  // Bu cihazdaki gönderilmemiş değişiklikleri atar (Ayarlar > "Sunucudaki
+  // veriyi yeniden yükle") - ardından sayfa yenilenince 5A sunucudan yükler.
+  async discardOutbox() {
+    if (this._outbox) await this._outbox.ops.clear();
+    this.clearPendingSync();
+  }
+
+  async removeOutboxUpTo(maxSeq) {
+    if (this._outbox && maxSeq) await this._outbox.ops.where('seq').belowOrEqual(maxSeq).delete();
+    return this._outbox ? await this._outbox.ops.count() : 0;
+  }
+
+  // Sunucunun çakışma yüzünden verdiği yeni id'leri yerelde uygular (kayıt
+  // yeniden numaralanır, sonuçların öğrenci/deneme bağları güncellenir,
+  // giden kutusunda bekleyen işlemler de yeni id'ye çevrilir).
+  async applyIdMap(idMap) {
+    if (!idMap) return;
+    const maps = { students: idMap.students || {}, exams: idMap.exams || {}, results: idMap.results || {} };
+    if (!Object.values(maps).some(m => Object.keys(m).length)) return;
+    this._suppressOutbox = true;
+    try {
+      await this.db.transaction('rw', this.db.students, this.db.exams, this.db.results, async () => {
+        for (const name of ['students', 'exams', 'results']) {
+          for (const [oldId, newId] of Object.entries(maps[name])) {
+            const obj = await this.db.table(name).get(Number(oldId));
+            if (!obj) continue;
+            await this.db.table(name).delete(Number(oldId));
+            await this.db.table(name).put({ ...obj, id: Number(newId) });
+          }
+        }
+        for (const [oldId, newId] of Object.entries(maps.students)) {
+          await this.db.results.where('studentId').equals(Number(oldId)).modify({ studentId: Number(newId) });
+        }
+        for (const [oldId, newId] of Object.entries(maps.exams)) {
+          await this.db.results.where('examId').equals(Number(oldId)).modify({ examId: Number(newId) });
+        }
+      });
+    } finally {
+      this._suppressOutbox = false;
+    }
+    if (this._outbox) {
+      await this._outbox.ops.toCollection().modify(op => {
+        const m = maps[op.table] || {};
+        if (m[op.id] != null) { op.id = Number(m[op.id]); if (op.obj) op.obj.id = op.id; }
+        if (op.obj && op.table === 'results') {
+          if (maps.students[op.obj.studentId] != null) op.obj.studentId = Number(maps.students[op.obj.studentId]);
+          if (maps.exams[op.obj.examId] != null) op.obj.examId = Number(maps.exams[op.obj.examId]);
+        }
+      });
+    }
+  }
+
+  // ---- 5A: sunucudan geri yükleme ----
+  // "Gönderilmemiş yerel değişiklik var" bayrağı (okul bazında). Her yerel
+  // değişiklikte konur, sunucuya başarılı gönderimde kaldırılır (bkz.
+  // AdminUsers.syncToServer). Admin paneli açılırken bayrak YOKSA yerel veri
+  // sunucudakiyle değiştirilir; VARSA önce yerel değişiklik gönderilir.
+  _pendingSyncKey() {
+    return this._openOrgId ? `edupusula_pending_sync_org${this._openOrgId}` : null;
+  }
+  markPendingSync() {
+    const k = this._pendingSyncKey();
+    try { if (k) localStorage.setItem(k, String(Date.now())); } catch (e) { /* depolama kapalı */ }
+  }
+  getPendingSync() {
+    const k = this._pendingSyncKey();
+    try { return k ? Number(localStorage.getItem(k) || 0) : 0; } catch (e) { return 0; }
+  }
+  clearPendingSync(ifNotNewerThan) {
+    const k = this._pendingSyncKey();
+    try {
+      if (!k) return;
+      const v = Number(localStorage.getItem(k) || 0);
+      if (!ifNotNewerThan || v <= ifNotNewerThan) localStorage.removeItem(k);
+    } catch (e) { /* depolama kapalı */ }
+  }
+
+  // Yerel (okulun kendi, platform_admin OLMAYAN) öğrenci/deneme/sonuç verisini
+  // sunucudaki kopyayla değiştirir. Değiştirmeden önce eski yerel veri ayrı bir
+  // yedek veritabanına konur (yanlışlıkla kayıp ihtimaline karşı). _notifyChange
+  // ÇAĞRILMAZ - bu sunucudan gelen veri, geri gönderilmemeli.
+  async replaceOwnDataFromServer(snap) {
+    if (!snap || !Array.isArray(snap.students)) return null;
+    const before = await this.exportData();
+    try {
+      const bk = new Dexie(`edupusula_yerel_yedek_org${this._openOrgId || 0}`);
+      bk.version(1).stores({ snapshots: 'id' });
+      await bk.open();
+      await bk.snapshots.put({ id: 'son', savedAt: new Date().toISOString(), data: before });
+      bk.close();
+    } catch (e) { console.warn('Yerel yedek alınamadı:', e); }
+    const own = (r) => r.source !== 'platform_admin';
+    this._suppressOutbox = true; // sunucudan gelen veri - giden kutusuna yazılmaz
+    try {
+    await this.db.transaction('rw', this.db.students, this.db.exams, this.db.results, async () => {
+      for (const t of [this.db.students, this.db.exams, this.db.results]) {
+        const ids = await t.filter(own).primaryKeys();
+        if (ids.length) await t.bulkDelete(ids);
+      }
+      if (snap.students.length) await this.db.students.bulkPut(snap.students);
+      if (snap.exams.length) await this.db.exams.bulkPut(snap.exams.map(e => ({ ...e, examType: e.examType || 'LGS' })));
+      if (snap.results.length) await this.db.results.bulkPut(snap.results);
+    });
+    } finally {
+      this._suppressOutbox = false;
+    }
+    if (this._outbox) await this._outbox.ops.clear(); // sunucuyla eşlendi: bekleyen fark kalmadı
+    return {
+      before: { students: before.students.length, exams: before.exams.length, results: before.results.length },
+      after: { students: snap.students.length, exams: snap.exams.length, results: snap.results.length },
+    };
+  }
+
   _notifyChange() {
+    this.markPendingSync();
     if (typeof SyncModule !== 'undefined' && SyncModule.notifyLocalChange) {
       SyncModule.notifyLocalChange();
     }
@@ -1068,6 +1256,8 @@ class Database {
   // yerelinde yetim kalirdi.
   async syncPlatformAdminData(payload) {
     if (!payload) return;
+    this._suppressOutbox = true; // platform verisi sunucuya geri gönderilmez
+    try {
     // Sınıf öğretmeninin sildiği öğrenciler (sunucu mezar taşları) yerelde de silinir.
     if (Array.isArray(payload.removedStudentIds) && payload.removedStudentIds.length) {
       for (const sid of payload.removedStudentIds) {
@@ -1090,7 +1280,13 @@ class Database {
         await table.bulkPut(rows.map(r => ({ ...r, source: 'platform_admin' })));
       }
     }
-    this._notifyChange();
+    } finally {
+      this._suppressOutbox = false;
+    }
+    // _notifyChange BİLEREK çağrılmaz: platform_admin satırları sunucuya hiç
+    // gönderilmez (exportData onları ayıklar) - eskiden her açılışta gereksiz
+    // bir TAM gönderim tetikleniyor, bayat bir tarayıcının verisini sunucuya
+    // geri yazıyordu (bkz. 5A, replaceOwnDataFromServer).
   }
 
   // Import data from JSON
@@ -1135,9 +1331,22 @@ class Database {
 
   // Clear only all students and their results (keeps exams intact)
   async clearAllStudents() {
-    await this.db.results.clear();
-    await this.db.students.clear();
+    // clear() Dexie kancalarını tetiklemez - silme sunucuya ulaşsın diye kayıt
+    // bazında silinir; kullanıcı arayüzde onayladığı için "toplu silme" işaretli.
+    await this._deleteOwnRows(['results', 'students']);
     this._notifyChange();
+  }
+
+  async _deleteOwnRows(tables) {
+    this._massDelete = true;
+    try {
+      for (const name of tables) {
+        const ids = await this.db.table(name).filter(r => r.source !== 'platform_admin').primaryKeys();
+        if (ids.length) await this.db.table(name).bulkDelete(ids);
+      }
+    } finally {
+      this._massDelete = false;
+    }
   }
 
   // ---- Optik Format Profilleri (kullanıcı tarafından kalibre edilmiş, kalıcı) ----
@@ -1188,12 +1397,22 @@ class Database {
 
   // Clear all data
   async clearAllData() {
-    await this.db.results.clear();
-    await this.db.exams.clear();
-    await this.db.students.clear();
+    await this._deleteOwnRows(['results', 'exams', 'students']);
     this._notifyChange();
   }
 }
 
 // Singleton
 const db = new Database();
+
+// 5B: sunucuya henüz gitmemiş değişiklik varken (ya da giden kutusuna yazma
+// sürerken) sekme kapatılırsa tarayıcının standart "ayrılmak istiyor musunuz"
+// uyarısı gösterilir - değişiklik bu cihazda bekler, sessizce kaybolmaz.
+window.addEventListener('beforeunload', (e) => {
+  try {
+    if ((db._outboxWritesInFlight || 0) > 0 || db.getPendingSync()) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  } catch (err) { /* depolama kapalı */ }
+});

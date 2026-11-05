@@ -48,16 +48,42 @@ Object.values(SUBJECT_SETS).forEach(function (list) {
 function getSubjectsForExam(examOrType) {
   const type = (typeof examOrType === 'string') ? examOrType : ((examOrType && examOrType.examType) || 'LGS');
   const base = SUBJECT_SETS[type] || SUBJECT_SETS.LGS;
-  const counts = (examOrType && typeof examOrType === 'object') ? examOrType.questionCounts : null;
-  if (!counts) return base;
+  const isObj = examOrType && typeof examOrType === 'object';
+  const counts = isObj ? examOrType.questionCounts : null;
+  // Denemenin kademesi biliniyorsa (gradeLevel) 5-7. sınıfta "inkilap" dersi
+  // aslında Sosyal Bilgiler'dir (bkz. subjectDisplayName).
+  const grade = isObj ? _subjectGradeOf(examOrType.gradeLevel) : null;
+  if (!counts && !(grade && grade < 8)) return base;
   return base.map(function (s) {
-    const n = parseInt(counts[s.key], 10);
-    if (!(n > 0) || n === s.questions) return s;
+    const n = counts ? parseInt(counts[s.key], 10) : NaN;
+    const renameSosyal = s.key === 'inkilap' && grade && grade < 8;
+    if (!renameSosyal && (!(n > 0) || n === s.questions)) return s;
     const copy = {};
     Object.keys(s).forEach(function (k) { copy[k] = s[k]; });
-    copy.questions = n;
+    if (n > 0) copy.questions = n;
+    if (renameSosyal) copy.name = 'Sosyal Bilgiler';
     return copy;
   });
+}
+
+// ---- Kademeye göre ders adı ----
+// "inkilap" anahtarı 8. sınıfta T.C. İnkılap Tarihi, 5-7. sınıfta Sosyal
+// Bilgiler'dir (veri modelinde aynı anahtar). Tek öğrenci gösteren ekranlar
+// (öğrenci/veli paneli, öğretmen panelinde öğrenci detayı) öğrencinin sınıfını
+// setSubjectGradeContext ile bildirir; subjectDisplayName sınıf verilmezse
+// bu bağlamı kullanır.
+let SUBJECT_GRADE_CONTEXT = null;
+function _subjectGradeOf(v) {
+  const m = String(v == null ? '' : v).match(/^\s*(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function setSubjectGradeContext(gradeOrClass) {
+  SUBJECT_GRADE_CONTEXT = gradeOrClass == null ? null : gradeOrClass;
+}
+function subjectDisplayName(key, gradeOrClass) {
+  const g = _subjectGradeOf(gradeOrClass != null ? gradeOrClass : SUBJECT_GRADE_CONTEXT);
+  if (key === 'inkilap' && g && g < 8) return 'Sosyal Bilgiler';
+  return SUBJECT_LOOKUP[key] ? SUBJECT_LOOKUP[key].name : key;
 }
 
 // Tek bir ders sonucunun soru sayısı: sonuç kaydı kendi `questions`'ını

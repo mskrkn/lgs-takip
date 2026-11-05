@@ -85,3 +85,7 @@
 .sn-table .sn-focus-col { background: rgba(20, 184, 166, 0.10); font-weight: 700; }
 .sn-sort { display: flex; gap: 6px; flex-wrap: wrap; }
 .sn-table tr[data-sn-class]:hover td { background: var(--bg-glass); }
+
+/* Kazanım analizi başarı çubuğu */
+.sn-rate { height: 8px; border-radius: 4px; background: var(--bg-glass); overflow: hidden; min-width: 60px; }
+.sn-rate > span { display: block; height: 100%; border-radius: 4px; }
