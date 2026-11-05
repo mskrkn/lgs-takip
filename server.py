@@ -39,6 +39,8 @@ import traceback
 import threading
 import webbrowser
 from datetime import datetime, timedelta
+import collections
+import deneme_sihirbazi
 from functools import wraps
 
 # Konsolun kod sayfası UTF-8 olmayabilir (örn. Windows'ta chcp 65001
@@ -4798,6 +4800,252 @@ def api_admin_snapshot():
         "counts": {"students": len(students), "exams": len(exams), "results": len(results)},
         "generatedAt": datetime.now().isoformat(),
     })
+
+
+# ============================================================
+# Deneme Yukleme Sihirbazi (yayinevi TXT + kazanim Excel'i) - bkz. deneme_sihirbazi.py
+# ============================================================
+# Onizleme -> (kullanici satir satir duzeltir) -> Kaydet. Onizleme ve kayit
+# AYNI hesaplamayi (build_plan) kullanir; onizlemenin ayristirilmis girdisi
+# sunucuda gecici bir JSON'da (uploads/sihirbaz/<token>.json) tutulur.
+# Yazilan deneme/sonuc/yeni ogrenciler source='platform_admin' (sunucunun
+# sahip oldugu kayitlar): okulun senkronu bunlara asla dokunmaz; admin
+# panelinde salt okunur gorunur, sihirbaz sekmesinden silinebilir.
+WIZARD_DIR = os.path.join(UPLOADS_DIR, "sihirbaz")
+
+
+def _wizard_path(token):
+    if not re.fullmatch(r"[a-f0-9]{32}", token or ""):
+        return None
+    return os.path.join(WIZARD_DIR, f"{token}.json")
+
+
+def _wizard_cleanup():
+    try:
+        now = time.time()
+        for f in glob.glob(os.path.join(WIZARD_DIR, "*.json")):
+            if now - os.path.getmtime(f) > 24 * 3600:
+                os.remove(f)
+    except OSError:
+        pass
+
+
+def _wizard_roster(db, org_id):
+    return deneme_sihirbazi.prepare_roster(db.execute(
+        "SELECT id, school_number, first_name, last_name, class_name FROM students WHERE organization_id=?", (org_id,)
+    ).fetchall())
+
+
+def _wizard_review(plan, recs):
+    """Onizleme icin: kullanicinin bakmasi gereken satirlar (kesin olmayan
+    eslesmeler, farkli kademe, eslesmeyen, kopya/cakisma)."""
+    by_key = {r["key"]: r for r in recs}
+    st_of_line = {}
+    for s in plan["students"]:
+        for k in s["lines"]:
+            st_of_line[k] = s
+        for k in s["duplicateLines"]:
+            st_of_line.setdefault(k, s)
+        for k in s["conflictLines"]:
+            st_of_line.setdefault(k, s)
+    rows = []
+    for key, info in plan["lines"].items():
+        r = by_key[key]
+        s = st_of_line.get(key)
+        reasons = []
+        if info["status"] == "eslesmedi":
+            reasons.append("eşleşmedi")
+        elif info["status"] in ("isim", "numara"):
+            reasons.append("sadece isimle" if info["status"] == "isim" else "sadece numarayla")
+        if info["best"] and info["best"]["crossGrade"] and info["status"] not in ("elle", "atlandi"):
+            reasons.append("farklı kademe dosyasında")
+        if s and key in s["duplicateLines"]:
+            reasons.append("kopya okutma (atlanacak)")
+        if s and key in s["conflictLines"]:
+            reasons.append("aynı öğrencide ikinci kağıt (kullanılmayacak)")
+        if s and key in s["bookletGuessed"]:
+            reasons.append("kitapçık boş - netten seçildi")
+        if not reasons or info["status"] in ("elle", "atlandi", "yeni") and not reasons:
+            continue
+        rows.append({
+            "key": key, "file": r["file"], "line": r["line"], "name": r["name"], "num": r["rawNum"],
+            "classOnSheet": f"{r['grade'] or '?'}{r['sube']}", "kind": r["kind"], "booklet": r["booklet"],
+            "status": info["status"], "reasons": reasons,
+            "target": info["target"] if not isinstance(info["target"], str) else "new",
+            "targetLabel": s["label"] if s else None, "totalNet": s["totalNet"] if s else None,
+            "candidates": info["candidates"],
+        })
+    return rows
+
+
+@app.route("/api/admin/wizard/preview", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_admin_wizard_preview():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    name = (request.form.get("name") or "").strip()
+    date = (request.form.get("date") or "").strip()
+    if not name or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return jsonify({"error": "Deneme adı ve tarihi gerekli."}), 400
+    txt_files = request.files.getlist("txt")
+    key_files = request.files.getlist("keys")
+    if not txt_files or not key_files:
+        return jsonify({"error": "En az bir optik TXT dosyası ve bir kazanım/cevap anahtarı Excel'i seçin."}), 400
+
+    errors, keys = [], {}
+    for f in key_files:
+        try:
+            k = deneme_sihirbazi.parse_answer_key(f.read(), f.filename or "")
+        except ValueError as e:
+            errors.append(str(e)); continue
+        if not k["grade"]:
+            errors.append(f"{f.filename}: hangi sınıf seviyesine ait olduğu anlaşılamadı (başlıkta ya da dosya adında '8.SINIF' gibi bir ifade olmalı).")
+            continue
+        if k["grade"] in keys:
+            errors.append(f"{f.filename}: {k['grade']}. sınıf için ikinci bir anahtar dosyası - biri yeterli.")
+            continue
+        keys[k["grade"]] = k
+    recs, rejected = [], []
+    for f in txt_files:
+        r, rej = deneme_sihirbazi.parse_txt(f.read(), f.filename or "")
+        recs += r
+        rejected += rej
+    if not recs:
+        errors.append("Optik dosyalarında okunabilir satır bulunamadı (desteklenen biçim: 280 karakterlik Mozaik/Datasis çıktısı).")
+    if errors and (not keys or not recs):
+        return jsonify({"error": "Dosyalar okunamadı.", "details": errors}), 400
+
+    roster = _wizard_roster(db, org_id)
+    plan = deneme_sihirbazi.build_plan(recs, keys, roster)
+    existing = {r[0] for r in db.execute("SELECT name FROM exams WHERE organization_id=?", (org_id,)).fetchall()}
+    grades = []
+    for g in sorted(keys, key=int):
+        sts = [s for s in plan["students"] if s["grade"] == g]
+        exam_name = f"{name} - {g}. Sınıf"
+        grades.append({
+            "grade": g, "examName": exam_name, "exists": exam_name in existing, "file": keys[g]["file"],
+            "questionCounts": {k: v["n"] for k, v in keys[g]["keys"].items()},
+            "bOrder": all(v["bpos"] for v in keys[g]["keys"].values()),
+            "students": len(sts), "avgNet": round(sum(s["totalNet"] for s in sts) / len(sts), 2) if sts else None,
+            "rosterCount": sum(1 for s in roster if s["grade"] == g),
+            "unknownSubjects": keys[g]["unknownSubjects"],
+        })
+
+    os.makedirs(WIZARD_DIR, exist_ok=True)
+    _wizard_cleanup()
+    token = secrets.token_hex(16)
+    with open(_wizard_path(token), "w", encoding="utf-8") as fh:
+        json.dump({"orgId": org_id, "userId": session.get("user_id"), "name": name, "date": date,
+                   "recs": recs, "keys": keys}, fh, ensure_ascii=False)
+    status_counts = collections.Counter(v["status"] for v in plan["lines"].values())
+    return jsonify({
+        "token": token, "grades": grades, "errors": errors, "rejected": rejected[:50], "rejectedCount": len(rejected),
+        "lineCount": len(recs), "statusCounts": status_counts, "warnings": plan["warnings"],
+        "studentCount": len(plan["students"]), "review": _wizard_review(plan, recs),
+    })
+
+
+@app.route("/api/admin/wizard/commit", methods=["POST"])
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_admin_wizard_commit():
+    db = get_db()
+    org_id = _effective_org_id(db)
+    data = request.get_json(silent=True) or {}
+    path = _wizard_path(data.get("token"))
+    if org_id is None or not path or not os.path.exists(path):
+        return jsonify({"error": "Önizleme bulunamadı ya da süresi doldu - dosyaları yeniden yükleyin."}), 400
+    with open(path, encoding="utf-8") as fh:
+        state = json.load(fh)
+    if state["orgId"] != org_id:
+        return jsonify({"error": "Bu önizleme başka bir okula ait."}), 403
+    assignments = {k: v for k, v in (data.get("assignments") or {}).items() if isinstance(k, str)}
+    roster = _wizard_roster(db, org_id)
+    valid_ids = {s["id"] for s in roster}
+    for k, v in assignments.items():
+        if v not in ("skip", "new", "auto", "", None) and not (str(v).isdigit() and int(v) in valid_ids):
+            return jsonify({"error": f"Geçersiz öğrenci seçimi: {k}"}), 400
+    plan = deneme_sihirbazi.build_plan(state["recs"], state["keys"], roster, assignments)
+    grades = sorted({s["grade"] for s in plan["students"]}, key=int)
+    names = {g: f"{state['name']} - {g}. Sınıf" for g in grades}
+    clash = [n for n in names.values() if db.execute(
+        "SELECT 1 FROM exams WHERE organization_id=? AND name=?", (org_id, n)).fetchone()]
+    if clash:
+        return jsonify({"error": "Bu adla bir deneme zaten var: " + ", ".join(clash) + " - farklı bir ad verin."}), 409
+
+    backup = f"{DB_PATH}.bak-before-sihirbaz-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    try:
+        src = sqlite3.connect(DB_PATH); dst = sqlite3.connect(backup); src.backup(dst); dst.close(); src.close()
+    except Exception as e:  # yedek alinamazsa yazma yapilmaz
+        return jsonify({"error": f"Yazmadan önce yedek alınamadı: {e}"}), 500
+
+    created = {"exams": {}, "results": 0, "newStudents": 0}
+    try:
+        new_ids = {}
+        for ns in plan["newStudents"]:
+            sid = _platform_admin_next_id(db, "students", org_id)
+            db.execute(
+                "INSERT INTO students (id, organization_id, school_number, first_name, last_name, class_name, source) "
+                "VALUES (?,?,?,?,?,?,'platform_admin')",
+                (sid, org_id, ns["schoolNumber"], ns["firstName"], ns["lastName"], ns["className"]),
+            )
+            new_ids[ns["key"]] = sid
+            created["newStudents"] += 1
+        for g in grades:
+            eid = _platform_admin_next_id(db, "exams", org_id)
+            payload = deneme_sihirbazi.exam_payload(state["name"], state["date"], g, state["keys"][g])
+            payload["id"] = eid
+            db.execute(
+                "INSERT INTO exams (id, organization_id, name, date, exam_type, data_json, source) VALUES (?,?,?,?,?,?,'platform_admin')",
+                (eid, org_id, payload["name"], payload["date"], "LGS", json.dumps(payload, ensure_ascii=False)),
+            )
+            n = 0
+            for s in plan["students"]:
+                if s["grade"] != g:
+                    continue
+                stid = s["studentId"] if s["studentId"] else new_ids[s["target"]]
+                rid = _platform_admin_next_id(db, "results", org_id)
+                rp = {"studentId": stid, "examId": eid, "subjects": s["subjects"], "booklet": s["booklet"], "id": rid}
+                db.execute(
+                    "INSERT INTO results (id, organization_id, student_id, exam_id, data_json, source) VALUES (?,?,?,?,?,'platform_admin')",
+                    (rid, org_id, stid, eid, json.dumps(rp, ensure_ascii=False)),
+                )
+                n += 1
+            created["exams"][g] = {"id": eid, "name": payload["name"], "results": n}
+            created["results"] += n
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    run_v2_migration(db)
+    db.commit()
+    log_audit(db, "WIZARD_EXAM_IMPORTED", resource_type="organization", resource_id=org_id)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return jsonify({"ok": True, "created": created, "backup": os.path.basename(backup)})
+
+
+@app.route("/api/admin/wizard/exams")
+@login_required(role=("admin", "super_admin"), permission="exams.create")
+def api_admin_wizard_exams():
+    """Sihirbazla yuklenmis (silinebilir) denemeler."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    out = []
+    for r in db.execute(
+        "SELECT e.id, e.name, e.date, e.data_json, (SELECT COUNT(*) FROM results r WHERE r.exam_id=e.id) AS n "
+        "FROM exams e WHERE e.organization_id=? AND e.source='platform_admin' ORDER BY e.date DESC, e.id DESC", (org_id,)
+    ).fetchall():
+        d = json.loads(r["data_json"]) if r["data_json"] else {}
+        if "Sihirbaz" not in (d.get("description") or ""):
+            continue
+        out.append({"id": r["id"], "name": r["name"], "date": r["date"], "results": r["n"]})
+    return jsonify({"exams": out})
 
 
 @app.route("/api/admin/sync-delta", methods=["POST"])

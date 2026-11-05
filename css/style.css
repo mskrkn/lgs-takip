@@ -2971,3 +2971,14 @@ select.form-control option {
   }
 }
 
+
+/* Veri Girişi (içe aktarma) sayfası - dar ekranda yatay taşma: sekme satırı
+   (6 sekme) ve en geniş tablo sayfayı genişletiyordu. Sekmeler alt satıra
+   geçer, sekme içeriği ekranı aşmaz, geniş tablolar kendi içinde kayar. */
+/* Ana içerik esnek kutuda: varsayılan min-width:auto yüzünden en geniş tablo
+   kadar uzayıp tüm sayfayı yatay taşırıyordu - içerik kendi kutusunda kayar. */
+.main-content { min-width: 0; }
+#page-import { min-width: 0; max-width: 100%; }
+#import-tabs { flex-wrap: wrap; max-width: 100%; }
+#page-import .tab-content { min-width: 0; max-width: 100%; }
+#page-import .table-wrapper { max-width: 100%; overflow-x: auto; }
