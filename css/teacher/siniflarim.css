@@ -75,3 +75,13 @@
   .sn-grade-head { align-items: stretch; flex-direction: column; }
   .sn-hide-sm { display: none; }
 }
+
+/* Faz 2: öğretmenin kendi dersi */
+.sn-focus { margin: 6px 0 8px; padding: 10px 12px; border-radius: 12px; background: rgba(20, 184, 166, 0.10); border: 1px solid rgba(20, 184, 166, 0.30); }
+.sn-focus-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; margin-bottom: 2px; }
+.sn-focus-title small { font-weight: 600; color: var(--text-muted); }
+.sn-focus-row td { background: rgba(20, 184, 166, 0.10); }
+.sn-mine-tag { font-size: 11px; font-weight: 700; color: var(--accent-primary-light); }
+.sn-table .sn-focus-col { background: rgba(20, 184, 166, 0.10); font-weight: 700; }
+.sn-sort { display: flex; gap: 6px; flex-wrap: wrap; }
+.sn-table tr[data-sn-class]:hover td { background: var(--bg-glass); }
