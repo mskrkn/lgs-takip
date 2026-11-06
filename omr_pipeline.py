@@ -484,4 +484,5 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
         "match_status": match_status,
         "questions": questions,
         "warnings": warnings,
+        "fiducials_ok": bool(fid_info["ok"]),
     }

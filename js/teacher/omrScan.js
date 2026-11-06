@@ -310,6 +310,7 @@ async function _omrOpenScanView(examDefId, examTitle) {
         <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
       <div id="omr-engine-badge" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 38px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
+      <button id="omr-auto-approve" type="button" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 70px);left:10px;background:rgba(0,0,0,0.55);color:#fff;border:1px solid #4b5563;border-radius:18px;padding:6px 10px;font-size:12px;font-weight:700"></button>
       <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
@@ -362,6 +363,8 @@ async function _omrOpenScanView(examDefId, examTitle) {
   document.getElementById('omr-scan-close').addEventListener('click', _omrCloseScanView);
   document.getElementById('omr-scan-capture').addEventListener('click', _omrManualCapture);
   document.getElementById('omr-scan-counter').addEventListener('click', _omrToggleQueuePanel);
+  document.getElementById('omr-auto-approve').addEventListener('click', _omrToggleAutoApprove);
+  _omrRenderAutoApprove();
   _omrWarmUpBeep();
 
   _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
@@ -564,6 +567,8 @@ function _omrShowSessionSummary(st) {
   const secs = Math.max(0, Math.round((Date.now() - st.startedAt) / 1000));
   const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, '0');
   const examDefId = st.examDefId, examTitle = st.examTitle;
+  const cleanIds = st.queueItems.filter((it) => it.status === 'needs_review' && it.readable
+    && it.studentId && it.flagged === 0).map((it) => it.scanId);
 
   const modal = document.createElement('div');
   modal.id = 'omr-session-summary';
@@ -579,11 +584,36 @@ function _omrShowSessionSummary(st) {
         <div><div style="color:#f87171;font-size:20px;font-weight:700">${unreadable}</div>Okunamadı</div>
       </div>
       <div style="font-size:12px;color:#9ca3af;margin-bottom:18px">⏱ Süre ${mm}:${ss}</div>
+      ${cleanIds.length ? `<button type="button" id="omr-summary-approve" style="${btn};background:#16a34a;margin-bottom:8px">✅ Şüphesiz ${cleanIds.length} kağıdı onayla</button>` : ''}
+      ${pending - cleanIds.length > 0 ? `<div style="font-size:12px;color:#fbbf24;margin:-2px 0 10px">⚠️ ${pending - cleanIds.length} kağıt şüpheli/eşleşmemiş - Sonuçları Gör'den tek tek bakın</div>` : ''}
       <button type="button" id="omr-summary-results" style="${btn};background:#4f46e5;margin-bottom:8px">📊 Sonuçları Gör</button>
       <button type="button" id="omr-summary-close" style="${btn};background:#374151">Kapat</button>
     </div>`;
   document.body.appendChild(modal);
   document.getElementById('omr-summary-close').onclick = () => { modal.remove(); _omrTeardownScanView(); };
+  const approveBtn = document.getElementById('omr-summary-approve');
+  if (approveBtn) {
+    approveBtn.onclick = async () => {
+      approveBtn.disabled = true;
+      approveBtn.textContent = '⏳ Onaylanıyor...';
+      try {
+        const out = await _omrApproveCleanRequest(examDefId, cleanIds);
+        for (const a of out.approved || []) {
+          const it = st.queueItems.find((q) => q.scanId === a.scanId);
+          if (it) { it.status = 'approved'; it.net = a.net; }
+        }
+        modal.remove();
+        _omrShowSessionSummary(st); // sayilar guncel haliyle
+        if (typeof window.EduToast === 'function') {
+          const n = (out.approved || []).length, bad = (out.skipped && out.skipped.error) || 0;
+          window.EduToast(`✅ ${n} kağıt onaylandı${bad ? ` · ${bad} onaylanamadı` : ''}`, null, null, 4000);
+        }
+      } catch (err) {
+        approveBtn.disabled = false;
+        approveBtn.textContent = '❌ ' + (err.message || 'Hata') + ' - tekrar dene';
+      }
+    };
+  }
   document.getElementById('omr-summary-results').onclick = () => {
     modal.remove();
     _omrTeardownScanView();
@@ -905,6 +935,66 @@ function _omrHandleScanResponse(data) {
   }
   _omrUpdateCounter();
   _omrShowCard(data);
+  if (_omrAutoApproveOn() && _omrIsCleanRead(data)) _omrAutoApprove(data);
+}
+
+// ---- Otomatik onay (2026-11-06 ogretmen geri bildirimi: "onaylari
+// sonradan verirken cok ugrasiyorsun") ----
+// Acikken: ogrencisi eslesmis + supheli sorusu OLMAYAN okumalar kartta
+// beklemeden hemen onaylanir. Supheli/eslesmemis olanlar eskisi gibi kartta
+// bekler. Tercih cihazda hatirlanir (localStorage).
+const OMR_AUTO_APPROVE_KEY = 'omr_auto_approve';
+
+function _omrAutoApproveOn() {
+  try { return localStorage.getItem(OMR_AUTO_APPROVE_KEY) === '1'; } catch (e) { return false; }
+}
+
+function _omrRenderAutoApprove() {
+  const b = document.getElementById('omr-auto-approve');
+  if (!b) return;
+  const on = _omrAutoApproveOn();
+  b.textContent = on ? '⚡ Oto-onay: AÇIK' : '⚡ Oto-onay: Kapalı';
+  b.style.background = on ? 'rgba(22,163,74,0.85)' : 'rgba(0,0,0,0.55)';
+  b.style.borderColor = on ? '#16a34a' : '#4b5563';
+}
+
+function _omrToggleAutoApprove() {
+  const on = !_omrAutoApproveOn();
+  try { localStorage.setItem(OMR_AUTO_APPROVE_KEY, on ? '1' : '0'); } catch (e) { /* ozel mod */ }
+  _omrRenderAutoApprove();
+  if (typeof window.EduToast === 'function') {
+    window.EduToast(on
+      ? '⚡ Otomatik onay açık: öğrencisi eşleşen ve şüpheli sorusu olmayan kağıtlar hemen onaylanır. Şüpheliler kartta bekler.'
+      : 'Otomatik onay kapalı: her kağıt kartta onay bekler.', null, null, 4500);
+  }
+}
+
+function _omrIsCleanRead(data) {
+  return data && !data.duplicate && data.status === 'needs_review' && data.readable !== false
+    && !!data.studentId && !!data.summary && !(data.summary.flagged > 0) && !data.cornersUncertain;
+}
+
+async function _omrAutoApprove(data) {
+  try {
+    const res = await fetch(`/api/teacher/omr/scans/${data.scanId}/approve`, { method: 'POST' });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { _omrCardMsg('❌ Otomatik onaylanamadı: ' + (out.error || res.status) + ' - elle onaylayın.'); return; }
+    window._omrOnScanChanged(data.scanId, 'approved', out.net);
+  } catch (err) {
+    _omrCardMsg('❌ Otomatik onay bağlantı hatası - elle onaylayın.');
+  }
+}
+
+// Toplu onay: verilen taramalardan (bos = testin tum bekleyenleri) temiz
+// olanlari tek istekte onaylar. Doner sunucu yaniti ({approved, skipped}).
+async function _omrApproveCleanRequest(examDefId, scanIds) {
+  const res = await fetch(`/api/teacher/omr/exams/${examDefId}/approve-clean`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scanIds ? { scanIds } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Sunucu hatası (${res.status})`);
+  return data;
 }
 
 // Bu oturumdaki okuma kuyruğu - her kağıt icin TEK satır (aynı scanId tekrar
@@ -917,6 +1007,8 @@ function _omrQueueUpsert(data) {
     scanId: data.scanId, studentName: data.studentName || null,
     schoolNumber: data.schoolNumber || null, className: data.className || null,
     status: data.status, readable: data.readable !== false, net: data.net,
+    studentId: data.studentId || null,
+    flagged: data.summary ? ((data.summary.flagged || 0) + (data.cornersUncertain ? 1 : 0)) : null,
   };
   const i = st.queueItems.findIndex((it) => it.scanId === entry.scanId);
   if (i >= 0) st.queueItems[i] = entry;
