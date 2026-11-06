@@ -95,15 +95,17 @@ def _mm_to_px(x_mm, y_mm):
     return (x_mm * PX_PER_MM, y_mm * PX_PER_MM)
 
 
-def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
+def _square_candidates(gray, cx, cy, win_r, expected_area_px, limit=3):
+    """Penceredeki kare-benzeri dolu lekeler, skora gore azalan (en fazla
+    `limit`). Eleme kurallari _refine_square_in_window ile ayni."""
     x0, x1 = max(0, int(cx - win_r)), min(gray.shape[1], int(cx + win_r))
     y0, y1 = max(0, int(cy - win_r)), min(gray.shape[0], int(cy + win_r))
-    if x1 <= x0 or y1 <= y0:
-        return None
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return []
     crop = gray[y0:y1, x0:x1]
     _, th = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best, best_score = None, -1
+    out = []
     for c in contours:
         area = cv2.contourArea(c)
         if area < expected_area_px * 0.25 or area > expected_area_px * 4.0:
@@ -117,50 +119,197 @@ def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
         solidity = area / (rw * rh)
         if solidity < 0.85:
             continue
-        dist_to_center = ((rcx - crop.shape[1] / 2) ** 2 + (rcy - crop.shape[0] / 2) ** 2) ** 0.5
-        score = solidity - dist_to_center / win_r
-        if score > best_score:
-            best_score = score
-            best = (x0 + rcx, y0 + rcy)
-    return best
+        ax, ay = x0 + rcx, y0 + rcy
+        score = solidity - (((ax - cx) ** 2 + (ay - cy) ** 2) ** 0.5) / win_r
+        out.append((score, (float(ax), float(ay))))
+    out.sort(key=lambda t: -t[0])
+    return [p for _s, p in out[:limit]]
+
+
+def _refine_square_in_window(gray, cx, cy, win_r, expected_area_px):
+    """Penceredeki en iyi kare adayi (x, y) ya da None."""
+    c = _square_candidates(gray, cx, cy, win_r, expected_area_px, limit=1)
+    return c[0] if c else None
+
+
+# --- Kose dogrulama (2026-11-06) -------------------------------------------
+# Uretimdeki 254 istemci onizlemesinin olcumu: alt koseler (BL/BR) %72'sinde
+# BULUNAMAMIS ve eski kod sessizce QR tahminine dusup okumaya DEVAM etmisti
+# -> sayfa egik duzlestirilip balonlar yanlis yerden okunuyordu (ogretmenin
+# 🗑 Sil dedigi 202 taramanin 185'i bu). Neden: 16 mm'lik QR'dan 120 mm
+# asagiya yapilan tahmin ~20+ mm sapiyor, arama penceresi ise 22 mm - zemine/
+# aciya gore bazen tutuyor bazen tutmuyordu ("bazen beyaz bazen siyah zemin
+# daha iyi" sikayeti). Simdi: (1) alt koseler ayrica bulunan TL-TR (55 mm
+# taban) uzerinden de tahmin edilir, gerekirse genis pencerede aranir;
+# (2) aday 4'lulerin geometrisi dogrulanir; (3) dogrulanamazsa ok=False -
+# kamera bu kareyi OKUMAZ, yeniden dener.
+FID_PRIMARY_WIN_QR = 1.4      # arama yaricapi, QR kenari cinsinden (eskisiyle ayni)
+FID_WIDE_WIN_QR = 2.6         # ikinci sans (sadece alt koseler)
+FID_SIDE_ASYM_MAX = 0.12      # |TL-BL| ile |TR-BR| arasindaki fark / ortalama
+FID_ASPECT_TOL = 0.22         # (sol/sag kenar)/(ust kenar) sablon oranindan bu kadar sapabilir
+FID_QR_REPROJ_MAX_MM = 4.0    # bulunan koselerle QR koseleri sablondaki yerine bu kadar yakin dusmeli
+
+
+def _homography(src_pts, dst_pts):
+    return cv2.getPerspectiveTransform(np.array(src_pts, dtype=np.float32), np.array(dst_pts, dtype=np.float32))
+
+
+def _apply_h(H, x, y):
+    v = H @ np.array([x, y, 1.0])
+    return v[0] / v[2], v[1] / v[2]
+
+
+def _dedupe(points, min_d):
+    out = []
+    for p in points:
+        if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 >= min_d * min_d for q in out):
+            out.append(p)
+    return out
+
+
+FID_PATCH_MIN_CONTRAST = 35   # halka medyani - kare ici medyani (gri seviye)
+FID_PATCH_INNER_DARK_MIN = 0.85
+FID_PATCH_RING_BRIGHT_MIN = 0.7
+
+
+def _fid_patch_ok(gray, H_inv, center_mm, size_mm):
+    """Aday donusumle sablondaki kose karesinin yeri kaynak goruntude
+    gercekten 'koyu kare + etrafinda beyaz kagit' mi? Tam warp yapmadan,
+    H_inv ile ~70 nokta orneklenir (ucuz). Yanlis bir aday (zemindeki kare
+    benzeri leke, yanlis kose) bu testi neredeyse hic gecemez."""
+    cx, cy = center_mm
+    half = size_mm / 2
+    inner = [(cx + dx * half * 0.7, cy + dy * half * 0.7)
+             for dx in (-1, -0.66, -0.33, 0, 0.33, 0.66, 1) for dy in (-1, -0.66, -0.33, 0, 0.33, 0.66, 1)]
+    rr = half + 1.0
+    ring = [(cx + rr * np.cos(a), cy + rr * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 20, endpoint=False)]
+    h, w = gray.shape[:2]
+
+    def sample(pts):
+        vals = []
+        for x_mm, y_mm in pts:
+            x, y = _apply_h(H_inv, x_mm * PX_PER_MM, y_mm * PX_PER_MM)
+            xi, yi = int(round(x)), int(round(y))
+            if not (0 <= xi < w and 0 <= yi < h):
+                return None
+            vals.append(float(gray[yi, xi]))
+        return np.array(vals)
+
+    iv, rv = sample(inner), sample(ring)
+    if iv is None or rv is None:
+        return False
+    i_med, r_med = float(np.median(iv)), float(np.median(rv))
+    if r_med - i_med < FID_PATCH_MIN_CONTRAST:
+        return False
+    mid = (i_med + r_med) / 2
+    return (np.mean(iv < mid) >= FID_PATCH_INNER_DARK_MIN) and (np.mean(rv > mid) >= FID_PATCH_RING_BRIGHT_MIN)
+
+
+def _locate_fiducials(gray, qr_points, template):
+    """Doner (refined: {TL,TR,BR,BL: (x,y)}, info: {ok, reason, qrErrMm, wide}).
+    ok=False iken refined eski davranisla (bulunamayanlar QR tahmini) doludur
+    - sunucu yolu bunu UYARI ile kullanir, kamera yolu kareyi reddeder."""
+    qr_points = np.asarray(qr_points, dtype=np.float64)
+    qr_size_px = float(np.linalg.norm(qr_points[1] - qr_points[0]))
+    r1 = qr_size_px * FID_PRIMARY_WIN_QR
+    exp_area = (qr_size_px * (template.fiducial_size_mm / 20.0)) ** 2
+    fid_mm = template.fiducial_centers_mm()
+    qr_dst = [_mm_to_px(x, y) for x, y in _qr_mm_corners(template)]
+    H0 = _homography(qr_points, qr_dst)
+    H0_inv = np.linalg.inv(H0)
+    pred = {k: _apply_h(H0_inv, fid_mm[k][0] * PX_PER_MM, fid_mm[k][1] * PX_PER_MM) for k in _FIDUCIAL_ORDER}
+    fallback = {}
+    info = {"ok": False, "reason": "", "qrErrMm": None, "wide": False}
+    min_sep = qr_size_px * (template.fiducial_size_mm / 16.0) * 0.5
+
+    cands = {}
+    for k in ("TL", "TR"):
+        cands[k] = _square_candidates(gray, pred[k][0], pred[k][1], r1, exp_area, limit=2)
+        fallback[k] = cands[k][0] if cands[k] else pred[k]
+    if not cands["TL"] or not cands["TR"]:
+        for k in ("BL", "BR"):
+            c = _square_candidates(gray, pred[k][0], pred[k][1], r1, exp_area, limit=1)
+            fallback[k] = c[0] if c else pred[k]
+        info["reason"] = "top"
+        return fallback, info
+
+    w_mm = fid_mm["TR"][0] - fid_mm["TL"][0]
+    h_mm = fid_mm["BL"][1] - fid_mm["TL"][1]
+    tl0, tr0 = np.array(cands["TL"][0]), np.array(cands["TR"][0])
+    u = (tr0 - tl0) / w_mm                      # px / mm, formun x ekseni
+    v = np.array([-u[1], u[0]])                 # dik eksen
+    if np.dot(v, np.array(pred["BL"]) - np.array(pred["TL"])) < 0:
+        v = -v
+    pa = {"BL": tuple(tl0 + v * h_mm), "BR": tuple(tr0 + v * h_mm)}
+    for k in ("BL", "BR"):
+        c = (_square_candidates(gray, pa[k][0], pa[k][1], r1, exp_area)
+             + _square_candidates(gray, pred[k][0], pred[k][1], r1, exp_area))
+        if not c:
+            mid = ((pa[k][0] + pred[k][0]) / 2, (pa[k][1] + pred[k][1]) / 2)
+            half_gap = (((pa[k][0] - pred[k][0]) ** 2 + (pa[k][1] - pred[k][1]) ** 2) ** 0.5) / 2
+            c = _square_candidates(gray, mid[0], mid[1], max(qr_size_px * FID_WIDE_WIN_QR, half_gap + r1), exp_area, limit=4)
+            if c:
+                info["wide"] = True
+        cands[k] = _dedupe(c, min_sep)[:4]
+        fallback[k] = cands[k][0] if cands[k] else pred[k]
+    if not cands["BL"] or not cands["BR"]:
+        info["reason"] = "bottom"
+        return fallback, info
+
+    dst = [_mm_to_px(*fid_mm[k]) for k in _FIDUCIAL_ORDER]
+    expected_ratio = h_mm / w_mm
+    best = None
+    for tl in cands["TL"]:
+        for tr in cands["TR"]:
+            for br in cands["BR"]:
+                for bl in cands["BL"]:
+                    top = np.hypot(tr[0] - tl[0], tr[1] - tl[1])
+                    left = np.hypot(bl[0] - tl[0], bl[1] - tl[1])
+                    right = np.hypot(br[0] - tr[0], br[1] - tr[1])
+                    if top < 1 or abs(left - right) / ((left + right) / 2) > FID_SIDE_ASYM_MAX:
+                        continue
+                    if abs(((left + right) / 2) / top / expected_ratio - 1) > FID_ASPECT_TOL:
+                        continue
+                    quad = np.array([tl, tr, br, bl], dtype=np.float32)
+                    if not cv2.isContourConvex(quad):
+                        continue
+                    H = _homography(quad, dst)
+                    err = max(np.hypot(*(np.array(_apply_h(H, *qr_points[i])) - np.array(qr_dst[i])))
+                              for i in range(4)) / PX_PER_MM
+                    if err > FID_QR_REPROJ_MAX_MM:
+                        continue
+                    H_inv = np.linalg.inv(H)
+                    if not all(_fid_patch_ok(gray, H_inv, fid_mm[k], template.fiducial_size_mm) for k in _FIDUCIAL_ORDER):
+                        continue
+                    cost = err + (np.hypot(bl[0] - pa["BL"][0], bl[1] - pa["BL"][1])
+                                  + np.hypot(br[0] - pa["BR"][0], br[1] - pa["BR"][1])) / (np.linalg.norm(u) * 10.0)
+                    if best is None or cost < best[0]:
+                        best = (cost, err, {"TL": tl, "TR": tr, "BR": br, "BL": bl})
+    if best is None:
+        info["reason"] = "geometry"
+        return fallback, info
+    info.update(ok=True, qrErrMm=round(float(best[1]), 2))
+    return best[2], info
 
 
 def _rectify(img, qr_points, template):
     """QR koseleri + kose fiducial'lerinden nihai rektifiye (duzlestirilmis,
-    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar.
+    sabit CANON_W x CANON_H boyutunda) goruntuyu hesaplar. Doner
+    (warped, refined, info) - info icin bkz. _locate_fiducials.
 
-    Her kosenin ARAMA PENCERESI icin ilk tahmini, DAIMA SADECE QR'in kendi 4
-    kosesinden turetilen SABIT bir homografiyle (H0) hesaplanir - bir onceki
-    kosenin bulundugu nokta bir SONRAKI kosenin tahminine KARISTIRILMAZ (bkz.
-    modul docstring'indeki 2026-09-23 duzeltme notu). Nihai warp, 4 kosenin
-    GERCEKTEN BULUNDUGU konumlardan (tumu ayni H0 baz alinarak bagimsiz
-    arandigi icin sayisal olarak kararli) hesaplanir."""
+    Kose tahminleri kumulatif homografi ile YAPILMAZ (bkz. modul
+    docstring'indeki 2026-09-23 notu): ust koseler QR'dan, alt koseler QR'dan
+    VE bulunan ust iki kosenin tabanindan bagimsiz tahmin edilir; nihai warp
+    yalnizca geometrisi dogrulanmis 4 GERCEK kose noktasindan hesaplanir."""
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    qr_size_px = float(np.linalg.norm(qr_points[1] - qr_points[0]))
-    win_r = qr_size_px * 1.4
-    expected_fid_area_px = (qr_size_px * (template.fiducial_size_mm / 20.0)) ** 2
-
     fid_mm = template.fiducial_centers_mm()
-    H0 = cv2.getPerspectiveTransform(
-        np.array([tuple(p) for p in qr_points], dtype=np.float32),
-        np.array([_mm_to_px(x, y) for x, y in _qr_mm_corners(template)], dtype=np.float32),
-    )
-    H0_inv = np.linalg.inv(H0)
-
-    refined = {}
-    for key in _FIDUCIAL_ORDER:
-        x_mm, y_mm = fid_mm[key]
-        pt = np.array([[[x_mm * PX_PER_MM, y_mm * PX_PER_MM]]], dtype=np.float32)
-        approx = cv2.perspectiveTransform(pt, H0_inv)[0][0]
-        found = _refine_square_in_window(gray, approx[0], approx[1], win_r, expected_fid_area_px)
-        refined[key] = found if found else tuple(approx)
-
+    refined, info = _locate_fiducials(gray, qr_points, template)
     src = np.array([refined[k] for k in _FIDUCIAL_ORDER], dtype=np.float32)
     dst = np.array([_mm_to_px(*fid_mm[k]) for k in _FIDUCIAL_ORDER], dtype=np.float32)
     H_final = cv2.getPerspectiveTransform(src, dst)
     canon_w, canon_h = _canon_size_px(template)
     warped = cv2.warpPerspective(img, H_final, (canon_w, canon_h))
-    return warped, refined
+    return warped, refined, info
 
 
 def _decode_qr(detector, image):
@@ -303,7 +452,10 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
     if qr_points is None:
         raise OmrReadError("Kağıdın QR kodu/kimlik alanı bulunamadı - kağıt kadraja tam girmiyor olabilir.")
 
-    warped, _refined_fid = _rectify(img, qr_points, template)
+    warped, _refined_fid, fid_info = _rectify(img, qr_points, template)
+    if not fid_info["ok"]:
+        warnings.append("Kağıdın köşelerindeki siyah kareler bulunamadı - okuma hatalı olabilir, "
+                        "lütfen kontrol edin (kağıdın tamamı ve 4 köşe görünecek şekilde yeniden çekin).")
     gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
 
     paper_token, _points_r = _decode_qr(detector, warped)

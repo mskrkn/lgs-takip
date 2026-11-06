@@ -97,6 +97,7 @@ async function _omrSubmitDecoded(examDefId, decoded) {
     questions: decoded.questions.map((q) => ({ question: q.question, answer: q.answer, status: q.status })),
     warnings: decoded.warnings || [],
   };
+  if (decoded.diag) payload.diag = decoded.diag;
   if (decoded.previewPngBase64) payload.previewImage = decoded.previewPngBase64;
   const opts = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -159,6 +160,16 @@ function _omrHandleWorkerMessage(ev) {
     _omrWorkerReadyWaiters.splice(0).forEach((w) => w.reject(new Error(_omrWorkerErrorMsg)));
   } else if (msg.type === 'alignResult') {
     _omrAlignInFlight = false;
+    if (_omrScanState) {
+      const now = Date.now();
+      if (msg.ready) _omrScanState.lastQrSeenAt = now;
+      else if (_omrScanState.failStreak && now - (_omrScanState.lastQrSeenAt || 0) > 1500) {
+        // kagit kadrajdan cikti - yeni kagit, sayaclar sifirdan
+        _omrScanState.failStreak = 0;
+        _omrScanState.failCounts = {};
+        _omrScanState.failHint = '';
+      }
+    }
     _omrApplyReadyState(msg.ready, msg.hint);
   } else if (msg.type === 'decodeResult') {
     const w = _omrDecodeWaiters.get(msg.reqId);
@@ -170,9 +181,11 @@ function _omrHandleWorkerMessage(ev) {
 }
 
 // Optik motor dosyalarinin surumu - Cloudflare ve telefonun HTTP onbellegi
-// /js/*.js'i 4 saat tutuyor; motor degisince bu deger (ve ogretmen.html'deki
-// omrScan.js?v=) arttirilir, Worker bunu importScripts'e de aktarir.
-const OMR_ENGINE_VERSION = '20261021';
+// /js/*.js'i 4 saat tutuyor; motor degisince bu deger arttirilir, Worker bunu
+// importScripts'e de aktarir. (ogretmen.html'deki <script> etiketlerine ELLE
+// ?v= YAZILMAZ - server.py _version_static_assets her yeniden baslatmada
+// otomatik ekler; elle yazilan surum otomatigi devre disi birakir.)
+const OMR_ENGINE_VERSION = '20261106';
 
 // Worker'ı (henüz yoksa) oluşturup hazır olmasını bekler - tek instance,
 // kamera ekranı kapanana kadar (kapatılınca terminate edilir) yaşar.
@@ -333,6 +346,10 @@ async function _omrOpenScanView(examDefId, examTitle) {
     // "hala bekliyorum" hissinin GERCEK sayilarla olculebilmesi icin (bkz.
     // 2026-09-23 kullanici geri bildirimi: "daha iyi ama yine bekledim").
     attemptCount: 0, firstAttemptAt: 0,
+    // 2026-11-06: ardisik basarisiz okuma sayisi (geri cekilme + ipucu icin)
+    // ve nedenleri (sunucuya tani bilgisi olarak gider - eskiden basarisiz
+    // denemeler HIC gorunmuyordu). lastQrSeenAt: onizleme dongusunun hizi.
+    failStreak: 0, failCounts: {}, failHint: '', lastQrSeenAt: 0,
     approved: 0, pendingIds: new Set(), card: null,
     // Bu oturumda okunan HER kagidin kucuk bir ozeti (isim/durum/net) - kapanis
     // ozeti ve dokunulabilir "kuyruk" listesi (bkz. _omrRenderQueuePanel) icin.
@@ -630,8 +647,34 @@ function _omrScanAnalysisLoop() {
       }
     }
   }
-  setTimeout(_omrScanAnalysisLoop, 180);
+  setTimeout(_omrScanAnalysisLoop, _omrAnalysisDelayMs());
 }
+
+// 2026-11-06 ("bir sure sonra okuma zorlasiyor" sikayeti): onizleme ve tam
+// cozunurluklu okuma telefonu surekli %100 mesgul ediyordu - isinan telefon
+// islemciyi/kamerayi yavaslatinca okuma da zorlasir. Kagit yokken onizleme
+// seyreltilir, sekme arka plandayken neredeyse durur.
+function _omrAnalysisDelayMs() {
+  if (typeof document !== 'undefined' && document.hidden) return 1000;
+  const st = _omrScanState;
+  if (st && Date.now() - (st.lastQrSeenAt || 0) > 4000) return 350;
+  return 180;
+}
+
+// Ayni kagitta ust uste basarisiz okumada denemeler arasi sure buyur
+// (400 -> 800 -> 1200 -> 1600 ms): her basarisiz tam cozunurluklu okuma
+// ~100-300 ms islemci demek, durmaksizin tekrarlamak isitir ve bir sonrakini
+// de daha iyi yapmaz. Kagit degisince/okununca sifirlanir.
+function _omrRetryCooldownMs() {
+  const streak = (_omrScanState && _omrScanState.failStreak) || 0;
+  return OMR_RETRY_COOLDOWN_MS * Math.min(4, 1 + Math.floor(streak / 3));
+}
+
+const OMR_FAIL_HINTS = {
+  corners: '📐 Kağıdın tamamı ve 4 köşedeki siyah kareler görünsün - telefonu biraz uzaklaştırın, kağıdı düz tutun.',
+  glare: '💡 Parlama var - flaşı kapatın veya ışığa göre açıyı değiştirin.',
+  lowconf: '🔍 Görüntü bulanık - telefonu sabit tutun, biraz uzaklaştırın.',
+};
 
 // 2026-09-23 ikinci duzeltme: "N ms KESINTISIZ hazir kal, SONRA cek" modeli
 // TAMAMEN KALDIRILDI - jsQR'in on-izlemede kare kare titrek (bulundu/
@@ -686,11 +729,13 @@ function _omrApplyReadyState(ready, hint) {
     return;
   }
 
-  if (hintEl) hintEl.textContent = ready ? 'Hazır - okunuyor...' : hint;
+  // Ust uste basarisizlikta neden ipucu (ör. "4 kose gorunsun") kalici
+  // gosterilir - yoksa 180 ms sonra "Hazir" yazisi onu hemen eziyordu.
+  if (hintEl) hintEl.textContent = _omrScanState.failHint || (ready ? 'Hazır - okunuyor...' : hint);
   if (!frame) return;
   frame.style.borderColor = ready ? '#22c55e' : 'rgba(255,255,255,0.7)';
 
-  if (ready && now - (_omrScanState.lastAttemptAt || 0) > OMR_RETRY_COOLDOWN_MS) {
+  if (ready && now - (_omrScanState.lastAttemptAt || 0) > _omrRetryCooldownMs()) {
     _omrScanState.lastAttemptAt = now;
     _omrCaptureFrame();
   }
@@ -789,11 +834,29 @@ function _omrCaptureFrame() {
       // veriyordu (bkz. 2026-09-23 kullanıcı raporu).
       _omrScanState.busy = false;
       _omrScanState.awaitingRemoval = false;
-      const why = (decoded.warnings && decoded.warnings[0]) || '';
+      const reason = decoded.failReason || 'other';
+      _omrScanState.failStreak = (_omrScanState.failStreak || 0) + 1;
+      _omrScanState.failCounts[reason] = (_omrScanState.failCounts[reason] || 0) + 1;
+      const sticky = _omrScanState.failStreak >= 3 ? (OMR_FAIL_HINTS[reason] || '') : '';
+      _omrScanState.failHint = sticky;
+      const why = sticky || (decoded.warnings && decoded.warnings[0]) || '';
       if (hintEl) hintEl.textContent = '❌ Okunamadı - tekrar deneniyor... ' + why;
       _omrCardClose();
       return;
     }
+    // Tani bilgisi (sunucuda per_question_json.diag) - hangi nedenle kac kez
+    // okunamadigi ve kose dogrulamasinin ne kadar zorlandigi.
+    decoded.diag = {
+      attempts: _omrScanState.attemptCount,
+      streakMs: Math.round(performance.now() - _omrScanState.firstAttemptAt),
+      fails: Object.assign({}, _omrScanState.failCounts),
+      qrErrMm: decoded.fiducialInfo ? decoded.fiducialInfo.qrErrMm : null,
+      wide: !!(decoded.fiducialInfo && decoded.fiducialInfo.wide),
+      engine: OMR_ENGINE_VERSION,
+    };
+    _omrScanState.failStreak = 0;
+    _omrScanState.failCounts = {};
+    _omrScanState.failHint = '';
     try {
       const data = await _omrSubmitDecoded(_omrScanState.examDefId, decoded);
       data.timing = {
