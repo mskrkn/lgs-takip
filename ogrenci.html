@@ -209,6 +209,25 @@
             </div>
           </div>
 
+          <!-- ============ ZONE: BAŞARILAR ============ -->
+          <div class="ep-zone-header"><span>🏆 Başarıların</span></div>
+
+          <!-- SON BAŞARILAR -->
+          <div class="ep-card anim-fade-up anim-fade-up-d4">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
+            </div>
+            <div class="ep-achievements-grid" id="achievements"></div>
+          </div>
+
+          <!-- BAŞARI PUSULASI (4 Quadrant) -->
+          <div class="ep-card anim-fade-up anim-fade-up-d3">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🧭</div> Başarı Pusulası</div>
+            </div>
+            <div id="compass" style="position:relative"></div>
+          </div>
+
           <!-- ============ ZONE: HEDEFİN ============ -->
           <div class="ep-zone-header"><span>🎯 Hedefin</span></div>
 
@@ -239,40 +258,34 @@
             <div id="net-trend" class="mt-ep"></div>
           </div>
 
-          <!-- GENEL BAŞARI SKORU -->
-          <div class="ep-card anim-fade-up anim-fade-up-d4">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Genel Başarı Skoru</div>
-            </div>
-            <div class="ep-score-hero">
-              <span class="ep-score-num" id="score-number-detail">—</span>
-              <span class="ep-score-denom">/ 100</span>
-              <span class="ep-score-delta" id="score-growth"></span>
-            </div>
-            <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
-            <div class="ep-radar-axes" id="radar-axes">
-              <!-- JS tarafından doldurulur -->
-            </div>
-          </div>
-
           <!-- ============ ZONE: DERS ANALİZİ ============ -->
           <div class="ep-zone-header"><span>📚 Ders Analizi</span></div>
 
-          <!-- DERS YETKİNLİK RADARI -->
-          <div class="ep-card anim-fade-up anim-fade-up-d3">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">📡</div> Ders Yetkinlik Radarı</div>
+          <!-- Ders Yetkinlik Radarı + Genel Başarı Skoru yan yana (2026-11-06) -->
+          <div class="ep-pair">
+            <!-- DERS YETKİNLİK RADARI -->
+            <div class="ep-card anim-fade-up anim-fade-up-d3">
+              <div class="ep-section-hd">
+                <div class="ep-section-title"><div class="ep-section-icon">📡</div> Ders Yetkinlik Radarı</div>
+              </div>
+              <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Son deneme netlerin, sınıf ortalamasıyla karşılaştırmalı.</p>
+              <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
             </div>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Son deneme netlerin, sınıf ortalamasıyla karşılaştırmalı.</p>
-            <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
-          </div>
-
-          <!-- BAŞARI PUSULASI (4 Quadrant) -->
-          <div class="ep-card anim-fade-up anim-fade-up-d3">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🧭</div> Başarı Pusulası</div>
+            <!-- GENEL BAŞARI SKORU -->
+            <div class="ep-card anim-fade-up anim-fade-up-d4">
+              <div class="ep-section-hd">
+                <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Genel Başarı Skoru</div>
+              </div>
+              <div class="ep-score-hero">
+                <span class="ep-score-num" id="score-number-detail">—</span>
+                <span class="ep-score-denom">/ 100</span>
+                <span class="ep-score-delta" id="score-growth"></span>
+              </div>
+              <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
+              <div class="ep-radar-axes" id="radar-axes">
+                <!-- JS tarafından doldurulur -->
+              </div>
             </div>
-            <div id="compass" style="position:relative"></div>
           </div>
 
           <!-- GÜÇLÜ YÖNLERİN & GELİŞİM NOKTAN -->
@@ -281,17 +294,6 @@
               <div class="ep-section-title"><div class="ep-section-icon">🧠</div> Güçlü Yönlerin & Gelişim Noktan</div>
             </div>
             <div class="ep-strengths-grid" id="strength-summary"></div>
-          </div>
-
-          <!-- ============ ZONE: BAŞARILAR ============ -->
-          <div class="ep-zone-header"><span>🏆 Başarıların</span></div>
-
-          <!-- SON BAŞARILAR -->
-          <div class="ep-card anim-fade-up anim-fade-up-d4">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
-            </div>
-            <div class="ep-achievements-grid" id="achievements"></div>
           </div>
 
           <!-- HAFTALİK EĞİTİM ROTASI -->
