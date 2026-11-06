@@ -11003,6 +11003,39 @@ def _generate_study_plan(db, student, exam_id, max_questions=8):
     return plan_id, None
 
 
+def _grade_of(class_name):
+    """'8/A', '8-A', '8A' -> 8 (kademe). Tanınmazsa None."""
+    m = re.match(r"\s*(\d{1,2})", class_name or "")
+    return int(m.group(1)) if m else None
+
+
+def _exam_ranks(db, exam_id, student, my_total):
+    """Bir Genel Denemede öğrencinin SINIF ve OKUL-KADEME sıralaması.
+    Okul sıralaması aynı okul (organization) + aynı kademe (8/A, 8/B... hepsi
+    "8") içinde hesaplanır - 5. ile 8. sınıfı aynı sıraya koymak anlamsız.
+    Sadece sıra ve kişi sayısı döner, başka öğrencinin hiçbir bilgisi dönmez."""
+    rows = db.execute(
+        "SELECT s.class_name, r.data_json FROM results r JOIN students s ON s.id = r.student_id "
+        "WHERE r.exam_id = ? AND s.organization_id = ?",
+        (exam_id, student["organization_id"]),
+    ).fetchall()
+    my_grade = _grade_of(student["class_name"])
+    class_totals, grade_totals = [], []
+    for row in rows:
+        total = calc_total_net(json.loads(row["data_json"] or "{}").get("subjects", {}))
+        if row["class_name"] == student["class_name"]:
+            class_totals.append(total)
+        if my_grade is not None and _grade_of(row["class_name"]) == my_grade:
+            grade_totals.append(total)
+    out = {"class": None, "school": None}
+    if class_totals:
+        out["class"] = {"rank": sum(1 for t in class_totals if t > my_total) + 1, "size": len(class_totals)}
+    if grade_totals:
+        out["school"] = {"rank": sum(1 for t in grade_totals if t > my_total) + 1,
+                         "size": len(grade_totals), "grade": my_grade}
+    return out
+
+
 def _build_student_report(db, student_id, exam_id=None):
     """Tek bir öğrencinin deneme geçmişi + konu analizi + güçlü/zayıf ders özeti.
     /api/parent/child/<id> ve /api/student/overview tarafından ortak kullanılır.
@@ -11203,6 +11236,14 @@ def _build_student_report(db, student_id, exam_id=None):
             "accuracyRate": rate,
         }
 
+    # Sınıf + okul (kademe) sıralaması: son ve bir önceki Genel Deneme -
+    # öğrenci panelinde "geçen denemeye göre +N sıra" gösterebilmek için.
+    latest_ranks, prev_ranks = None, None
+    if general_results:
+        latest_ranks = _exam_ranks(db, general_results[-1]["examId"], student, general_results[-1]["totalNet"])
+        if len(general_results) >= 2:
+            prev_ranks = _exam_ranks(db, general_results[-2]["examId"], student, general_results[-2]["totalNet"])
+
     all_nets = [r["totalNet"] for r in general_results]
     avg_total_net = round(sum(all_nets) / len(all_nets), 2) if all_nets else None
     best_total_net = max(all_nets) if all_nets else None
@@ -11225,6 +11266,8 @@ def _build_student_report(db, student_id, exam_id=None):
         "topicStatsExamId": topic_stats_exam_id,
         "classSubjectAverages": class_subject_averages,
         "classRank": class_rank,
+        "latestRanks": latest_ranks,
+        "prevRanks": prev_ranks,
         "scoreBreakdown": score_breakdown,
         "badges": badges,
         "errorMemory": _build_error_memory(result_rows),
@@ -11291,6 +11334,9 @@ def api_student_overview():
         return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı. Lütfen okulunuzla iletişime geçin."}), 404
     report["classAverages"] = _all_class_averages(db, _current_org_id(db))
     report["masteryTrend"] = _build_mastery_trend(db, student_id)
+    # Ana sayfa "Kazanım Denemeleri" kartı için - istemci bunu önbelleğe alır,
+    # Kazanım ekranı açılınca ikinci bir istek gerekmez.
+    report["mastery"] = _build_student_mastery(db, student_id)
     message_rows = db.execute(
         "SELECT m.id, m.message, m.created_at, m.read_at, u.display_name FROM teacher_messages m "
         "JOIN users u ON u.id = m.teacher_user_id "
@@ -11312,6 +11358,98 @@ def api_student_mastery():
     db = get_db()
     student_id = session.get("student_id")
     data = _build_student_mastery(db, student_id) if student_id else None
+    if data is None:
+        return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı."}), 404
+    return jsonify(data)
+
+
+def _build_student_question_map(db, student_id):
+    """Öğrenci paneli: Genel Denemelerde soru soru D/Y/B + her sorunun kazanımı
+    + (varsa) doğru cevap ve öğrencinin işaretlediği şık. Ders detayı ve
+    Denemelerim > deneme detayı ekranları bu tek yanıttan beslenir.
+    - s (durum) : results.subjects[k].answers ('D'/'Y'/'B', kitapçık A sırası)
+    - k (kazanım): exams.topicMap[k][i].kazanim
+    - c (doğru)  : exams.answerKey.A[k][i] (Deneme Sihirbazı / optik aktarım yazar)
+    - m (işaret) : results.subjects[k].marks[i] (2026-11 sonrası aktarımlar)
+    Eski/elle girilmiş denemelerde soru verisi yoksa 'q' None döner.
+    Sınıf ortalaması yalnızca en az _MASTERY_CLASS_AVG_MIN kişi varsa."""
+    student = db.execute("SELECT class_name, organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    if not student:
+        return None
+    rows = db.execute(
+        "SELECT r.exam_id, r.data_json, e.name AS exam_name, e.date AS exam_date, e.exam_type, "
+        "e.data_json AS exam_json FROM results r JOIN exams e ON e.id = r.exam_id "
+        "WHERE r.student_id = ? ORDER BY e.date DESC, r.exam_id DESC",
+        (student_id,),
+    ).fetchall()
+    rows = [r for r in rows if not _is_mastery_exam_type(r["exam_type"])]
+
+    class_avg = {}
+    exam_ids = [r["exam_id"] for r in rows]
+    if exam_ids and student["class_name"]:
+        placeholders = ",".join("?" * len(exam_ids))
+        sums = {}
+        for cr in db.execute(
+            f"SELECT r.exam_id, r.data_json FROM results r JOIN students s ON s.id = r.student_id "
+            f"WHERE r.exam_id IN ({placeholders}) AND s.organization_id = ? AND s.class_name = ?",
+            (*exam_ids, student["organization_id"], student["class_name"]),
+        ).fetchall():
+            for key, sub in (json.loads(cr["data_json"] or "{}").get("subjects") or {}).items():
+                acc = sums.setdefault((cr["exam_id"], key), [0.0, 0])
+                acc[0] += (sub or {}).get("net") or 0
+                acc[1] += 1
+        for k, (tot, cnt) in sums.items():
+            if cnt >= _MASTERY_CLASS_AVG_MIN:
+                class_avg[k] = round(tot / cnt, 2)
+
+    def _letter(v):
+        return v.strip().upper() if isinstance(v, str) and v.strip() else None
+
+    exams = []
+    for r in rows:
+        data = json.loads(r["data_json"] or "{}")
+        exam = json.loads(r["exam_json"] or "{}")
+        topic_map = exam.get("topicMap") or {}
+        key_a = ((exam.get("answerKey") or {}).get("A")) or {}
+        subjects_out = {}
+        for key, sub in (data.get("subjects") or {}).items():
+            sub = sub or {}
+            answers = sub.get("answers")
+            marks = sub.get("marks")
+            entries = topic_map.get(key) or []
+            ak = key_a.get(key)
+            qlist = None
+            if answers:
+                qlist = []
+                for i, a in enumerate(answers):
+                    entry = entries[i] if i < len(entries) and isinstance(entries[i], dict) else {}
+                    qlist.append({
+                        "s": a if a in ("D", "Y", "B") else None,
+                        "k": (entry.get("kazanim") or "").strip() or None,
+                        "c": _letter(ak[i]) if ak and i < len(ak) else None,
+                        "m": _letter(marks[i]) if marks and i < len(marks) else None,
+                    })
+            subjects_out[key] = {
+                "net": sub.get("net") or 0, "correct": sub.get("correct") or 0,
+                "wrong": sub.get("wrong") or 0, "blank": sub.get("blank") or 0,
+                "questions": sub.get("questions") or (len(answers) if answers else None),
+                "classAvgNet": class_avg.get((r["exam_id"], key)),
+                "q": qlist,
+            }
+        exams.append({
+            "examId": r["exam_id"], "examName": r["exam_name"], "examDate": r["exam_date"],
+            "totalNet": calc_total_net(data.get("subjects") or {}),
+            "subjects": subjects_out,
+        })
+    return {"exams": exams}
+
+
+@app.route("/api/student/question-map")
+@login_required(role="student", permission="results.view")
+def api_student_question_map():
+    db = get_db()
+    student_id = session.get("student_id")
+    data = _build_student_question_map(db, student_id) if student_id else None
     if data is None:
         return jsonify({"error": "Hesabınıza bağlı bir öğrenci kaydı bulunamadı."}), 404
     return jsonify(data)
