@@ -97,6 +97,7 @@ async function _omrSubmitDecoded(examDefId, decoded) {
     questions: decoded.questions.map((q) => ({ question: q.question, answer: q.answer, status: q.status })),
     warnings: decoded.warnings || [],
   };
+  if (decoded.diag) payload.diag = decoded.diag;
   if (decoded.previewPngBase64) payload.previewImage = decoded.previewPngBase64;
   const opts = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -159,6 +160,16 @@ function _omrHandleWorkerMessage(ev) {
     _omrWorkerReadyWaiters.splice(0).forEach((w) => w.reject(new Error(_omrWorkerErrorMsg)));
   } else if (msg.type === 'alignResult') {
     _omrAlignInFlight = false;
+    if (_omrScanState) {
+      const now = Date.now();
+      if (msg.ready) _omrScanState.lastQrSeenAt = now;
+      else if (_omrScanState.failStreak && now - (_omrScanState.lastQrSeenAt || 0) > 1500) {
+        // kagit kadrajdan cikti - yeni kagit, sayaclar sifirdan
+        _omrScanState.failStreak = 0;
+        _omrScanState.failCounts = {};
+        _omrScanState.failHint = '';
+      }
+    }
     _omrApplyReadyState(msg.ready, msg.hint);
   } else if (msg.type === 'decodeResult') {
     const w = _omrDecodeWaiters.get(msg.reqId);
@@ -170,9 +181,11 @@ function _omrHandleWorkerMessage(ev) {
 }
 
 // Optik motor dosyalarinin surumu - Cloudflare ve telefonun HTTP onbellegi
-// /js/*.js'i 4 saat tutuyor; motor degisince bu deger (ve ogretmen.html'deki
-// omrScan.js?v=) arttirilir, Worker bunu importScripts'e de aktarir.
-const OMR_ENGINE_VERSION = '20261021';
+// /js/*.js'i 4 saat tutuyor; motor degisince bu deger arttirilir, Worker bunu
+// importScripts'e de aktarir. (ogretmen.html'deki <script> etiketlerine ELLE
+// ?v= YAZILMAZ - server.py _version_static_assets her yeniden baslatmada
+// otomatik ekler; elle yazilan surum otomatigi devre disi birakir.)
+const OMR_ENGINE_VERSION = '20261106';
 
 // Worker'ı (henüz yoksa) oluşturup hazır olmasını bekler - tek instance,
 // kamera ekranı kapanana kadar (kapatılınca terminate edilir) yaşar.
@@ -297,6 +310,7 @@ async function _omrOpenScanView(examDefId, examTitle) {
         <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
       <div id="omr-engine-badge" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 38px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
+      <button id="omr-auto-approve" type="button" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 70px);left:10px;background:rgba(0,0,0,0.55);color:#fff;border:1px solid #4b5563;border-radius:18px;padding:6px 10px;font-size:12px;font-weight:700"></button>
       <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
@@ -333,6 +347,10 @@ async function _omrOpenScanView(examDefId, examTitle) {
     // "hala bekliyorum" hissinin GERCEK sayilarla olculebilmesi icin (bkz.
     // 2026-09-23 kullanici geri bildirimi: "daha iyi ama yine bekledim").
     attemptCount: 0, firstAttemptAt: 0,
+    // 2026-11-06: ardisik basarisiz okuma sayisi (geri cekilme + ipucu icin)
+    // ve nedenleri (sunucuya tani bilgisi olarak gider - eskiden basarisiz
+    // denemeler HIC gorunmuyordu). lastQrSeenAt: onizleme dongusunun hizi.
+    failStreak: 0, failCounts: {}, failHint: '', lastQrSeenAt: 0,
     approved: 0, pendingIds: new Set(), card: null,
     // Bu oturumda okunan HER kagidin kucuk bir ozeti (isim/durum/net) - kapanis
     // ozeti ve dokunulabilir "kuyruk" listesi (bkz. _omrRenderQueuePanel) icin.
@@ -345,6 +363,8 @@ async function _omrOpenScanView(examDefId, examTitle) {
   document.getElementById('omr-scan-close').addEventListener('click', _omrCloseScanView);
   document.getElementById('omr-scan-capture').addEventListener('click', _omrManualCapture);
   document.getElementById('omr-scan-counter').addEventListener('click', _omrToggleQueuePanel);
+  document.getElementById('omr-auto-approve').addEventListener('click', _omrToggleAutoApprove);
+  _omrRenderAutoApprove();
   _omrWarmUpBeep();
 
   _omrFlushPendingScans(count => { if (_omrScanState) { _omrScanState.queued = count; _omrUpdateCounter(); } });
@@ -547,6 +567,8 @@ function _omrShowSessionSummary(st) {
   const secs = Math.max(0, Math.round((Date.now() - st.startedAt) / 1000));
   const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, '0');
   const examDefId = st.examDefId, examTitle = st.examTitle;
+  const cleanIds = st.queueItems.filter((it) => it.status === 'needs_review' && it.readable
+    && it.studentId && it.flagged === 0).map((it) => it.scanId);
 
   const modal = document.createElement('div');
   modal.id = 'omr-session-summary';
@@ -562,11 +584,36 @@ function _omrShowSessionSummary(st) {
         <div><div style="color:#f87171;font-size:20px;font-weight:700">${unreadable}</div>Okunamadı</div>
       </div>
       <div style="font-size:12px;color:#9ca3af;margin-bottom:18px">⏱ Süre ${mm}:${ss}</div>
+      ${cleanIds.length ? `<button type="button" id="omr-summary-approve" style="${btn};background:#16a34a;margin-bottom:8px">✅ Şüphesiz ${cleanIds.length} kağıdı onayla</button>` : ''}
+      ${pending - cleanIds.length > 0 ? `<div style="font-size:12px;color:#fbbf24;margin:-2px 0 10px">⚠️ ${pending - cleanIds.length} kağıt şüpheli/eşleşmemiş - Sonuçları Gör'den tek tek bakın</div>` : ''}
       <button type="button" id="omr-summary-results" style="${btn};background:#4f46e5;margin-bottom:8px">📊 Sonuçları Gör</button>
       <button type="button" id="omr-summary-close" style="${btn};background:#374151">Kapat</button>
     </div>`;
   document.body.appendChild(modal);
   document.getElementById('omr-summary-close').onclick = () => { modal.remove(); _omrTeardownScanView(); };
+  const approveBtn = document.getElementById('omr-summary-approve');
+  if (approveBtn) {
+    approveBtn.onclick = async () => {
+      approveBtn.disabled = true;
+      approveBtn.textContent = '⏳ Onaylanıyor...';
+      try {
+        const out = await _omrApproveCleanRequest(examDefId, cleanIds);
+        for (const a of out.approved || []) {
+          const it = st.queueItems.find((q) => q.scanId === a.scanId);
+          if (it) { it.status = 'approved'; it.net = a.net; }
+        }
+        modal.remove();
+        _omrShowSessionSummary(st); // sayilar guncel haliyle
+        if (typeof window.EduToast === 'function') {
+          const n = (out.approved || []).length, bad = (out.skipped && out.skipped.error) || 0;
+          window.EduToast(`✅ ${n} kağıt onaylandı${bad ? ` · ${bad} onaylanamadı` : ''}`, null, null, 4000);
+        }
+      } catch (err) {
+        approveBtn.disabled = false;
+        approveBtn.textContent = '❌ ' + (err.message || 'Hata') + ' - tekrar dene';
+      }
+    };
+  }
   document.getElementById('omr-summary-results').onclick = () => {
     modal.remove();
     _omrTeardownScanView();
@@ -630,8 +677,34 @@ function _omrScanAnalysisLoop() {
       }
     }
   }
-  setTimeout(_omrScanAnalysisLoop, 180);
+  setTimeout(_omrScanAnalysisLoop, _omrAnalysisDelayMs());
 }
+
+// 2026-11-06 ("bir sure sonra okuma zorlasiyor" sikayeti): onizleme ve tam
+// cozunurluklu okuma telefonu surekli %100 mesgul ediyordu - isinan telefon
+// islemciyi/kamerayi yavaslatinca okuma da zorlasir. Kagit yokken onizleme
+// seyreltilir, sekme arka plandayken neredeyse durur.
+function _omrAnalysisDelayMs() {
+  if (typeof document !== 'undefined' && document.hidden) return 1000;
+  const st = _omrScanState;
+  if (st && Date.now() - (st.lastQrSeenAt || 0) > 4000) return 350;
+  return 180;
+}
+
+// Ayni kagitta ust uste basarisiz okumada denemeler arasi sure buyur
+// (400 -> 800 -> 1200 -> 1600 ms): her basarisiz tam cozunurluklu okuma
+// ~100-300 ms islemci demek, durmaksizin tekrarlamak isitir ve bir sonrakini
+// de daha iyi yapmaz. Kagit degisince/okununca sifirlanir.
+function _omrRetryCooldownMs() {
+  const streak = (_omrScanState && _omrScanState.failStreak) || 0;
+  return OMR_RETRY_COOLDOWN_MS * Math.min(4, 1 + Math.floor(streak / 3));
+}
+
+const OMR_FAIL_HINTS = {
+  corners: '📐 Kağıdın tamamı ve 4 köşedeki siyah kareler görünsün - telefonu biraz uzaklaştırın, kağıdı düz tutun.',
+  glare: '💡 Parlama var - flaşı kapatın veya ışığa göre açıyı değiştirin.',
+  lowconf: '🔍 Görüntü bulanık - telefonu sabit tutun, biraz uzaklaştırın.',
+};
 
 // 2026-09-23 ikinci duzeltme: "N ms KESINTISIZ hazir kal, SONRA cek" modeli
 // TAMAMEN KALDIRILDI - jsQR'in on-izlemede kare kare titrek (bulundu/
@@ -686,11 +759,13 @@ function _omrApplyReadyState(ready, hint) {
     return;
   }
 
-  if (hintEl) hintEl.textContent = ready ? 'Hazır - okunuyor...' : hint;
+  // Ust uste basarisizlikta neden ipucu (ör. "4 kose gorunsun") kalici
+  // gosterilir - yoksa 180 ms sonra "Hazir" yazisi onu hemen eziyordu.
+  if (hintEl) hintEl.textContent = _omrScanState.failHint || (ready ? 'Hazır - okunuyor...' : hint);
   if (!frame) return;
   frame.style.borderColor = ready ? '#22c55e' : 'rgba(255,255,255,0.7)';
 
-  if (ready && now - (_omrScanState.lastAttemptAt || 0) > OMR_RETRY_COOLDOWN_MS) {
+  if (ready && now - (_omrScanState.lastAttemptAt || 0) > _omrRetryCooldownMs()) {
     _omrScanState.lastAttemptAt = now;
     _omrCaptureFrame();
   }
@@ -789,11 +864,29 @@ function _omrCaptureFrame() {
       // veriyordu (bkz. 2026-09-23 kullanıcı raporu).
       _omrScanState.busy = false;
       _omrScanState.awaitingRemoval = false;
-      const why = (decoded.warnings && decoded.warnings[0]) || '';
+      const reason = decoded.failReason || 'other';
+      _omrScanState.failStreak = (_omrScanState.failStreak || 0) + 1;
+      _omrScanState.failCounts[reason] = (_omrScanState.failCounts[reason] || 0) + 1;
+      const sticky = _omrScanState.failStreak >= 3 ? (OMR_FAIL_HINTS[reason] || '') : '';
+      _omrScanState.failHint = sticky;
+      const why = sticky || (decoded.warnings && decoded.warnings[0]) || '';
       if (hintEl) hintEl.textContent = '❌ Okunamadı - tekrar deneniyor... ' + why;
       _omrCardClose();
       return;
     }
+    // Tani bilgisi (sunucuda per_question_json.diag) - hangi nedenle kac kez
+    // okunamadigi ve kose dogrulamasinin ne kadar zorlandigi.
+    decoded.diag = {
+      attempts: _omrScanState.attemptCount,
+      streakMs: Math.round(performance.now() - _omrScanState.firstAttemptAt),
+      fails: Object.assign({}, _omrScanState.failCounts),
+      qrErrMm: decoded.fiducialInfo ? decoded.fiducialInfo.qrErrMm : null,
+      wide: !!(decoded.fiducialInfo && decoded.fiducialInfo.wide),
+      engine: OMR_ENGINE_VERSION,
+    };
+    _omrScanState.failStreak = 0;
+    _omrScanState.failCounts = {};
+    _omrScanState.failHint = '';
     try {
       const data = await _omrSubmitDecoded(_omrScanState.examDefId, decoded);
       data.timing = {
@@ -842,6 +935,66 @@ function _omrHandleScanResponse(data) {
   }
   _omrUpdateCounter();
   _omrShowCard(data);
+  if (_omrAutoApproveOn() && _omrIsCleanRead(data)) _omrAutoApprove(data);
+}
+
+// ---- Otomatik onay (2026-11-06 ogretmen geri bildirimi: "onaylari
+// sonradan verirken cok ugrasiyorsun") ----
+// Acikken: ogrencisi eslesmis + supheli sorusu OLMAYAN okumalar kartta
+// beklemeden hemen onaylanir. Supheli/eslesmemis olanlar eskisi gibi kartta
+// bekler. Tercih cihazda hatirlanir (localStorage).
+const OMR_AUTO_APPROVE_KEY = 'omr_auto_approve';
+
+function _omrAutoApproveOn() {
+  try { return localStorage.getItem(OMR_AUTO_APPROVE_KEY) === '1'; } catch (e) { return false; }
+}
+
+function _omrRenderAutoApprove() {
+  const b = document.getElementById('omr-auto-approve');
+  if (!b) return;
+  const on = _omrAutoApproveOn();
+  b.textContent = on ? '⚡ Oto-onay: AÇIK' : '⚡ Oto-onay: Kapalı';
+  b.style.background = on ? 'rgba(22,163,74,0.85)' : 'rgba(0,0,0,0.55)';
+  b.style.borderColor = on ? '#16a34a' : '#4b5563';
+}
+
+function _omrToggleAutoApprove() {
+  const on = !_omrAutoApproveOn();
+  try { localStorage.setItem(OMR_AUTO_APPROVE_KEY, on ? '1' : '0'); } catch (e) { /* ozel mod */ }
+  _omrRenderAutoApprove();
+  if (typeof window.EduToast === 'function') {
+    window.EduToast(on
+      ? '⚡ Otomatik onay açık: öğrencisi eşleşen ve şüpheli sorusu olmayan kağıtlar hemen onaylanır. Şüpheliler kartta bekler.'
+      : 'Otomatik onay kapalı: her kağıt kartta onay bekler.', null, null, 4500);
+  }
+}
+
+function _omrIsCleanRead(data) {
+  return data && !data.duplicate && data.status === 'needs_review' && data.readable !== false
+    && !!data.studentId && !!data.summary && !(data.summary.flagged > 0) && !data.cornersUncertain;
+}
+
+async function _omrAutoApprove(data) {
+  try {
+    const res = await fetch(`/api/teacher/omr/scans/${data.scanId}/approve`, { method: 'POST' });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { _omrCardMsg('❌ Otomatik onaylanamadı: ' + (out.error || res.status) + ' - elle onaylayın.'); return; }
+    window._omrOnScanChanged(data.scanId, 'approved', out.net);
+  } catch (err) {
+    _omrCardMsg('❌ Otomatik onay bağlantı hatası - elle onaylayın.');
+  }
+}
+
+// Toplu onay: verilen taramalardan (bos = testin tum bekleyenleri) temiz
+// olanlari tek istekte onaylar. Doner sunucu yaniti ({approved, skipped}).
+async function _omrApproveCleanRequest(examDefId, scanIds) {
+  const res = await fetch(`/api/teacher/omr/exams/${examDefId}/approve-clean`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scanIds ? { scanIds } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Sunucu hatası (${res.status})`);
+  return data;
 }
 
 // Bu oturumdaki okuma kuyruğu - her kağıt icin TEK satır (aynı scanId tekrar
@@ -854,6 +1007,8 @@ function _omrQueueUpsert(data) {
     scanId: data.scanId, studentName: data.studentName || null,
     schoolNumber: data.schoolNumber || null, className: data.className || null,
     status: data.status, readable: data.readable !== false, net: data.net,
+    studentId: data.studentId || null,
+    flagged: data.summary ? ((data.summary.flagged || 0) + (data.cornersUncertain ? 1 : 0)) : null,
   };
   const i = st.queueItems.findIndex((it) => it.scanId === entry.scanId);
   if (i >= 0) st.queueItems[i] = entry;

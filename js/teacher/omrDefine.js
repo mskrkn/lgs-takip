@@ -549,6 +549,8 @@ async function _omrRefreshReviewList(examDefId, examTitle) {
   const resp = await fetch(`/api/teacher/omr/exams/${examDefId}/scans`).then(r => r.json());
   const scans = resp.scans || [];
   const doneCount = scans.filter(s => s.status !== 'needs_review').length;
+  const cleanCount = scans.filter(s => s.status === 'needs_review' && s.student_id && s.flagged === 0 && !s.cornersUncertain).length;
+  const titleArg = _omrEsc(examTitle).replace(/'/g, "\\'");
 
   const statusLabel = (s) => ({
     needs_review: '🟡 İncelenmedi', approved: '✅ Onaylandı', rejected: '🚫 Reddedildi',
@@ -561,18 +563,45 @@ async function _omrRefreshReviewList(examDefId, examTitle) {
     <div style="font-size:13px;color:var(--text-muted,#888);margin-bottom:8px">
       ${resp.printedCount} kağıt yazdırıldı · ${scans.length} tarandı · ${doneCount} işlem tamamlandı
     </div>
+    ${cleanCount ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button type="button" class="btn btn-sm btn-primary" id="omr-approve-clean-${examDefId}" onclick="_omrApproveCleanFromList(${examDefId}, '${titleArg}')">✅ Şüphesiz ${cleanCount} kağıdı onayla</button>
+      <span class="text-muted" style="font-size:12px">Öğrencisi eşleşmiş ve şüpheli sorusu olmayanlar. ⚠️ işaretlileri tek tek inceleyin.</span>
+    </div>` : ''}
     ${scans.length === 0 ? '<p class="text-muted">Henüz tarama yok.</p>' : scans.map(s => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border,#2a2a2a);font-size:13px">
         <div>
           ${s.first_name ? _omrEsc(s.first_name) + ' ' + _omrEsc(s.last_name) : '<em>Öğrenci atanmadı</em>'}
           ${s.school_number ? '(' + _omrEsc(s.school_number) + ')' : ''}
           <span class="text-muted"> · ${matchLabel(s)} · ${statusLabel(s)}</span>
+          ${s.status === 'needs_review' && s.flagged > 0 ? `<span style="color:#f59e0b;font-weight:600"> · ⚠️ ${s.flagged} şüpheli</span>` : ''}
+          ${s.status === 'needs_review' && s.cornersUncertain ? `<span style="color:#f59e0b;font-weight:600"> · ⚠️ köşeler doğrulanamadı</span>` : ''}
         </div>
         <button type="button" class="btn btn-sm" onclick="_omrOpenScanDetail(${s.id}, ${examDefId}, '${_omrEsc(examTitle).replace(/'/g, "\\'")}')">${s.status === 'needs_review' ? 'İncele' : 'Görüntüle'}</button>
       </div>
     `).join('')}
     <div id="omr-scan-detail-${examDefId}" style="margin-top:10px"></div>
   `;
+}
+
+async function _omrApproveCleanFromList(examDefId, examTitle) {
+  const btn = document.getElementById(`omr-approve-clean-${examDefId}`);
+  if (!confirm('Öğrencisi eşleşmiş ve şüpheli sorusu olmayan tüm bekleyen kağıtlar onaylanacak. Devam edilsin mi?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Onaylanıyor...'; }
+  try {
+    const res = await fetch(`/api/teacher/omr/exams/${examDefId}/approve-clean`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || `Sunucu hatası (${res.status})`);
+    const n = (out.approved || []).length, bad = (out.skipped && out.skipped.error) || 0;
+    if (typeof window.EduToast === 'function') window.EduToast(`✅ ${n} kağıt onaylandı${bad ? ` · ${bad} onaylanamadı` : ''}`, null, null, 4000);
+    for (const a of out.approved || []) {
+      if (typeof window._omrOnScanChanged === 'function') window._omrOnScanChanged(a.scanId, 'approved', a.net);
+    }
+  } catch (err) {
+    alert('❌ ' + (err.message || 'Toplu onay başarısız.'));
+  }
+  await _omrRefreshReviewList(examDefId, examTitle);
 }
 
 // Şube seçilince (ya da hiç seçilmeden, "Tüm Şubeler" varsayılanıyla) Öğrenci

@@ -6987,9 +6987,11 @@ def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
             "SELECT first_name, last_name, school_number, class_name FROM students WHERE id = ?",
             (scan["student_id"],),
         ).fetchone()
-    summary = None
+    summary, corners_uncertain = None, False
     if scan["per_question_json"]:
-        summary = json.loads(scan["per_question_json"]).get("summary")
+        pqd = json.loads(scan["per_question_json"])
+        summary = pqd.get("summary")
+        corners_uncertain = bool(pqd.get("cornersUncertain"))
     return {
         "ok": True, "id": scan["id"], "scanId": scan["id"], "status": scan["status"],
         "matchStatus": scan["match_status"], "studentId": scan["student_id"],
@@ -7000,6 +7002,7 @@ def _omr_scan_card(db, scan, warnings, duplicate, processing_ms=None):
         "net": _omr_net(summary["correct"], summary["wrong"]) if summary else None,
         "readable": summary is not None,
         "duplicate": duplicate, "warnings": warnings, "processingMs": processing_ms,
+        "cornersUncertain": corners_uncertain,
     }
 
 
@@ -7028,6 +7031,29 @@ def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token):
     else:
         match_status = "unmatched"
     return student_id, paper_id, match_status, warnings
+
+
+def _omr_sanitize_diag(raw):
+    """Kamera istemcisinin tani bilgisi (kac denemede, hangi nedenlerle
+    okunamadigi - 2026-11-06). Sadece bilinen, kucuk, sayisal alanlar."""
+    if not isinstance(raw, dict):
+        return None
+
+    def num(v, lo, hi):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi else None
+
+    out = {
+        "attempts": num(raw.get("attempts"), 0, 10000),
+        "streakMs": num(raw.get("streakMs"), 0, 3_600_000),
+        "qrErrMm": num(raw.get("qrErrMm"), 0, 100),
+        "wide": bool(raw.get("wide")),
+        "engine": str(raw.get("engine"))[:16] if raw.get("engine") else None,
+    }
+    fails = raw.get("fails")
+    if isinstance(fails, dict):
+        out["fails"] = {k: int(v) for k, v in fails.items()
+                        if k in ("qr", "corners", "glare", "lowconf", "other") and num(v, 0, 10000) is not None}
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def _omr_duplicate_card(db, org_id, paper_id, image_path_to_cleanup, pipeline_ms, pdf_page_count=None):
@@ -7138,8 +7164,12 @@ def api_teacher_omr_upload_scan():
             db, org_id, exam_def_id, result["match_status"], result["paper_token"])
         warnings.extend(match_warnings)
 
-        per_question_payload = json.dumps({"questions": graded_questions, "summary": summary},
-                                           ensure_ascii=False)
+        pq = {"questions": graded_questions, "summary": summary}
+        if not result.get("fiducials_ok", True):
+            # kose kareleri dogrulanamadi - okuma egik olabilir; toplu/otomatik
+            # onaya girmez (bkz. _omr_scan_is_clean)
+            pq["cornersUncertain"] = True
+        per_question_payload = json.dumps(pq, ensure_ascii=False)
 
     pipeline_ms = round((time.perf_counter() - t_pipeline) * 1000)
 
@@ -7193,7 +7223,7 @@ def api_teacher_omr_list_scans(exam_def_id):
         return jsonify({"error": "Test tanımı bulunamadı."}), 404
 
     rows = db.execute(
-        "SELECT sc.id, sc.match_status, sc.status, sc.student_id, sc.created_at, "
+        "SELECT sc.id, sc.match_status, sc.status, sc.student_id, sc.created_at, sc.per_question_json, "
         "st.first_name, st.last_name, st.school_number, st.class_name "
         "FROM omr_scans sc LEFT JOIN students st ON st.id = sc.student_id "
         "WHERE sc.exam_definition_id = ? AND sc.organization_id = ? ORDER BY sc.created_at DESC",
@@ -7203,7 +7233,20 @@ def api_teacher_omr_list_scans(exam_def_id):
         "SELECT COUNT(*) c FROM omr_papers WHERE exam_definition_id = ? AND organization_id = ?",
         (exam_def_id, org_id),
     ).fetchone()["c"]
-    return jsonify({"scans": [dict(r) for r in rows], "printedCount": printed_count})
+    scans = []
+    for r in rows:
+        d = dict(r)
+        pq = d.pop("per_question_json", None)
+        d["flagged"], d["cornersUncertain"] = None, False
+        try:
+            if pq:
+                pqd = json.loads(pq)
+                d["flagged"] = (pqd.get("summary") or {}).get("flagged")
+                d["cornersUncertain"] = bool(pqd.get("cornersUncertain"))
+        except (ValueError, TypeError):
+            pass
+        scans.append(d)
+    return jsonify({"scans": scans, "printedCount": printed_count})
 
 
 @app.route("/api/teacher/omr/scans/<int:scan_id>")
@@ -7311,7 +7354,11 @@ def api_teacher_omr_client_decoded_scan():
 
     answer_key = json.loads(exam_def["answer_key_json"] or "{}")
     graded_questions, summary = _grade_omr_questions(raw_questions, answer_key)
-    per_question_payload = json.dumps({"questions": graded_questions, "summary": summary}, ensure_ascii=False)
+    pq = {"questions": graded_questions, "summary": summary}
+    diag = _omr_sanitize_diag(data.get("diag"))
+    if diag:
+        pq["diag"] = diag
+    per_question_payload = json.dumps(pq, ensure_ascii=False)
 
     t0 = time.perf_counter()
     dup_card = _omr_duplicate_card(db, org_id, paper_id, None, 0)
@@ -7473,33 +7520,31 @@ def api_teacher_omr_reject_scan(scan_id):
     return jsonify({"ok": True})
 
 
-@app.route("/api/teacher/omr/scans/<int:scan_id>/approve", methods=["POST"])
-@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
-def api_teacher_omr_approve_scan(scan_id):
-    """Ogretmenin ONAYLA demesiyle: ozet dogru/yanlis/bos/net mevcut results
-    tablosuna (sanki siradan bir deneme sonucuymus gibi) yazilir - boylece
-    mevcut Raporlar/analiz ekranlari bunu otomatik gosterir. per_question_json
-    (soru-bazli detay) omr_scans'te kalici olarak saklanmaya devam eder."""
-    db = get_db()
-    org_id = _effective_org_id(db)
-    if org_id is None:
-        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
-    scan = _get_owned_omr_scan(db, scan_id, org_id)
-    if not scan:
-        return jsonify({"error": "Tarama bulunamadı."}), 404
+class _OmrApproveError(Exception):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.message, self.status = message, status
+
+
+def _omr_approve_scan_core(db, scan, org_id):
+    """Tek bir needs_review taramayi onaylar: ozet dogru/yanlis/bos/net mevcut
+    results tablosuna (sanki siradan bir deneme sonucuymus gibi) yazilir -
+    boylece mevcut Raporlar/analiz ekranlari bunu otomatik gosterir.
+    per_question_json (soru-bazli detay) omr_scans'te kalir. COMMIT ETMEZ.
+    Doner (result_id, net); onaylanamazsa _OmrApproveError."""
     if scan["status"] != "needs_review":
-        return jsonify({"error": "Bu tarama zaten onaylanmış/reddedilmiş."}), 409
+        raise _OmrApproveError("Bu tarama zaten onaylanmış/reddedilmiş.", 409)
     if not scan["student_id"]:
-        return jsonify({"error": "Onaylamadan önce bir öğrenci atayın."}), 400
+        raise _OmrApproveError("Onaylamadan önce bir öğrenci atayın.")
     if not scan["per_question_json"]:
-        return jsonify({"error": "Bu tarama için okunmuş soru verisi yok."}), 400
+        raise _OmrApproveError("Bu tarama için okunmuş soru verisi yok.")
 
     exam_def = db.execute(
         "SELECT exam_id, subject_id FROM omr_exam_definitions WHERE id = ?",
         (scan["exam_definition_id"],),
     ).fetchone()
     if not exam_def or not exam_def["exam_id"]:
-        return jsonify({"error": "Bu teste bağlı bir deneme kaydı bulunamadı."}), 500
+        raise _OmrApproveError("Bu teste bağlı bir deneme kaydı bulunamadı.", 500)
 
     subject_row = db.execute("SELECT code FROM subjects WHERE id = ?", (exam_def["subject_id"],)).fetchone()
     # "optik_genel" fallback'i api_teacher_omr_create_exam'daki topicMap
@@ -7527,7 +7572,7 @@ def api_teacher_omr_approve_scan(scan_id):
         (scan["student_id"], exam_id),
     ).fetchone()
     if existing and existing["source"] == "browser_sync":
-        return jsonify({"error": "Bu öğrenci/deneme için okulun kendi verisinden zaten bir sonuç var."}), 409
+        raise _OmrApproveError("Bu öğrenci/deneme için okulun kendi verisinden zaten bir sonuç var.", 409)
 
     subjects_payload = {subject_key: {"correct": correct, "wrong": wrong, "blank": blank, "net": net, "answers": answers}}
     result_payload = {"studentId": scan["student_id"], "examId": exam_id, "subjects": subjects_payload}
@@ -7547,11 +7592,89 @@ def api_teacher_omr_approve_scan(scan_id):
 
     db.execute(
         "UPDATE omr_scans SET status = 'approved', reviewed_by = ?, updated_at = ? WHERE id = ?",
-        (session["user_id"], datetime.now().isoformat(), scan_id),
+        (session["user_id"], datetime.now().isoformat(), scan["id"]),
     )
+    return result_id, net
+
+
+def _omr_scan_is_clean(scan):
+    """Toplu/otomatik onaya uygun mu: ogrenci atanmis, okunmus, supheli
+    (cift isaret/belirsiz) sorusu YOK."""
+    if scan["status"] != "needs_review" or not scan["student_id"] or not scan["per_question_json"]:
+        return False
+    try:
+        payload = json.loads(scan["per_question_json"])
+    except (ValueError, TypeError):
+        return False
+    if payload.get("cornersUncertain"):
+        return False
+    return (payload.get("summary") or {}).get("flagged", 1) == 0
+
+
+@app.route("/api/teacher/omr/scans/<int:scan_id>/approve", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_approve_scan(scan_id):
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    scan = _get_owned_omr_scan(db, scan_id, org_id)
+    if not scan:
+        return jsonify({"error": "Tarama bulunamadı."}), 404
+    try:
+        result_id, net = _omr_approve_scan_core(db, scan, org_id)
+    except _OmrApproveError as e:
+        return jsonify({"error": e.message}), e.status
     db.commit()
     log_audit(db, "OMR_SCAN_APPROVED", resource_type="omr_scan", resource_id=scan_id)
     return jsonify({"ok": True, "resultId": result_id, "net": net})
+
+
+@app.route("/api/teacher/omr/exams/<int:exam_def_id>/approve-clean", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_approve_clean(exam_def_id):
+    """Toplu onay (2026-11-06 ogretmen geri bildirimi: "onaylari sonradan
+    verirken cok ugrasiyorsun"): bu testin ogrencisi atanmis ve supheli
+    sorusu OLMAYAN tum bekleyen taramalarini tek seferde onaylar. Supheli/
+    eslesmemis olanlar dokunulmadan kalir. Govde opsiyonel {scanIds:[...]} -
+    verilirse sadece o taramalar (ör. kamera otomatik onayi tek tarama icin)."""
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    exam_def = db.execute(
+        "SELECT id FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+        (exam_def_id, org_id),
+    ).fetchone()
+    if not exam_def:
+        return jsonify({"error": "Test tanımı bulunamadı."}), 404
+    data = request.get_json(silent=True) or {}
+    only_ids = data.get("scanIds")
+    only = {i for i in only_ids if isinstance(i, int)} if isinstance(only_ids, list) else None
+
+    rows = db.execute(
+        "SELECT * FROM omr_scans WHERE exam_definition_id = ? AND organization_id = ? "
+        "AND status = 'needs_review' ORDER BY id",
+        (exam_def_id, org_id),
+    ).fetchall()
+    approved, errors = [], []
+    skipped = {"flagged": 0, "noStudent": 0, "error": 0}
+    for scan in rows:
+        if only is not None and scan["id"] not in only:
+            continue
+        if not _omr_scan_is_clean(scan):
+            skipped["noStudent" if not scan["student_id"] else "flagged"] += 1
+            continue
+        try:
+            _rid, net = _omr_approve_scan_core(db, scan, org_id)
+            approved.append({"scanId": scan["id"], "net": net})
+        except _OmrApproveError as e:
+            skipped["error"] += 1
+            errors.append({"scanId": scan["id"], "error": e.message})
+    db.commit()
+    for a in approved:
+        log_audit(db, "OMR_SCAN_APPROVED", resource_type="omr_scan", resource_id=a["scanId"])
+    return jsonify({"ok": True, "approved": approved, "skipped": skipped, "errors": errors[:20]})
 
 
 # ============================================================
