@@ -7030,6 +7030,29 @@ def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token):
     return student_id, paper_id, match_status, warnings
 
 
+def _omr_sanitize_diag(raw):
+    """Kamera istemcisinin tani bilgisi (kac denemede, hangi nedenlerle
+    okunamadigi - 2026-11-06). Sadece bilinen, kucuk, sayisal alanlar."""
+    if not isinstance(raw, dict):
+        return None
+
+    def num(v, lo, hi):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi else None
+
+    out = {
+        "attempts": num(raw.get("attempts"), 0, 10000),
+        "streakMs": num(raw.get("streakMs"), 0, 3_600_000),
+        "qrErrMm": num(raw.get("qrErrMm"), 0, 100),
+        "wide": bool(raw.get("wide")),
+        "engine": str(raw.get("engine"))[:16] if raw.get("engine") else None,
+    }
+    fails = raw.get("fails")
+    if isinstance(fails, dict):
+        out["fails"] = {k: int(v) for k, v in fails.items()
+                        if k in ("qr", "corners", "glare", "lowconf", "other") and num(v, 0, 10000) is not None}
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def _omr_duplicate_card(db, org_id, paper_id, image_path_to_cleanup, pipeline_ms, pdf_page_count=None):
     """paper_id zaten (reddedilmemis) bir taramaya bagliysa o taramanin
     kartini dondurur, YENI kayit ACMAZ (bkz. api_teacher_omr_upload_scan
@@ -7311,7 +7334,11 @@ def api_teacher_omr_client_decoded_scan():
 
     answer_key = json.loads(exam_def["answer_key_json"] or "{}")
     graded_questions, summary = _grade_omr_questions(raw_questions, answer_key)
-    per_question_payload = json.dumps({"questions": graded_questions, "summary": summary}, ensure_ascii=False)
+    pq = {"questions": graded_questions, "summary": summary}
+    diag = _omr_sanitize_diag(data.get("diag"))
+    if diag:
+        pq["diag"] = diag
+    per_question_payload = json.dumps(pq, ensure_ascii=False)
 
     t0 = time.perf_counter()
     dup_card = _omr_duplicate_card(db, org_id, paper_id, None, 0)

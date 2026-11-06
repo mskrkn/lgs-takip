@@ -97,37 +97,23 @@
     return H; // çağıran silmeli
   }
 
-  function invertMat(cv, H) {
-    const inv = new cv.Mat();
-    cv.invert(H, inv);
-    return inv;
-  }
-
-  function transformPoint(cv, Hinv, x, y) {
-    const src = cv.matFromArray(1, 1, cv.CV_32FC2, [x, y]);
-    const dst = new cv.Mat();
-    cv.perspectiveTransform(src, dst, Hinv);
-    const result = [dst.data32F[0], dst.data32F[1]];
-    src.delete();
-    dst.delete();
-    return result;
-  }
-
-  // omr_pipeline.py _refine_square_in_window'un birebir aynısı.
-  function refineSquareInWindow(cv, grayMat, cx, cy, winR, expectedAreaPx) {
+  // omr_pipeline.py _square_candidates'in birebir aynısı: penceredeki
+  // kare-benzeri dolu lekeler, skora gore azalan (en fazla `limit`).
+  function squareCandidates(cv, grayMat, cx, cy, winR, expectedAreaPx, limit) {
+    const lim = limit || 3;
     const W = grayMat.cols, H = grayMat.rows;
     const x0 = Math.max(0, Math.floor(cx - winR));
     const x1 = Math.min(W, Math.floor(cx + winR));
     const y0 = Math.max(0, Math.floor(cy - winR));
     const y1 = Math.min(H, Math.floor(cy + winR));
-    if (x1 <= x0 || y1 <= y0) return null;
+    if (x1 - x0 < 4 || y1 - y0 < 4) return [];
     const crop = grayMat.roi(new cv.Rect(x0, y0, x1 - x0, y1 - y0));
     const th = new cv.Mat();
     cv.threshold(crop, th, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
     const contours = new cv.MatVector();
     const hierarchy = new cv.Mat();
     cv.findContours(th, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    let best = null, bestScore = -1;
+    const out = [];
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i);
       const area = cv.contourArea(c);
@@ -138,57 +124,232 @@
           const aspect = rw < rh ? rw / rh : rh / rw;
           const solidity = area / (rw * rh);
           if (aspect >= 0.6 && solidity >= 0.85) {
-            const dx = rr.center.x - crop.cols / 2, dy = rr.center.y - crop.rows / 2;
-            const distToCenter = Math.hypot(dx, dy);
-            const score = solidity - distToCenter / winR;
-            if (score > bestScore) { bestScore = score; best = [x0 + rr.center.x, y0 + rr.center.y]; }
+            const ax = x0 + rr.center.x, ay = y0 + rr.center.y;
+            out.push({ score: solidity - Math.hypot(ax - cx, ay - cy) / winR, p: [ax, ay] });
           }
         }
       }
       c.delete();
     }
     crop.delete(); th.delete(); contours.delete(); hierarchy.delete();
-    return best;
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, lim).map((o) => o.p);
   }
 
-  // omr_pipeline.py _rectify'nin (2026-09-23 düzeltmesi dahil) birebir
-  // aynısı: HER köşenin ilk tahmini DAİMA sadece QR'ın kendi 4 köşesinden
-  // türetilen sabit H0'dan hesaplanır - kümülatif değil.
+  function refineSquareInWindow(cv, grayMat, cx, cy, winR, expectedAreaPx) {
+    const c = squareCandidates(cv, grayMat, cx, cy, winR, expectedAreaPx, 1);
+    return c.length ? c[0] : null;
+  }
+
+  // ---- Saf JS 4 nokta homografisi (aday 4'lu degerlendirmesi icin; her
+  // aday icin WASM Mat acmamak - hem hiz hem sizinti riski) ----
+  function homography4(src, dst) {
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [u, v] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+      A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
+    }
+    for (let col = 0; col < 8; col++) {
+      let piv = col;
+      for (let r = col + 1; r < 8; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+      if (Math.abs(A[piv][col]) < 1e-12) return null;
+      [A[col], A[piv]] = [A[piv], A[col]]; [b[col], b[piv]] = [b[piv], b[col]];
+      for (let r = 0; r < 8; r++) {
+        if (r === col) continue;
+        const f = A[r][col] / A[col][col];
+        if (!f) continue;
+        for (let k = col; k < 8; k++) A[r][k] -= f * A[col][k];
+        b[r] -= f * b[col];
+      }
+    }
+    const h = b.map((v, i) => v / A[i][i]);
+    return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+  }
+
+  function invert3(m) {
+    const [a, b, c, d, e, f, g, h, i] = m;
+    const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    const det = a * A + b * B + c * C;
+    if (Math.abs(det) < 1e-12) return null;
+    return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det,
+      B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
+      C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
+  }
+
+  function applyH(m, x, y) {
+    const w = m[6] * x + m[7] * y + m[8];
+    return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w];
+  }
+
+  function isConvexQuad(q) {
+    let sign = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = q[i], b = q[(i + 1) % 4], c = q[(i + 2) % 4];
+      const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (Math.abs(cr) < 1e-9) return false;
+      const s = cr > 0 ? 1 : -1;
+      if (sign && s !== sign) return false;
+      sign = s;
+    }
+    return true;
+  }
+
+  // Kose dogrulama (2026-11-06) - aciklama ve olcumler icin bkz.
+  // omr_pipeline.py "Kose dogrulama" blogu. Sabitler oradakiyle AYNI.
+  const FID_PRIMARY_WIN_QR = 1.4;
+  const FID_WIDE_WIN_QR = 2.6;
+  const FID_SIDE_ASYM_MAX = 0.12;
+  const FID_ASPECT_TOL = 0.22;
+  const FID_QR_REPROJ_MAX_MM = 4.0;
+  const FID_PATCH_MIN_CONTRAST = 35;
+  const FID_PATCH_INNER_DARK_MIN = 0.85;
+  const FID_PATCH_RING_BRIGHT_MIN = 0.7;
+
+  function median(arr) {
+    const s = arr.slice().sort((a, b) => a - b);
+    const n = s.length;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+
+  // omr_pipeline.py _fid_patch_ok'un aynisi.
+  function fidPatchOk(grayMat, Hinv, center, sizeMm, pxPerMm) {
+    const [cx, cy] = center;
+    const half = sizeMm / 2;
+    const steps = [-1, -0.66, -0.33, 0, 0.33, 0.66, 1];
+    const inner = [];
+    for (const dx of steps) for (const dy of steps) inner.push([cx + dx * half * 0.7, cy + dy * half * 0.7]);
+    const rr = half + 1.0;
+    const ring = [];
+    for (let i = 0; i < 20; i++) { const a = (2 * Math.PI * i) / 20; ring.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a)]); }
+    const W = grayMat.cols, H = grayMat.rows, data = grayMat.data;
+    const sample = (pts) => {
+      const vals = [];
+      for (const [xm, ym] of pts) {
+        const [x, y] = applyH(Hinv, xm * pxPerMm, ym * pxPerMm);
+        const xi = Math.round(x), yi = Math.round(y);
+        if (!(xi >= 0 && xi < W && yi >= 0 && yi < H)) return null;
+        vals.push(data[yi * W + xi]);
+      }
+      return vals;
+    };
+    const iv = sample(inner), rv = sample(ring);
+    if (!iv || !rv) return false;
+    const iMed = median(iv), rMed = median(rv);
+    if (rMed - iMed < FID_PATCH_MIN_CONTRAST) return false;
+    const mid = (iMed + rMed) / 2;
+    const innerDark = iv.filter((v) => v < mid).length / iv.length;
+    const ringBright = rv.filter((v) => v > mid).length / rv.length;
+    return innerDark >= FID_PATCH_INNER_DARK_MIN && ringBright >= FID_PATCH_RING_BRIGHT_MIN;
+  }
+
+  function dedupe(points, minD) {
+    const out = [];
+    for (const p of points) if (out.every((q) => dist(p, q) >= minD)) out.push(p);
+    return out;
+  }
+
+  // omr_pipeline.py _locate_fiducials'in birebir aynasi. Doner
+  // {refined: {TL,TR,BR,BL: [x,y]}, info: {ok, reason, qrErrMm, wide}}.
+  function locateFiducials(cv, gray, qrPoints, template) {
+    const G = root.OmrGeometry;
+    const P = G.PX_PER_MM;
+    const qrSizePx = dist(qrPoints[1], qrPoints[0]);
+    const r1 = qrSizePx * FID_PRIMARY_WIN_QR;
+    const expArea = Math.pow(qrSizePx * (template.fiducialSizeMm / 20.0), 2);
+    const fidMm = G.fiducialCentersMm(template);
+    const qrDst = G.qrMmCorners(template).map(([x, y]) => [x * P, y * P]);
+    const H0 = homography4(qrPoints, qrDst);
+    const H0inv = H0 && invert3(H0);
+    const info = { ok: false, reason: '', qrErrMm: null, wide: false };
+    if (!H0inv) { info.reason = 'qr'; return { refined: null, info }; }
+    const pred = {};
+    for (const k of FIDUCIAL_ORDER) pred[k] = applyH(H0inv, fidMm[k][0] * P, fidMm[k][1] * P);
+    const fallback = {};
+    const minSep = qrSizePx * (template.fiducialSizeMm / 16.0) * 0.5;
+    const cands = {};
+    for (const k of ['TL', 'TR']) {
+      cands[k] = squareCandidates(cv, gray, pred[k][0], pred[k][1], r1, expArea, 2);
+      fallback[k] = cands[k][0] || pred[k];
+    }
+    if (!cands.TL.length || !cands.TR.length) {
+      for (const k of ['BL', 'BR']) fallback[k] = refineSquareInWindow(cv, gray, pred[k][0], pred[k][1], r1, expArea) || pred[k];
+      info.reason = 'top';
+      return { refined: fallback, info };
+    }
+    const wMm = fidMm.TR[0] - fidMm.TL[0];
+    const hMm = fidMm.BL[1] - fidMm.TL[1];
+    const tl0 = cands.TL[0], tr0 = cands.TR[0];
+    const u = [(tr0[0] - tl0[0]) / wMm, (tr0[1] - tl0[1]) / wMm];
+    let v = [-u[1], u[0]];
+    if (v[0] * (pred.BL[0] - pred.TL[0]) + v[1] * (pred.BL[1] - pred.TL[1]) < 0) v = [-v[0], -v[1]];
+    const pa = { BL: [tl0[0] + v[0] * hMm, tl0[1] + v[1] * hMm], BR: [tr0[0] + v[0] * hMm, tr0[1] + v[1] * hMm] };
+    for (const k of ['BL', 'BR']) {
+      let c = squareCandidates(cv, gray, pa[k][0], pa[k][1], r1, expArea)
+        .concat(squareCandidates(cv, gray, pred[k][0], pred[k][1], r1, expArea));
+      if (!c.length) {
+        const mid = [(pa[k][0] + pred[k][0]) / 2, (pa[k][1] + pred[k][1]) / 2];
+        const halfGap = dist(pa[k], pred[k]) / 2;
+        c = squareCandidates(cv, gray, mid[0], mid[1], Math.max(qrSizePx * FID_WIDE_WIN_QR, halfGap + r1), expArea, 4);
+        if (c.length) info.wide = true;
+      }
+      cands[k] = dedupe(c, minSep).slice(0, 4);
+      fallback[k] = cands[k][0] || pred[k];
+    }
+    if (!cands.BL.length || !cands.BR.length) { info.reason = 'bottom'; return { refined: fallback, info }; }
+
+    const dst = FIDUCIAL_ORDER.map((k) => [fidMm[k][0] * P, fidMm[k][1] * P]);
+    const expectedRatio = hMm / wMm;
+    const uLen = Math.hypot(u[0], u[1]);
+    let best = null;
+    for (const tl of cands.TL) for (const tr of cands.TR) for (const br of cands.BR) for (const bl of cands.BL) {
+      const top = dist(tr, tl), left = dist(bl, tl), right = dist(br, tr);
+      if (top < 1 || Math.abs(left - right) / ((left + right) / 2) > FID_SIDE_ASYM_MAX) continue;
+      if (Math.abs(((left + right) / 2) / top / expectedRatio - 1) > FID_ASPECT_TOL) continue;
+      const quad = [tl, tr, br, bl];
+      if (!isConvexQuad(quad)) continue;
+      const Hc = homography4(quad, dst);
+      if (!Hc) continue;
+      let err = 0;
+      for (let i = 0; i < 4; i++) err = Math.max(err, dist(applyH(Hc, qrPoints[i][0], qrPoints[i][1]), qrDst[i]));
+      err /= P;
+      if (err > FID_QR_REPROJ_MAX_MM) continue;
+      const Hcinv = invert3(Hc);
+      if (!Hcinv || !FIDUCIAL_ORDER.every((k) => fidPatchOk(gray, Hcinv, fidMm[k], template.fiducialSizeMm, P))) continue;
+      const cost = err + (dist(bl, pa.BL) + dist(br, pa.BR)) / (uLen * 10.0);
+      if (!best || cost < best.cost) best = { cost, err, refined: { TL: tl, TR: tr, BR: br, BL: bl } };
+    }
+    if (!best) { info.reason = 'geometry'; return { refined: fallback, info }; }
+    info.ok = true;
+    info.qrErrMm = Math.round(best.err * 100) / 100;
+    return { refined: best.refined, info };
+  }
+
+  // omr_pipeline.py _rectify'nin birebir aynasi (2026-11-06 kose dogrulamasi
+  // dahil). Doner {warped, refined, info}; info.ok=false ise warped yine
+  // uretilir (eski davranis) ama decodeFrame bu kareyi OKUMAZ.
   function rectify(cv, rgbaMat, qrPoints, template) {
     const G = root.OmrGeometry;
     const gray = new cv.Mat();
     cv.cvtColor(rgbaMat, gray, cv.COLOR_RGBA2GRAY);
-    const qrSizePx = dist(qrPoints[1], qrPoints[0]);
-    const winR = qrSizePx * 1.4;
-    const expectedFidAreaPx = Math.pow(qrSizePx * (template.fiducialSizeMm / 20.0), 2);
-
-    const fidMm = G.fiducialCentersMm(template);
-    const qrDst = G.qrMmCorners(template).map(([x, y]) => [x * G.PX_PER_MM, y * G.PX_PER_MM]);
-
-    const H0 = getPerspectiveTransformMat(cv, qrPoints, qrDst);
-    const H0inv = invertMat(cv, H0);
-    H0.delete();
-
-    const refined = {};
-    for (const key of FIDUCIAL_ORDER) {
-      const [xMm, yMm] = fidMm[key];
-      const approx = transformPoint(cv, H0inv, xMm * G.PX_PER_MM, yMm * G.PX_PER_MM);
-      const found = refineSquareInWindow(cv, gray, approx[0], approx[1], winR, expectedFidAreaPx);
-      refined[key] = found || approx;
+    let located;
+    try {
+      located = locateFiducials(cv, gray, qrPoints, template);
+    } finally {
+      gray.delete();
     }
-    H0inv.delete();
-
+    const { refined, info } = located;
+    if (!refined) return { warped: null, refined: null, info };
+    const fidMm = G.fiducialCentersMm(template);
     const src = FIDUCIAL_ORDER.map((k) => refined[k]);
     const dst = FIDUCIAL_ORDER.map((k) => { const [x, y] = fidMm[k]; return [x * G.PX_PER_MM, y * G.PX_PER_MM]; });
     const Hfinal = getPerspectiveTransformMat(cv, src, dst);
-
     const canonW = Math.round(template.formWMm * G.PX_PER_MM);
     const canonH = Math.round(template.formHMm * G.PX_PER_MM);
     const warped = new cv.Mat();
     cv.warpPerspective(rgbaMat, warped, Hfinal, new cv.Size(canonW, canonH));
     Hfinal.delete();
-    gray.delete();
-    return { warped, refined };
+    return { warped, refined, info };
   }
 
   // omr_pipeline.py _disk_mean'in birebir aynısı - ham Uint8Array üzerinde
@@ -390,16 +551,27 @@
 
     const qr = detectQr(jsQRFn, imageData, cv);
     if (!qr) {
-      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+      return { readable: false, matchStatus: 'unmatched', paperToken: null, failReason: 'qr',
         warnings: ["Kağıdın QR kodu bulunamadı - kağıt kadraja tam girmiyor olabilir."] };
     }
 
     const rgbaMat = cv.matFromImageData(imageData);
-    let warped, refined;
+    let warped, refined, fidInfo;
     try {
-      ({ warped, refined } = rectify(cv, rgbaMat, qr.points, template));
+      ({ warped, refined, info: fidInfo } = rectify(cv, rgbaMat, qr.points, template));
     } finally {
       rgbaMat.delete();
+    }
+    // 2026-11-06: 4 kose karesi bulunup geometrisi dogrulanamadiysa bu kare
+    // OKUNMAZ - eskiden bulunamayan kose QR tahminiyle doldurulup okumaya
+    // devam ediliyordu; sayfa egik duzlesip balonlar yanlis yerden okunuyordu
+    // (uretimde ogretmenin sildigi taramalarin ~%90'i). Cagiran taraf bunu
+    // diger "okunamadi" durumlari gibi sessizce yeniden dener.
+    if (!fidInfo.ok) {
+      if (warped) warped.delete();
+      return { readable: false, matchStatus: 'unmatched', paperToken: null, failReason: 'corners',
+        fiducialInfo: fidInfo,
+        warnings: ['Kağıdın 4 köşesindeki siyah kareler görünmüyor - kağıdın tamamını çerçeveye alın.'] };
     }
 
     const warpedGray = new cv.Mat();
@@ -415,7 +587,7 @@
     if (glareFrac >= OMR_GLARE_AREA_FRACTION) {
       warpedGray.delete();
       warped.delete();
-      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+      return { readable: false, matchStatus: 'unmatched', paperToken: null, failReason: 'glare',
         warnings: ['Kağıtta aşırı parlama tespit edildi (flaş/ışık yansıması olabilir) - flaşı kapatıp tekrar deneyin.'] };
     }
 
@@ -440,13 +612,13 @@
     // mumkun) ama gercek kullanicidan gelen COP okumalarin cogunu onler.
     if (confidenceAvg < OMR_MIN_CONFIDENCE_AVG) {
       warped.delete(); // erken donus - WASM Mat sizintisi olmasin
-      return { readable: false, matchStatus: 'unmatched', paperToken: null,
+      return { readable: false, matchStatus: 'unmatched', paperToken: null, failReason: 'lowconf',
         warnings: ['Okuma güvenilir değil (bulanık/örtülü olabilir) - tekrar deneniyor.'] };
     }
 
     const resultBase = {
       readable: true, matchStatus: 'matched_qr', paperToken: qr.data,
-      questions, confidenceAvg, warnings, refinedFiducials: refined,
+      questions, confidenceAvg, warnings, refinedFiducials: refined, fiducialInfo: fidInfo,
     };
     if (needsPreview(resultBase) && typeof OffscreenCanvas !== 'undefined') {
       try {
@@ -459,7 +631,7 @@
   }
 
   const OmrWorkerCore = {
-    decodeFrame, detectQr, rectify, readQuestions, classifyGroup, diskMean, glareFraction,
+    decodeFrame, detectQr, rectify, locateFiducials, readQuestions, classifyGroup, diskMean, glareFraction,
     BLANK_VS_MARKED_GAP, MULTI_MARK_CLOSE_GAP, MULTI_MARK_MIN_PROMINENCE, BUBBLE_SAMPLE_R_MM,
     OMR_MIN_CONFIDENCE_AVG, OMR_GLARE_SATURATION_LEVEL, OMR_GLARE_BG_PERCENTILE,
     OMR_GLARE_MARGIN, OMR_GLARE_AREA_FRACTION,
