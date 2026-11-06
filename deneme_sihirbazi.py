@@ -229,7 +229,10 @@ def _score_blocks(blocks, booklet, keys, only=None):
         pq = ["B" if x == " " else "D" if x == a else "Y" for x, a in zip(raw, K["A"])]
         c, w = pq.count("D"), pq.count("Y")
         net = round(max(0.0, c - w / 3), 2)
-        out[k] = {"correct": c, "wrong": w, "blank": n - c - w, "net": net, "answers": pq, "questions": n}
+        # marks: ogrencinin isaretledigi siklar (A sirasinda, bos=" ") - ogrenci
+        # panelinde "sen A isaretledin, dogrusu C" gosterebilmek icin.
+        out[k] = {"correct": c, "wrong": w, "blank": n - c - w, "net": net, "answers": pq, "questions": n,
+                  "marks": raw.upper()}
         total += net
     return out, round(total, 2)
 

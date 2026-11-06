@@ -687,15 +687,19 @@ const OptikProfiles = {
     const key = keyAns || '';
     const student = (studentRaw || '').padEnd(key.length, ' ');
     const perQuestion = [];
+    // marks: öğrencinin işaretlediği şık (boş = null) - öğrenci panelinde
+    // "sen A işaretledin, doğrusu C" gösterebilmek için perQuestion ile aynı sırada.
+    const marks = [];
     for (let i = 0; i < key.length; i++) {
       const k = (key[i] || '').toUpperCase();
       const s = (student[i] || '').toUpperCase();
+      marks.push(s && s !== ' ' ? s : null);
       if (!k || k === ' ') { perQuestion.push(null); continue; }
       if (!s || s === ' ') { blank++; perQuestion.push('B'); }
       else if (s === k) { correct++; perQuestion.push('D'); }
       else { wrong++; perQuestion.push('Y'); }
     }
     const net = Math.max(0, correct - wrong / 3);
-    return { correct, wrong, blank, net: parseFloat(net.toFixed(2)), perQuestion };
+    return { correct, wrong, blank, net: parseFloat(net.toFixed(2)), perQuestion, marks };
   },
 };

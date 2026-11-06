@@ -608,6 +608,7 @@ class Database {
       const net = parseFloat((correct - wrong / 3).toFixed(2));
       data.subjects[sub.key] = { correct, wrong, blank: Math.max(0, blank), net };
       if (s.answers) data.subjects[sub.key].answers = s.answers;
+      if (s.marks) data.subjects[sub.key].marks = s.marks;
     });
 
     let resId;

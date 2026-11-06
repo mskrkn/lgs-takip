@@ -36,6 +36,14 @@
         .replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     }
 
+    // Sunucu (jsonify) ders anahtarlarını alfabetik döndürüyor - ekranda LGS
+    // sırası (Türkçe, İnkılap/Sosyal, Din, İngilizce, Matematik, Fen) kullanılır.
+    const SUBJECT_ORDER = ['turkce', 'inkilap', 'sosyal', 'din', 'ingilizce', 'matematik', 'fen'];
+    function orderedSubjects(obj) {
+      const rank = (k) => { const i = SUBJECT_ORDER.indexOf(k); return i < 0 ? 99 : i; };
+      return Object.entries(obj || {}).sort((a, b) => rank(a[0]) - rank(b[0]));
+    }
+
     function chartDefaults() {
       return {
         responsive: true, maintainAspectRatio: false,
@@ -129,7 +137,9 @@
       document.getElementById('exam-results').innerHTML = tabsHtml + subjectFilterHtml + masteryChartHtml + `
         <div style="overflow-x:auto"><table class="ep-exams-table">
           <tr><th>Deneme</th>${isMastery ? '<th>Ders</th>' : ''}<th>Tarih</th><th>Toplam Net</th></tr>
-          ${filtered.map(r => `<tr><td>${escapeHtml(r.examName)}</td>${isMastery ? `<td>${escapeHtml(masterySubject(r))}</td>` : ''}<td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
+          ${filtered.map(r => isMastery
+            ? `<tr><td>${escapeHtml(r.examName)}</td><td>${escapeHtml(masterySubject(r))}</td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`
+            : `<tr class="ep-row-link" tabindex="0" onclick="window._ogrOpenExamDetail(${Number(r.examId)})" onkeydown="if(event.key==='Enter')window._ogrOpenExamDetail(${Number(r.examId)})"><td>${escapeHtml(r.examName)} <span class="ep-row-go">Soru soru incele ›</span></td><td>${escapeHtml(r.examDate)||'—'}</td><td class="ep-net-badge">${r.totalNet}</td></tr>`).join('')}
         </table></div>`;
       if (masteryChartHtml) renderMasteryTrendChart();
     }
@@ -223,11 +233,18 @@
 
     // ----- KPI ŞERIDI -----
     function renderScorecards(last, diffVal, classRank, riseStreak) {
+      // Sıralama kuralı (b): ilk yarıda sıra numarası, alt yarıda gelişim
+      const lr = studentData && studentData.latestRanks, pr = studentData && studentData.prevRanks;
+      const ri = rankInfo(lr && lr.class, pr && pr.class);
+      const rankItem = !ri ? { icon:'🏆', iconCls:'blue', val:'—', label:'Sınıf Sıralaması', delta:null }
+        : ri.top ? { icon:'🏆', iconCls:'blue', val:`${lr.class.rank}/${lr.class.size}`, label:'Sınıf Sıralaması', delta:null }
+        : ri.moved > 0 ? { icon:'📈', iconCls:'green', val:`▲${ri.moved}`, label:'Sırada Yükseliş', delta:null }
+        : { icon:'🎯', iconCls:'blue', val:'İlk yarı', label:'Sıralama Hedefin', delta:null };
       const icons = [
         { icon:'🎯', iconCls:'purple', val: last ? last.totalNet : '—', label:'Toplam Net', delta: null },
         { icon: diffVal==null?'➖':diffVal>=0?'📈':'📉', iconCls: diffVal==null?'blue':diffVal>=0?'green':'amber',
           val: diffVal==null?'—':(diffVal>0?'+':'')+diffVal, label:'Son Değişim', delta: diffVal==null?null:diffVal },
-        { icon:'🏆', iconCls:'blue', val: classRank?`${classRank.rank}/${classRank.classSize}`:'—', label:'Sınıf Sıralaması', delta: null },
+        rankItem,
         { icon:'🔥', iconCls:'amber', val: riseStreak>0?riseStreak:'—', label:'Yükseliş Serisi', delta: null },
       ];
       document.getElementById('scorecards').innerHTML = icons.map(it => {
@@ -418,7 +435,15 @@
             ? 'Sınıfının <b>zirvesindesin</b> 🏆'
             : topQuarter
               ? 'Sınıfının <b>ilk çeyreğindesin</b> — zirveye çok yakınsın'
-              : `Sınıfında <b>${cr.rank}. sıradasın</b> (${cr.classSize} kişi arasında)`;
+              : cr.rank <= Math.ceil(cr.classSize / 2)
+                ? `Sınıfında <b>${cr.rank}. sıradasın</b> (${cr.classSize} kişi arasında)`
+                : (() => {
+                    const pc = d.prevRanks && d.prevRanks.class;
+                    const up = pc ? pc.rank - cr.rank : 0;
+                    return up > 0
+                      ? `Geçen denemene göre sınıfında <b>${up} sıra yükseldin</b> 📈`
+                      : 'Sınıfının <b>ilk yarısına</b> girmek için güzel bir fırsatın var — her doğru seni yukarı taşır';
+                  })();
           const hedef = d.scoreBreakdown && d.scoreBreakdown.axes ? d.scoreBreakdown.axes.hedef : null;
           const hedefTxt = (hedef != null && hedef < 100)
             ? ` Sınıfının en yüksek netine göre şu an <b>%${hedef}</b> yakınlıktasın — üzerine gitmeye devam et.`
@@ -657,7 +682,7 @@
       if (!last || !last.subjects || Object.keys(last.subjects).length === 0) {
         el.innerHTML = '<div class="ep-empty"><div class="ep-empty-icon">⚡</div>Henüz deneme sonucu yok.</div>'; return;
       }
-      el.innerHTML = Object.entries(last.subjects).map(([key, sub]) => {
+      el.innerHTML = orderedSubjects(last.subjects).map(([key, sub]) => {
         const net = (sub && sub.net) || 0;
         const q   = (typeof getSubjectQuestionCount === 'function') ? getSubjectQuestionCount(key, sub) : 20;
         const pct = Math.max(0, Math.min(100, Math.round((net/q)*100)));
@@ -672,7 +697,7 @@
         }
         const deltaLabel = delta !== null ? `${delta>0?'📈 +':delta<0?'📉 ':'➖ '}${delta} net` : `${net} net`;
         return `
-          <div class="ep-subject-card">
+          <button type="button" class="ep-subject-card ep-subject-link" onclick="window._ogrOpenGeneralSubject(${JSON.stringify(key).replace(/"/g, '&quot;')})">
             <div class="ep-subject-head">
               <div class="ep-subject-icon-wrap" style="background:${color}22">${subjectIcon(key)}</div>
               <span class="ep-subject-name">${subjectName(key)}</span>
@@ -682,7 +707,8 @@
               <div class="ep-subject-bar" style="width:${pct}%;background:${color}"></div>
             </div>
             <div class="ep-subject-status" style="color:${color}">${statusIcon} ${statusLabel} <span style="margin-left:auto;font-size:13px;color:var(--text-muted)">${deltaLabel}</span></div>
-          </div>`;
+            <div class="ep-subject-more">🔍 Soru soru incele →</div>
+          </button>`;
       }).join('');
     }
 
@@ -1096,8 +1122,9 @@
       // 'dash-*' görünümleri Ana Sayfa bölümünün alt görünümleridir (bkz. setDashView)
       const dashView = DASH_PAGES[page];
       const section = dashView ? 'dashboard' : page;
-      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===section));
-      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===section));
+      const navSection = section === 'exam-detail' ? 'exams' : section;
+      document.querySelectorAll('.nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===navSection));
+      document.querySelectorAll('.mobile-nav-item[data-page]').forEach(i => i.classList.toggle('active', i.dataset.page===navSection));
       document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
       const sec = document.getElementById(`page-${section}`);
       if (sec) sec.classList.add('active');
@@ -1106,6 +1133,8 @@
         'dash-general': ['Genel Denemeler','Netlerin & Gelişimin'],
         'dash-mastery': ['Kazanım Denemeleri','Ders Ders Kazanımların'],
         'dash-mastery-subject': ['Kazanım Denemeleri',''],
+        'dash-general-subject': ['Genel Denemeler',''],
+        'exam-detail': ['Deneme Detayı','Soru soru sonuçların'],
         analytics: ['Analizler','Konu Analizi & Sınıf Karşılaştırma'],
         exams:     ['Denemelerim','Deneme Sonuçlarım'],
         assignments: ['Ödevlerim','Öğretmenimin Verdiği Ödevler'],
@@ -1120,6 +1149,7 @@
       if (sidebar) sidebar.classList.remove('open');
       if (overlay) overlay.classList.remove('active');
       if (dashView) setDashView(dashView, data);
+      if (page === 'exam-detail') { window.scrollTo({ top: 0 }); renderExamDetail(data && data.examId); }
     }
 
     function setupNav() {
@@ -1154,7 +1184,7 @@
     // NavHistory sayfası ('dash-*'), böylece telefonun geri tuşu bir üst
     // görünüme döner. Hepsi aynı #page-dashboard bölümünde yaşar.
     // =====================================================================
-    const DASH_PAGES = { 'dashboard': 'chooser', 'dash-general': 'general', 'dash-mastery': 'mastery', 'dash-mastery-subject': 'mastery-subject' };
+    const DASH_PAGES = { 'dashboard': 'chooser', 'dash-general': 'general', 'dash-mastery': 'mastery', 'dash-mastery-subject': 'mastery-subject', 'dash-general-subject': 'general-subject' };
     const LAST_VIEW_KEY = 'ogr.lastDashView';
     let masteryData = null;      // /api/student/mastery yanıtı (ilk girişte bir kez çekilir)
     let kmCharts = [];
@@ -1487,6 +1517,7 @@
       document.getElementById('dash-general').hidden = view !== 'general';
       document.getElementById('dash-mastery').hidden = view !== 'mastery';
       document.getElementById('dash-mastery-subject').hidden = view !== 'mastery-subject';
+      document.getElementById('dash-general-subject').hidden = view !== 'general-subject';
       if (onChooser) {
         let last = null;
         try { last = localStorage.getItem(LAST_VIEW_KEY); } catch (_) { /* depolama kapalı olabilir */ }
@@ -1499,6 +1530,8 @@
         requestAnimationFrame(() => [radarChart, areaChart, scoreRadarChart, masteryTrendChart].forEach(c => c && c.resize()));
       } else if (view === 'mastery') {
         renderMasteryOverview();
+      } else if (view === 'general-subject') {
+        renderGeneralSubject(data && data.subject, data && data.examId);
       } else if (view === 'mastery-subject') {
         const go = () => renderMasterySubject(data && data.subject, data && data.focus);
         if (masteryData) go(); else renderMasteryOverview().then(go);
@@ -1514,14 +1547,404 @@
       showPage('dash-mastery-subject', { subject, focus: focus || null });
     };
 
-    function renderChooserMeta(generalResults, allResults) {
-      const mastery = (allResults || []).filter(isMasteryExam);
-      const meta = (list, dateKey) => list.length
-        ? `${list.length} deneme · son: ${fmtDate(list[0][dateKey])}`
-        : 'Henüz deneme yok';
-      document.getElementById('choice-general-meta').textContent = meta(generalResults || [], 'examDate');
-      document.getElementById('choice-mastery-meta').textContent = meta(mastery, 'examDate');
+    // =====================================================================
+    // 2026-11-06: Ana sayfa seçim kartları (zengin özet) + Genel Denemeler
+    // ders detayı + Denemelerim > deneme detayı. Soru soru veri (D/Y/B,
+    // kazanım, doğru cevap, işaretlenen şık) /api/student/question-map'ten
+    // sadece ihtiyaç olunca, bir kez çekilir.
+    // =====================================================================
+    let questionMap = null, qmPromise = null, gsChart = null;
+
+    function loadQuestionMap() {
+      if (questionMap) return Promise.resolve(questionMap);
+      if (!qmPromise) {
+        qmPromise = fetch('/api/student/question-map').then(async (r) => {
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || 'Veri alınamadı.');
+          questionMap = d;
+          return d;
+        }).catch((e) => { qmPromise = null; throw e; });
+      }
+      return qmPromise;
     }
+
+    // Sıralama gösterimi (kullanıcı kararı 2026-11-06, seçenek b): ilk
+    // yarıdaysa sıra numarası, alt yarıdaysa numara yerine gelişim cümlesi.
+    function rankInfo(cur, prev) {
+      if (!cur || !cur.size) return null;
+      const moved = prev && prev.rank ? prev.rank - cur.rank : null; // + = yükseldi
+      if (cur.rank <= Math.ceil(cur.size / 2)) return { top: true, text: `${cur.rank}. / ${cur.size}`, moved };
+      if (moved > 0) return { top: false, text: `${moved} sıra yükseldin`, moved };
+      return { top: false, text: 'Hedef: ilk yarı', moved };
+    }
+
+    function rankPill(icon, label, cur, prev) {
+      const r = rankInfo(cur, prev);
+      if (!r) return '';
+      const mv = r.top && r.moved ? ` <b class="${r.moved > 0 ? 'km-up' : 'km-down'}">${r.moved > 0 ? '▲' : '▼'}${Math.abs(r.moved)}</b>` : '';
+      return `<span class="cc-rank${r.top ? '' : ' cc-rank-soft'}">${icon} <small>${escapeHtml(label)}</small> <b>${escapeHtml(r.text)}</b>${mv}</span>`;
+    }
+
+    function sparkSvg(values, color, fixedMax) {
+      const v = values.filter((x) => x != null);
+      if (v.length < 2) return '';
+      const w = 140, h = 36, p = 4;
+      const hi = fixedMax != null ? fixedMax : Math.max(...v);
+      const lo = fixedMax != null ? 0 : Math.min(...v);
+      const span = (hi - lo) || 1;
+      const pts = v.map((x, i) => [p + i * (w - 2 * p) / (v.length - 1), h - p - (x - lo) / span * (h - 2 * p)]);
+      const d = pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' ');
+      const last = pts[pts.length - 1];
+      return `<svg class="cc-spark" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+        <path d="${d} L ${last[0].toFixed(1)} ${h} L ${pts[0][0].toFixed(1)} ${h} Z" fill="${color}26"/>
+        <path class="cc-spark-line" d="${d}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/>
+        <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.6" fill="${color}"/></svg>`;
+    }
+
+    function ringSvg(pct, color, labelHtml) {
+      const r = 26, c = 2 * Math.PI * r;
+      const off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+      return `<span class="cc-ring"><svg viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="32" r="${r}" class="cc-ring-bg"/>
+          <circle cx="32" cy="32" r="${r}" class="cc-ring-fg" stroke="${color}" transform="rotate(-90 32 32)"
+            stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" style="--c:${c.toFixed(1)};--o:${off.toFixed(1)}"/>
+        </svg><span class="cc-ring-val">${labelHtml}</span></span>`;
+    }
+
+    // [data-count] sayılarını 0'dan hedefe sayarak gösterir (hareket azaltma tercihine uyar)
+    function runCountUps(root) {
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      root.querySelectorAll('[data-count]').forEach((el) => {
+        const to = parseFloat(el.dataset.count);
+        if (!isFinite(to)) return;
+        const dec = Number.isInteger(to) ? 0 : 2;
+        if (reduce) { el.textContent = to.toFixed(dec); return; }
+        const t0 = performance.now(), dur = 900;
+        const step = (t) => {
+          const k = Math.min(1, (t - t0) / dur);
+          el.textContent = (to * (1 - Math.pow(1 - k, 3))).toFixed(dec);
+          if (k < 1) requestAnimationFrame(step); else el.textContent = to.toFixed(dec);
+        };
+        requestAnimationFrame(step);
+      });
+    }
+
+    function subjectQ(key, sub) {
+      return (typeof getSubjectQuestionCount === 'function') ? getSubjectQuestionCount(key, sub) : ((sub && sub.questions) || 20);
+    }
+
+    function renderChooserCards(data) {
+      // ---- Genel Denemeler kartı
+      const general = data.generalResults || [];
+      const gEl = document.getElementById('choice-general-body');
+      if (!general.length) {
+        gEl.innerHTML = '<span class="cc-empty">🌱 İlk genel denemen geldiğinde netin, sıralaman ve derslerin burada görünecek.</span>';
+      } else {
+        const last = general[0], prev = general[1];
+        const diff = prev ? Math.round((last.totalNet - prev.totalNet) * 100) / 100 : null;
+        const lr = data.latestRanks || {}, pr = data.prevRanks || {};
+        const trend = general.slice(0, 6).reverse().map((r) => r.totalNet);
+        const isRecord = general.length >= 2 && last.totalNet >= Math.max(...general.slice(1).map((r) => r.totalNet));
+        const schoolLabel = lr.school && lr.school.grade ? `${lr.school.grade}. sınıflarda` : 'Okulda';
+        gEl.innerHTML = `
+          <span class="cc-last">🗓️ Son deneme: <b>${escapeHtml(last.examName)}</b> · ${fmtDate(last.examDate)}</span>
+          <span class="cc-main">
+            <span class="cc-big"><span data-count="${last.totalNet}">${last.totalNet}</span><small>net</small></span>
+            <span class="cc-mside">
+              ${diff != null ? `<span class="cc-delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${diff > 0 ? '▲ +' + diff : diff < 0 ? '▼ ' + diff : '＝ aynı'} <small>öncekine göre</small></span>` : ''}
+              ${isRecord ? '<span class="cc-badge cc-badge-gold">🏅 Kişisel rekor!</span>' : ''}
+            </span>
+          </span>
+          <span class="cc-ranks">${rankPill('🏫', 'Sınıfında', lr.class, pr.class)}${rankPill('🏆', schoolLabel, lr.school, pr.school)}</span>
+          <span class="cc-bars">${orderedSubjects(last.subjects).map(([k, sub]) => {
+            const net = (sub && sub.net) || 0;
+            const pct = Math.max(4, Math.min(100, Math.round(net / (subjectQ(k, sub) || 1) * 100)));
+            return `<span class="cc-bar" title="${escapeHtml(subjectName(k))}: ${net} net"><span class="cc-bar-track"><i style="--h:${pct}%;background:${subjectColor(k)}"></i></span><small>${subjectIcon(k)}</small></span>`;
+          }).join('')}</span>
+          ${trend.length >= 2 ? `<span class="cc-trend">${sparkSvg(trend, '#3b82f6')}<small>son ${trend.length} denemen</small></span>` : ''}
+          <span class="cc-go">Netlerine ve derslerine bak →</span>`;
+      }
+
+      // ---- Kazanım Denemeleri kartı (veri overview ile geldi, önbelleğe al)
+      if (data.mastery) masteryData = data.mastery;
+      const mex = (data.mastery && data.mastery.exams) || [];
+      const mEl = document.getElementById('choice-mastery-body');
+      if (!mex.length) {
+        mEl.innerHTML = '<span class="cc-empty">🎯 Öğretmenin bir kazanım testi okuttuğunda konu konu sonuçların burada görünecek.</span>';
+      } else {
+        const lastM = mex[0];
+        const tree = kmBuildTree(mex);
+        const ranked = tree.filter((t) => t.avgRate != null).sort((a, b) => b.avgRate - a.avgRate);
+        const best = ranked[0], worst = ranked.length > 1 ? ranked[ranked.length - 1] : null;
+        const allKz = tree.flatMap((t) => [...t.kazanims.values()]);
+        const okCount = allKz.filter((k) => k.status.key === 'ok').length;
+        const trend = mex.slice(0, 6).reverse().map((e) => e.successRate);
+        const st = kmStatus(lastM.successRate);
+        mEl.innerHTML = `
+          <span class="cc-last">🗓️ Son test: <b>${escapeHtml(lastM.subjectName)}</b> · ${escapeHtml(lastM.kazanimAdi)} · ${fmtDate(lastM.date)}</span>
+          <span class="cc-main">
+            ${ringSvg(lastM.successRate, st.color, `%<span data-count="${lastM.successRate}">${lastM.successRate}</span>`)}
+            <span class="cc-mside">
+              <span class="cc-badge" style="color:${st.color};background:${st.color}1f">${st.icon} ${st.label}</span>
+              ${lastM.classAvgRate != null ? `<span class="cc-sub">Sınıf ortalaması %${lastM.classAvgRate} · <b class="${lastM.successRate > lastM.classAvgRate ? 'km-up' : lastM.successRate < lastM.classAvgRate ? 'km-down' : ''}">${kmDiffText(lastM.successRate - lastM.classAvgRate)}</b></span>` : ''}
+            </span>
+          </span>
+          <span class="cc-ranks">
+            <span class="cc-rank">✅ <b>${mex.length}</b> <small>test çözdün</small></span>
+            <span class="cc-rank">🏁 <b>${okCount}/${allKz.length}</b> <small>kazanım oturdu</small></span>
+          </span>
+          ${best ? `<span class="cc-chips"><span>💪 ${escapeHtml(best.name)} %${best.avgRate}</span>${worst && worst !== best ? `<span>⚠️ ${escapeHtml(worst.name)} %${worst.avgRate}</span>` : ''}</span>` : ''}
+          ${trend.length >= 2 ? `<span class="cc-trend">${sparkSvg(trend, '#14b8a6', 100)}<small>son ${trend.length} testin</small></span>` : ''}
+          <span class="cc-go">Konu konu kazanımlarına bak →</span>`;
+      }
+      runCountUps(document.getElementById('dash-chooser'));
+    }
+
+    // ---------- Soru kutucukları (ders detayı + deneme detayı ortak) ----------
+    const Q_LABEL = { D: '✅ Doğru', Y: '❌ Yanlış', B: '⬜ Boş', N: '— Değerlendirilmedi' };
+
+    function qTilesHtml(q) {
+      return `<div class="qd-wrap">
+        <div class="qd-grid">${q.map((x, i) => {
+          const st = x.s || 'N';
+          return `<button type="button" class="qd-tile qd-${st}" data-n="${i + 1}" data-s="${st}" data-k="${escapeHtml(x.k || '')}" data-c="${escapeHtml(x.c || '')}" data-m="${escapeHtml(x.m || '')}" onclick="window._ogrQTile(this)" aria-label="${i + 1}. soru: ${Q_LABEL[st]}">${i + 1}</button>`;
+        }).join('')}</div>
+        <div class="qd-legend"><span><i class="qd-D"></i>Doğru</span><span><i class="qd-Y"></i>Yanlış</span><span><i class="qd-B"></i>Boş</span><span class="qd-legend-tip">👆 Bir soruya dokun</span></div>
+        <div class="qd-detail" hidden></div>
+      </div>`;
+    }
+
+    window._ogrQTile = function (btn) {
+      const wrap = btn.closest('.qd-wrap');
+      const det = wrap.querySelector('.qd-detail');
+      const already = det.dataset.n === btn.dataset.n && !det.hidden;
+      wrap.querySelectorAll('.qd-tile.sel').forEach((b) => b.classList.remove('sel'));
+      if (already) { det.hidden = true; det.dataset.n = ''; return; }
+      btn.classList.add('sel');
+      const st = btn.dataset.s, k = btn.dataset.k, c = btn.dataset.c, m = btn.dataset.m;
+      const parts = [];
+      if (st === 'Y' && m) parts.push(`<span>Senin işaretin: <b class="km-down">${escapeHtml(m)}</b></span>`);
+      if (c) parts.push(`<span>Doğru cevap: <b class="km-up">${escapeHtml(c)}</b></span>`);
+      if (st === 'B') parts.push('<span>Bu soruyu boş bıraktın</span>');
+      det.innerHTML = `
+        <div class="qd-detail-hd"><b>${escapeHtml(btn.dataset.n)}. soru</b><span class="qd-st qd-st-${st}">${Q_LABEL[st] || ''}</span></div>
+        <div class="qd-kz">📌 ${k ? escapeHtml(k) : 'Bu sorunun kazanım bilgisi girilmemiş.'}</div>
+        ${parts.length ? `<div class="qd-ans">${parts.join('')}</div>` : ''}`;
+      det.dataset.n = btn.dataset.n;
+      det.hidden = false;
+    };
+
+    // Bir dersin yanlış/boş sorularını kazanıma göre gruplar: "Kesirler (3., 7. soru)"
+    function missedTopicsHtml(q) {
+      const groups = new Map();
+      q.forEach((x, i) => {
+        if (x.s !== 'Y' && x.s !== 'B') return;
+        const name = x.k || '(Kazanım belirtilmemiş)';
+        if (!groups.has(name)) groups.set(name, { Y: [], B: [] });
+        groups.get(name)[x.s].push(i + 1);
+      });
+      if (!groups.size) return '<div class="qd-allok">🎉 Bu derste hiç yanlışın ya da boşun yok!</div>';
+      return `<div class="qd-missed">${[...groups.entries()].map(([name, g]) => `
+        <div class="qd-missed-row">
+          <span class="qd-missed-name">${escapeHtml(name)}</span>
+          <span class="qd-missed-q">${g.Y.length ? `<span class="km-down">❌ ${g.Y.map((n) => n + '.').join(' ')}</span>` : ''}${g.B.length ? `<span class="qd-muted">⬜ ${g.B.map((n) => n + '.').join(' ')}</span>` : ''}</span>
+        </div>`).join('')}</div>`;
+    }
+
+    // ---------- Genel Denemeler: ders detayı ----------
+    async function renderGeneralSubject(key, examId) {
+      const el = document.getElementById('gs-subject');
+      if (gsChart) { gsChart.destroy(); gsChart = null; }
+      if (!key) { el.innerHTML = '<div class="ep-empty">Ders bulunamadı.</div>'; return; }
+      el.dataset.key = key;
+      document.getElementById('page-title').firstChild.textContent = subjectName(key) + ' ';
+      document.getElementById('page-subtitle').textContent = 'Genel Denemeler';
+      el.innerHTML = '<div class="ep-empty">Yükleniyor...</div>';
+      let qm;
+      try { qm = await loadQuestionMap(); } catch (e) {
+        el.innerHTML = `<div class="ep-empty"><div class="ep-empty-icon">⚠️</div>${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const exams = (qm.exams || []).filter((e) => e.subjects && e.subjects[key]); // yeni -> eski
+      if (!exams.length) { el.innerHTML = '<div class="ep-empty"><div class="ep-empty-icon">📘</div>Bu derste henüz genel deneme sonucun yok.</div>'; return; }
+      const color = subjectColor(key);
+      const hasQ = (e) => { const q = e.subjects[key].q; return q && q.some((x) => x.s); };
+      const withQ = exams.filter(hasQ);
+      const sel = (examId && exams.find((e) => e.examId === examId)) || withQ[0] || exams[0];
+      const nets = exams.map((e) => e.subjects[key].net || 0);
+      const avgNet = Math.round(nets.reduce((a, b) => a + b, 0) / nets.length * 100) / 100;
+      const lastS = exams[0].subjects[key];
+      const qCount = subjectQ(key, lastS);
+
+      // Konu karnesi: bu dersteki tüm (soru verili) denemeler birlikte
+      const topics = new Map();
+      withQ.forEach((e) => e.subjects[key].q.forEach((x) => {
+        if (!x.s) return;
+        const name = x.k || '(Kazanım belirtilmemiş)';
+        let t = topics.get(name);
+        if (!t) { t = { name, total: 0, D: 0, Y: 0, B: 0, wrongExams: new Set() }; topics.set(name, t); }
+        t.total++; t[x.s]++;
+        if (x.s === 'Y') t.wrongExams.add(e.examId);
+      }));
+      const topicList = [...topics.values()].map((t) => ({ ...t, rate: Math.round(t.D / t.total * 100) }))
+        .sort((a, b) => a.rate - b.rate || b.total - a.total);
+      const repeated = topicList.filter((t) => t.wrongExams.size >= 2);
+      const weak = topicList.filter((t) => t.rate < 70);
+      const topicRow = (t) => {
+        const st = kmStatus(t.rate);
+        return `<div class="gs-topic">
+          <span class="gs-topic-main">
+            <span class="gs-topic-name">${escapeHtml(t.name)}</span>
+            <span class="gs-topic-sub">${t.total} sorudan ${t.D} doğru · ${t.Y} yanlış · ${t.B} boş</span>
+            <span class="km-bar"><span style="width:${t.rate}%;background:${st.color}"></span></span>
+          </span>
+          ${kmRatePill(t.rate)}
+        </div>`;
+      };
+
+      const trLower = (x) => String(x || '').toLocaleLowerCase('tr');
+      const hasMastery = masteryData && (masteryData.exams || []).some((e) => trLower(e.subjectName) === trLower(subjectName(key)));
+
+      el.innerHTML = `
+        <div class="ep-card km-subject-hero anim-fade-up" style="--km-c:${color}">
+          <div class="km-subject-hero-top">
+            <span class="km-subject-hero-icon">${subjectIcon(key)}</span>
+            <div>
+              <div class="km-subject-hero-name">${escapeHtml(subjectName(key))}</div>
+              <div class="km-subject-meta">${exams.length} genel deneme · ${qCount} soru</div>
+            </div>
+            <div class="km-subject-hero-rate"><span data-count="${lastS.net}">${lastS.net}</span><small>son net</small></div>
+          </div>
+          <div class="km-chips">
+            <span>📊 Ortalama ${avgNet} net</span>
+            <span>✅ ${lastS.correct} ❌ ${lastS.wrong} ⬜ ${lastS.blank} <small>(son deneme)</small></span>
+            ${lastS.classAvgNet != null ? `<span class="${lastS.net > lastS.classAvgNet ? 'km-up' : lastS.net < lastS.classAvgNet ? 'km-down' : ''}">Sınıf ort. ${lastS.classAvgNet}</span>` : ''}
+          </div>
+          ${exams.length > 1 ? '<div class="chart-box" style="height:200px;margin-top:12px"><canvas id="gs-chart"></canvas></div>' : ''}
+        </div>
+
+        ${repeated.length ? `
+        <div class="ep-card gs-repeat anim-fade-up anim-fade-up-d1">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🔁</div> Tekrarlayan Hataların</div></div>
+          <p class="km-hint">Bu konularda <b>birden fazla denemede</b> yanlış yaptın. Önce bunları tekrar etmek en hızlı net artışını sağlar.</p>
+          ${repeated.slice(0, 5).map((t) => `<div class="gs-repeat-row"><span>🔁</span><span class="gs-topic-name">${escapeHtml(t.name)}</span><span class="gs-repeat-n">${t.wrongExams.size} denemede yanlış</span></div>`).join('')}
+        </div>` : ''}
+
+        <div class="ep-card anim-fade-up anim-fade-up-d1">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">🧩</div> Soru Haritası</div></div>
+          <div class="gs-exam-pick">${exams.map((e) => `<button type="button" data-exam="${Number(e.examId)}" class="gs-exam-chip${e.examId === sel.examId ? ' active' : ''}${hasQ(e) ? '' : ' noq'}" onclick="window._ogrGsPickExam(${Number(e.examId)})">${escapeHtml(e.examName)}<small>${fmtDate(e.examDate)} · ${e.subjects[key].net} net</small></button>`).join('')}</div>
+          <div id="gs-map"></div>
+        </div>
+
+        <div class="ep-card anim-fade-up anim-fade-up-d2">
+          <div class="ep-section-hd"><div class="ep-section-title"><div class="ep-section-icon">📚</div> Konu Karnen</div></div>
+          ${topicList.length ? `
+            <p class="km-hint">${withQ.length} denemedeki ${escapeHtml(subjectName(key))} soruların konu konu. En zayıf konular en üstte.</p>
+            ${(weak.length ? weak : topicList).slice(0, 5).map(topicRow).join('')}
+            ${topicList.length > 5 ? `<details class="gs-more"><summary>Tüm konuları göster (${topicList.length})</summary>${topicList.map(topicRow).join('')}</details>` : ''}`
+          : '<div class="ep-empty">Bu dersin denemelerinde soru bazlı (konu) bilgisi yok.</div>'}
+        </div>
+
+        ${hasMastery ? `<button type="button" class="km-link" onclick="window._ogrOpenDashView('mastery')">🎯 Bu dersin kazanım testlerine de bak →</button>` : ''}`;
+
+      gsRenderMap(key, sel);
+      runCountUps(el);
+
+      const cv = document.getElementById('gs-chart');
+      if (cv) {
+        const chrono = [...exams].reverse();
+        const base = chartDefaults();
+        const datasets = [{ label: 'Sen', data: chrono.map((e) => e.subjects[key].net), borderColor: color, backgroundColor: color + '26', fill: true, borderWidth: 3, tension: 0.3, pointRadius: 4 }];
+        if (chrono.some((e) => e.subjects[key].classAvgNet != null)) {
+          datasets.push({ label: 'Sınıf ortalaması', data: chrono.map((e) => e.subjects[key].classAvgNet), borderColor: '#94a3b8', borderDash: [6, 4], borderWidth: 2, tension: 0.3, pointRadius: 2, spanGaps: true });
+        }
+        gsChart = new Chart(cv, {
+          type: 'line',
+          data: { labels: chrono.map((e) => fmtDate(e.examDate)), datasets },
+          options: { ...base,
+            plugins: { ...base.plugins, tooltip: { ...base.plugins.tooltip, callbacks: { title: (items) => chrono[items[0].dataIndex].examName } } },
+            scales: { x: base.scales.x, y: { ...base.scales.y, min: 0, suggestedMax: qCount } } },
+        });
+      }
+    }
+
+    function gsRenderMap(key, exam) {
+      const box = document.getElementById('gs-map');
+      if (!box) return;
+      const sub = exam.subjects[key];
+      if (!sub.q || !sub.q.some((x) => x.s)) {
+        box.innerHTML = `<div class="ep-empty">Bu denemede ${escapeHtml(subjectName(key))} için yalnızca net girilmiş; soru soru bilgi yok.<br><small>${sub.correct} doğru · ${sub.wrong} yanlış · ${sub.blank} boş</small></div>`;
+        return;
+      }
+      box.innerHTML = `
+        <div class="km-dyb"><span class="km-d">✅ ${sub.correct} doğru</span><span class="km-y">❌ ${sub.wrong} yanlış</span><span class="km-b">⬜ ${sub.blank} boş</span><span class="qd-muted">${sub.net} net</span></div>
+        ${qTilesHtml(sub.q)}
+        <h4 class="qd-h">Yanlış ve boş bıraktığın konular</h4>
+        ${missedTopicsHtml(sub.q)}`;
+    }
+
+    // Deneme değiştirmek geçmişe yeni kayıt açmaz - sadece soru haritası yenilenir
+    window._ogrGsPickExam = function (examId) {
+      const key = document.getElementById('gs-subject').dataset.key;
+      const exam = questionMap && (questionMap.exams || []).find((e) => e.examId === examId);
+      if (!exam || !key) return;
+      document.querySelectorAll('#gs-subject .gs-exam-chip').forEach((b) => b.classList.toggle('active', Number(b.dataset.exam) === examId));
+      gsRenderMap(key, exam);
+    };
+
+    window._ogrOpenGeneralSubject = function (key, examId) {
+      showPage('dash-general-subject', { subject: key, examId: examId || null });
+    };
+
+    // ---------- Denemelerim: deneme detayı ----------
+    async function renderExamDetail(examId) {
+      const el = document.getElementById('exam-detail');
+      el.innerHTML = '<div class="ep-empty">Yükleniyor...</div>';
+      let qm;
+      try { qm = await loadQuestionMap(); } catch (e) {
+        el.innerHTML = `<div class="ep-empty"><div class="ep-empty-icon">⚠️</div>${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      const ex = (qm.exams || []).find((e) => e.examId === examId);
+      if (!ex) { el.innerHTML = '<div class="ep-empty">Deneme bulunamadı.</div>'; return; }
+      document.getElementById('page-subtitle').textContent = ex.examName;
+      const subs = orderedSubjects(ex.subjects);
+      const sum = (f) => subs.reduce((a, [, s]) => a + (s[f] || 0), 0);
+      const isLatest = qm.exams[0] && qm.exams[0].examId === ex.examId;
+      const lr = (studentData && studentData.latestRanks) || {}, pr = (studentData && studentData.prevRanks) || {};
+      const schoolLabel = lr.school && lr.school.grade ? `${lr.school.grade}. sınıflarda` : 'Okulda';
+      el.innerHTML = `
+        <div class="ep-card ed-hero anim-fade-up">
+          <div class="ed-title">📝 ${escapeHtml(ex.examName)}</div>
+          <div class="km-subject-meta">${fmtDate(ex.examDate)}</div>
+          <div class="ed-stats">
+            <span class="cc-big"><span data-count="${ex.totalNet}">${ex.totalNet}</span><small>toplam net</small></span>
+            <span class="km-dyb"><span class="km-d">✅ ${sum('correct')} doğru</span><span class="km-y">❌ ${sum('wrong')} yanlış</span><span class="km-b">⬜ ${sum('blank')} boş</span></span>
+          </div>
+          ${isLatest ? `<div class="cc-ranks">${rankPill('🏫', 'Sınıfında', lr.class, pr.class)}${rankPill('🏆', schoolLabel, lr.school, pr.school)}</div>` : ''}
+        </div>
+        ${subs.map(([k, s], i) => {
+          const color = subjectColor(k);
+          const hasQ = s.q && s.q.some((x) => x.s);
+          return `
+          <div class="ep-card ed-subject anim-fade-up anim-fade-up-d${Math.min(4, i + 1)}" style="--km-c:${color}">
+            <div class="ed-sub-hd">
+              <span class="ed-sub-icon" style="background:${color}22">${subjectIcon(k)}</span>
+              <span class="ed-sub-name">${escapeHtml(subjectName(k))}</span>
+              <span class="ed-sub-net">${s.net}<small> net</small></span>
+            </div>
+            <div class="km-dyb"><span class="km-d">✅ ${s.correct}</span><span class="km-y">❌ ${s.wrong}</span><span class="km-b">⬜ ${s.blank}</span>${s.classAvgNet != null ? `<span class="qd-muted">Sınıf ort. ${s.classAvgNet}</span>` : ''}</div>
+            ${hasQ ? qTilesHtml(s.q) + `<h4 class="qd-h">Yanlış ve boş bıraktığın konular</h4>${missedTopicsHtml(s.q)}`
+                   : '<p class="km-hint">Bu dersin soru bazlı verisi yok (yalnızca net girilmiş).</p>'}
+            <button type="button" class="km-link" onclick="window._ogrOpenGeneralSubject(${JSON.stringify(k).replace(/"/g, '&quot;')})">${subjectIcon(k)} ${escapeHtml(subjectName(k))} dersinin tüm denemeleri →</button>
+          </div>`;
+        }).join('')}`;
+      runCountUps(el);
+    }
+
+    window._ogrOpenExamDetail = function (examId) {
+      showPage('exam-detail', { examId });
+    };
 
     // ----- ANA BOOT -----
     async function boot() {
@@ -1551,7 +1974,7 @@
 
       renderTeacherMessages(data.messages);
       renderMailBadge(data.unreadMessageCount);
-      renderChooserMeta(generalResults, data.results);
+      renderChooserCards(data);
       setDashView('chooser');
       renderDirectionStatus(data.netTrend);
       renderScorecards(last, diffVal, data.classRank, riseStreak);

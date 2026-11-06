@@ -1063,6 +1063,9 @@ const ImportOptical = {
       return;
     }
 
+    // A kitapçığı cevap anahtarı (kazanım haritası A sırasında) - öğrenci
+    // panelinde soru soru "doğru cevap" göstermek için denemeye kaydedilir.
+    this._opticalAnswerKeyA = Object.fromEntries(Object.entries(keys.A || {}).filter(([, v]) => v));
     const rawRows = [];
     const failedLines = [];
     const bWithoutOrder = new Set(); // B sırası bilinmeyen dersler (kazanım analizine yazılmadı)
@@ -1095,11 +1098,14 @@ const ImportOptical = {
             const bOrder = this._opticalBOrder && this._opticalBOrder[block.subjectKey];
             if (bOrder && bOrder.length === ev.perQuestion.length) {
               ev.perQuestion = bOrder.map(pos => ev.perQuestion[pos - 1]);
+              ev.marks = bOrder.map(pos => ev.marks[pos - 1]);
             } else {
               ev.perQuestion = null;
+              ev.marks = null;
               missingOrder.push(block.subjectKey);
             }
           }
+          if (letter === 'B' && !(this._opticalTopicMap && this._opticalTopicMap[block.subjectKey])) ev.marks = null;
           out[block.subjectKey] = ev;
           net += ev.net;
         });
@@ -1380,6 +1386,7 @@ const ImportOptical = {
           // Soru bazlı D/Y/B dizisi - konu (kazanım) analizinde kullanılır
           // (bkz. importOptical.js#evaluateOpticalData, db.getExamTopicAnalysis)
           answers: subData?.perQuestion || null,
+          marks: subData?.marks || null,
         };
       });
 
@@ -1401,6 +1408,12 @@ const ImportOptical = {
     // Excel'den yüklenmiş konu (kazanım) haritası varsa bu denemeye kalıcı
     // olarak kaydet - aktif okul modunda bu (nadir) adım şimdilik atlanır,
     // öğrenci/sonuç girişi (asıl istenen) etkilenmez.
+    if (!App.actingSchool && this._opticalAnswerKeyA && Object.keys(this._opticalAnswerKeyA).length > 0) {
+      const exam = await db.getExam(examId);
+      const prevKey = (exam && exam.answerKey) || {};
+      await db.updateExam(examId, { answerKey: { ...prevKey, A: { ...(prevKey.A || {}), ...this._opticalAnswerKeyA } } });
+      this._opticalAnswerKeyA = null;
+    }
     if (!App.actingSchool && this._opticalTopicMap && Object.keys(this._opticalTopicMap).length > 0) {
       const exam = await db.getExam(examId);
       await db.updateExam(examId, { topicMap: { ...(exam?.topicMap || {}), ...this._opticalTopicMap } });
