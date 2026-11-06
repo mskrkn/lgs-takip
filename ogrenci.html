@@ -121,13 +121,13 @@
               <span class="km-choice-icon">📘</span>
               <span class="km-choice-title">Genel Denemeler</span>
               <span class="km-choice-desc">Netlerin, gelişim eğrin, derslerin ve hedefin</span>
-              <span class="km-choice-meta" id="choice-general-meta">—</span>
+              <span class="cc-body" id="choice-general-body"><span class="km-choice-meta">Yükleniyor...</span></span>
             </button>
             <button type="button" class="km-choice km-choice-mastery" data-view="mastery" onclick="window._ogrOpenDashView('mastery')">
               <span class="km-choice-icon">🎯</span>
               <span class="km-choice-title">Kazanım Denemeleri</span>
               <span class="km-choice-desc">Ders ders, konu konu hangi kazanımda nasılsın</span>
-              <span class="km-choice-meta" id="choice-mastery-meta">—</span>
+              <span class="cc-body" id="choice-mastery-body"><span class="km-choice-meta">Yükleniyor...</span></span>
             </button>
           </div>
 
@@ -150,6 +150,17 @@
           <!-- KPI STRIP -->
           <div class="ep-kpi-strip anim-fade-up anim-fade-up-d1" id="scorecards">
             <!-- JS tarafından doldurulur -->
+          </div>
+
+          <!-- DERSLERİM (en üstte - 2026-11-06): karta dokununca ders detayı
+               (soru soru sonuçlar + konu karnesi) açılır -->
+          <div class="ep-card anim-fade-up anim-fade-up-d1">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">⚡</div> Derslerim</div>
+              <span class="ep-section-badge">Son deneme</span>
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Bir derse dokun: hangi denemede hangi soruyu doğru/yanlış yaptığını ve hangi konularda zorlandığını gör.</p>
+            <div class="ep-subject-grid" id="subject-energy"></div>
           </div>
 
           <!-- BUGÜNKÜ GÖREV + ÇALIŞMA SERİSİ -->
@@ -198,6 +209,25 @@
             </div>
           </div>
 
+          <!-- ============ ZONE: BAŞARILAR ============ -->
+          <div class="ep-zone-header"><span>🏆 Başarıların</span></div>
+
+          <!-- SON BAŞARILAR -->
+          <div class="ep-card anim-fade-up anim-fade-up-d4">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
+            </div>
+            <div class="ep-achievements-grid" id="achievements"></div>
+          </div>
+
+          <!-- BAŞARI PUSULASI (4 Quadrant) -->
+          <div class="ep-card anim-fade-up anim-fade-up-d3">
+            <div class="ep-section-hd">
+              <div class="ep-section-title"><div class="ep-section-icon">🧭</div> Başarı Pusulası</div>
+            </div>
+            <div id="compass" style="position:relative"></div>
+          </div>
+
           <!-- ============ ZONE: HEDEFİN ============ -->
           <div class="ep-zone-header"><span>🎯 Hedefin</span></div>
 
@@ -228,50 +258,34 @@
             <div id="net-trend" class="mt-ep"></div>
           </div>
 
-          <!-- GENEL BAŞARI SKORU -->
-          <div class="ep-card anim-fade-up anim-fade-up-d4">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Genel Başarı Skoru</div>
-            </div>
-            <div class="ep-score-hero">
-              <span class="ep-score-num" id="score-number-detail">—</span>
-              <span class="ep-score-denom">/ 100</span>
-              <span class="ep-score-delta" id="score-growth"></span>
-            </div>
-            <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
-            <div class="ep-radar-axes" id="radar-axes">
-              <!-- JS tarafından doldurulur -->
-            </div>
-          </div>
-
           <!-- ============ ZONE: DERS ANALİZİ ============ -->
           <div class="ep-zone-header"><span>📚 Ders Analizi</span></div>
 
-          <!-- DERSLERİM (Enerji Kartları) -->
-          <div class="ep-card anim-fade-up anim-fade-up-d2">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">⚡</div> Derslerim</div>
-              <span class="ep-section-badge">Son deneme</span>
+          <!-- Ders Yetkinlik Radarı + Genel Başarı Skoru yan yana (2026-11-06) -->
+          <div class="ep-pair">
+            <!-- DERS YETKİNLİK RADARI -->
+            <div class="ep-card anim-fade-up anim-fade-up-d3">
+              <div class="ep-section-hd">
+                <div class="ep-section-title"><div class="ep-section-icon">📡</div> Ders Yetkinlik Radarı</div>
+              </div>
+              <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Son deneme netlerin, sınıf ortalamasıyla karşılaştırmalı.</p>
+              <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
             </div>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Son denemendeki netin, bir önceki denemene göre değişimi.</p>
-            <div class="ep-subject-grid" id="subject-energy"></div>
-          </div>
-
-          <!-- DERS YETKİNLİK RADARI -->
-          <div class="ep-card anim-fade-up anim-fade-up-d3">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">📡</div> Ders Yetkinlik Radarı</div>
+            <!-- GENEL BAŞARI SKORU -->
+            <div class="ep-card anim-fade-up anim-fade-up-d4">
+              <div class="ep-section-hd">
+                <div class="ep-section-title"><div class="ep-section-icon">🎯</div> Genel Başarı Skoru</div>
+              </div>
+              <div class="ep-score-hero">
+                <span class="ep-score-num" id="score-number-detail">—</span>
+                <span class="ep-score-denom">/ 100</span>
+                <span class="ep-score-delta" id="score-growth"></span>
+              </div>
+              <div class="chart-box" style="height:260px"><canvas id="score-radar-chart"></canvas></div>
+              <div class="ep-radar-axes" id="radar-axes">
+                <!-- JS tarafından doldurulur -->
+              </div>
             </div>
-            <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Son deneme netlerin, sınıf ortalamasıyla karşılaştırmalı.</p>
-            <div class="chart-box"><canvas id="subject-radar-chart"></canvas></div>
-          </div>
-
-          <!-- BAŞARI PUSULASI (4 Quadrant) -->
-          <div class="ep-card anim-fade-up anim-fade-up-d3">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🧭</div> Başarı Pusulası</div>
-            </div>
-            <div id="compass" style="position:relative"></div>
           </div>
 
           <!-- GÜÇLÜ YÖNLERİN & GELİŞİM NOKTAN -->
@@ -280,17 +294,6 @@
               <div class="ep-section-title"><div class="ep-section-icon">🧠</div> Güçlü Yönlerin & Gelişim Noktan</div>
             </div>
             <div class="ep-strengths-grid" id="strength-summary"></div>
-          </div>
-
-          <!-- ============ ZONE: BAŞARILAR ============ -->
-          <div class="ep-zone-header"><span>🏆 Başarıların</span></div>
-
-          <!-- SON BAŞARILAR -->
-          <div class="ep-card anim-fade-up anim-fade-up-d4">
-            <div class="ep-section-hd">
-              <div class="ep-section-title"><div class="ep-section-icon">🏆</div> Son Başarıların</div>
-            </div>
-            <div class="ep-achievements-grid" id="achievements"></div>
           </div>
 
           <!-- HAFTALİK EĞİTİM ROTASI -->
@@ -302,6 +305,12 @@
           </div>
 
           </div><!-- /dash-general -->
+
+          <!-- ============ GENEL DENEMELER: ders detayı ============ -->
+          <div class="dash-view" id="dash-general-subject" hidden>
+            <button type="button" class="km-back" onclick="history.back()">← Genel Denemeler</button>
+            <div id="gs-subject"></div>
+          </div>
         </section>
 
         <!-- ============ ANALİZLER ============ -->
@@ -347,6 +356,12 @@
             </div>
             <div id="exam-results"></div>
           </div>
+        </section>
+
+        <!-- ============ DENEME DETAYI (Denemelerim'den açılır) ============ -->
+        <section class="page-section" id="page-exam-detail">
+          <button type="button" class="km-back" onclick="history.back()">← Denemelerim</button>
+          <div id="exam-detail"></div>
         </section>
 
         <!-- ============ ÖDEVLERİM ============ -->

@@ -334,3 +334,21 @@ html[data-theme="light"] .sync-offline { color: #475569; }
 html[data-theme="light"] .ep-hero-greeting { color: #0f766e; }
 html[data-theme="light"] .sidebar { box-shadow: 4px 0 24px rgba(15, 23, 42, 0.10); }
 html[data-theme="light"] .sidebar:not(.open):not(.active) { box-shadow: none; }
+
+/* ---- Öğrenci paneli: seçim kartı özetleri / soru kutucukları (2026-11-06) ---- */
+html[data-theme="light"] .cc-delta.up,
+html[data-theme="light"] .qd-D, html[data-theme="light"] .qd-legend i.qd-D,
+html[data-theme="light"] .qd-st-D { color: #15803d; }
+html[data-theme="light"] .cc-delta.down,
+html[data-theme="light"] .qd-Y, html[data-theme="light"] .qd-legend i.qd-Y,
+html[data-theme="light"] .qd-st-Y { color: #b91c1c; }
+html[data-theme="light"] .qd-B, html[data-theme="light"] .qd-st-B,
+html[data-theme="light"] .qd-st-N { color: #475569; }
+html[data-theme="light"] .cc-badge-gold,
+html[data-theme="light"] .gs-repeat-n { color: #b45309; }
+html[data-theme="light"] .cc-go,
+html[data-theme="light"] .ep-subject-more,
+html[data-theme="light"] .ep-row-go,
+html[data-theme="light"] .gs-more summary { color: #0f766e; }
+html[data-theme="light"] .km-choice:hover,
+html[data-theme="light"] .km-choice:focus-visible { box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12); }
