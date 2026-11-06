@@ -966,3 +966,10 @@
     }
 
     #page-exam-detail > .km-back, #dash-general-subject > .km-back { align-self: flex-start; width: auto; }
+
+    /* Ders Yetkinlik Radarı + Genel Başarı Skoru yan yana (2026-11-06) */
+    .ep-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: stretch; }
+    .ep-pair > .ep-card { margin: 0; min-width: 0; display: flex; flex-direction: column; }
+    .ep-pair > .ep-card .chart-box { flex: 1; min-height: 260px; }
+    .ep-pair + .ep-card { margin-top: 18px; }
+    @media (max-width: 900px) { .ep-pair { grid-template-columns: 1fr; } }
