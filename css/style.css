@@ -2982,3 +2982,27 @@ select.form-control option {
 #import-tabs { flex-wrap: wrap; max-width: 100%; }
 #page-import .tab-content { min-width: 0; max-width: 100%; }
 #page-import .table-wrapper { max-width: 100%; overflow-x: auto; }
+
+/* ============================================================
+   Mobil üst bar taşması (2026-11-08): telefonda sağ grup (tema düğmesi +
+   devre dışı arama kutusu + zil + iki aynı 🤖 + yetki rozeti) ~490px
+   tutuyordu, tüm sayfayı yatay taşırıp sağa kaydırıyordu. Dar ekranda:
+   arama kutusu ("yakında", devre dışı) ve ikinci 🤖 gizlenir, rozette
+   sadece ikon kalır, başlık sığmazsa "…" ile kısalır.
+   ============================================================ */
+@media (max-width: 768px) {
+  .header { gap: 8px; }
+  .header-left { min-width: 0; flex: 1 1 auto; gap: 10px; }
+  .header-left > div, .header-left .page-title { min-width: 0; }
+  .page-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 18px; }
+  .header-right { flex-shrink: 0; gap: 6px !important; }
+  .header-right .header-search { display: none !important; }
+  .header-right > button.menu-toggle[title="Edu AI"] ~ button.menu-toggle[title="Edu AI"] { display: none; }
+  #role-badge .rb-tx { display: none; }
+  #role-badge { padding: 4px 8px; }
+}
+@media (max-width: 480px) {
+  .page-title span { display: none; }
+  .header .menu-toggle, .header .edu-theme-toggle { width: 40px; height: 40px; padding: 0; font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
+  .header { padding: 0 12px; }
+}
