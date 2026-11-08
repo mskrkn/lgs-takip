@@ -3006,3 +3006,17 @@ select.form-control option {
   .header .menu-toggle, .header .edu-theme-toggle { width: 40px; height: 40px; padding: 0; font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
   .header { padding: 0 12px; }
 }
+
+/* ============================================================
+   Mobil kenar menüsü altı (2026-11-08): .app-layout { z-index:1 } bir
+   katman grubu oluşturuyor; grubun DIŞINDAKİ .mobile-bottom-nav (z 1000)
+   bu yüzden açık menünün (z 1060, ama grubun içinde) üstünde çiziliyor ve
+   menünün en altındaki "Çıkış Yap"ı örtüyordu (tüm paneller).
+   1) Menü açıkken alt çubuk gizlenir (:has destekleyen tarayıcılar).
+   2) Yedek: menünün altına alt çubuk kadar boşluk - Çıkış her durumda
+      çubuğun üstüne kaydırılabilir.
+   ============================================================ */
+body:has(.sidebar.open) .mobile-bottom-nav { display: none !important; }
+@media (max-width: 768px), (max-width: 900px) and (orientation: landscape) {
+  .sidebar { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+}
