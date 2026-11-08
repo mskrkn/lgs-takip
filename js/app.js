@@ -306,7 +306,9 @@ const App = {
       label = '🏫 Okul Admini';
       title = 'Sadece kendi okulunuzun verilerini yönetirsiniz.';
     }
-    el.textContent = label;
+    // İkon + yazı ayrı: dar ekranda yazı gizlenir, sadece ikon kalır (bkz. style.css "mobil üst bar")
+    const sp = label.indexOf(' ');
+    el.innerHTML = `<span class="rb-ic">${label.slice(0, sp)}</span><span class="rb-tx">${label.slice(sp + 1)}</span>`;
     el.title = title;
     el.style.cssText = 'display:inline-flex;cursor:default;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.3);color:#c4b5fd';
   },
