@@ -374,7 +374,7 @@ const Siniflarim = (function () {
           <button type="button" class="filter-pill ${key === 'total' ? 'active' : ''}" data-sn-sort="total">Toplam</button>
         </div>` : '';
     return `<div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">🏅</span> ${esc(g.exam.name)} - Sınıf Sıralaması${key !== 'total' ? ` <small style="font-weight:600;color:var(--text-muted)">(${esc(subjLabel(key, d.grade))})</small>` : ''}</h3>
-        <div class="sn-actions">${sortBtns}<button type="button" class="btn btn-secondary btn-sm" data-sn-detail-csv>⬇️ Excel'e aktar</button></div></div>
+        <div class="sn-actions">${sortBtns}<button type="button" class="btn btn-secondary btn-sm" data-sn-detail-csv>⬇️ Excel'e aktar</button><button type="button" class="btn btn-secondary btn-sm" data-sn-detail-pdf>⬇️ PDF</button></div></div>
       <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="num">Sıra</th><th class="num">No</th><th>Ad Soyad</th>
         ${keys.map(k => `<th class="num ${k === key ? 'sn-focus-col' : 'sn-hide-sm'}">${esc(subjLabel(k, d.grade, true))}</th>`).join('')}<th class="num ${key === 'total' ? 'sn-focus-col' : ''}">Toplam</th><th class="num" title="Kademedeki ${d.gradeParticipants} katılımcı arasında (toplam nete göre)">Kademe</th></tr></thead><tbody>
       ${rows.map(p => `<tr data-open-student data-student-id="${p.id}" data-student-name="${esc(p.firstName + ' ' + p.lastName)}">
@@ -398,6 +398,33 @@ const Siniflarim = (function () {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
   const n2 = (v) => (v == null ? '' : Number(v).toFixed(2).replace('.', ','));
+
+  // ---------- PDF (sunucu: /api/teacher/table-pdf - optik raporlarla aynı PDF üreticisi) ----------
+  async function downloadPdf(filename, payload, btn) {
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Hazırlanıyor...'; }
+    try {
+      const res = await fetch('/api/teacher/table-pdf', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        let msg = 'PDF oluşturulamadı.';
+        try { msg = (await res.json()).error || msg; } catch (_) { /* json değil */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename.replace(/[\\/:*?"<>|]+/g, '-');
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (err) {
+      if (window.UI && UI.toast) UI.toast(err.message, 'error'); else alert(err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+  const n2dot = (v) => (v == null ? '-' : String(Math.round(Number(v) * 100) / 100));
 
   // ---------- Veri ----------
   async function load() {
@@ -480,6 +507,25 @@ const Siniflarim = (function () {
         sortedParticipants(d, sk).forEach(p => rows.push([p.sortRank, p.schoolNumber, p.firstName, p.lastName,
           ...keys.flatMap(k => { const s = p.subjects[k] || {}; return [s.correct, s.wrong, n2(s.net)]; }), n2(p.totalNet), `${p.gradeRank}/${d.gradeParticipants}`]));
         downloadCsv(`${d.summary.exam.name} - ${d.className} sıralama.csv`, rows);
+        return;
+      }
+      const pdfBtn = d && e.target.closest('[data-sn-detail-pdf]');
+      if (pdfBtn) {
+        // Ekrandaki sıralamanın aynısı (seçili ölçüt: öğretmenin dersi ya da Toplam)
+        const keys = subjKeys(d.summary.gradeStats.subjects);
+        const sk = sortKeyFor(d);
+        const columns = ['Sıra', 'No', 'Ad Soyad', ...keys.map(k => subjLabel(k, d.grade, true)), 'Toplam Net', 'Kademe Sırası'];
+        const rows = sortedParticipants(d, sk).map(p => [p.sortRank, p.schoolNumber || '-', `${p.firstName} ${p.lastName}`,
+          ...keys.map(k => { const s = p.subjects[k]; return s ? `${n2dot(s.net)} (${s.correct || 0}/${s.wrong || 0})` : '-'; }),
+          n2dot(p.totalNet), `${p.gradeRank} / ${d.gradeParticipants}`]);
+        const c = d.summary.classes[0] || {};
+        const crit = sk === 'total' ? 'Toplam nete göre' : `${subjLabel(sk, d.grade)} netine göre`;
+        downloadPdf(`${d.summary.exam.name} - ${d.className} sıralama.pdf`, {
+          title: `${d.className} Sınıf Sıralaması`,
+          subtitle: `${d.summary.exam.name}${d.summary.exam.date ? ' · ' + d.summary.exam.date : ''} · ${crit} · Sınava giren ${c.participated != null ? c.participated : rows.length}${c.enrolled != null ? '/' + c.enrolled : ''} · Sınıf ort. ${n2dot(c.avgNet)} · Kademe ort. ${n2dot(d.summary.gradeStats.avgNet)}`,
+          columns, rows,
+          notes: ['Ders hücreleri: net (doğru/yanlış). Kademe sırası: aynı kademedeki ' + d.gradeParticipants + ' katılımcı arasında toplam nete göre.'],
+        }, pdfBtn);
         return;
       }
       if (d && e.target.closest('[data-sn-detail-absent-csv]')) {
