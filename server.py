@@ -6976,6 +6976,36 @@ def api_teacher_omr_report(kind):
     )
 
 
+@app.route("/api/teacher/table-pdf", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="students.view")
+def api_teacher_table_pdf():
+    """Ekranda gösterilen bir tabloyu (ör. Sınıf Detayı > sınıf sıralaması,
+    seçili sıralama ölçütüyle) PDF'e çevirir - optik raporlarla AYNI PDF
+    üreticisi (omr_reports.to_pdf: Türkçe font, 9+ sütunda yatay sayfa).
+    Sunucu veri OKUMAZ; yalnızca istemcinin zaten gördüğü tabloyu biçimler.
+    Gövde: {title, subtitle?, columns:[...], rows:[[...]], notes?:[...]}"""
+    data = request.get_json(silent=True) or {}
+    title = str(data.get("title") or "Rapor")[:200]
+    subtitle = str(data.get("subtitle") or "")[:300]
+    columns = data.get("columns")
+    rows = data.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list) or not columns:
+        return jsonify({"error": "Geçersiz tablo."}), 400
+    if len(columns) > 40 or len(rows) > 3000 or any(not isinstance(r, list) or len(r) > 40 for r in rows):
+        return jsonify({"error": "Tablo çok büyük."}), 400
+    clean = lambda v: "" if v is None else str(v)[:300]
+    report = {
+        "title": title, "subtitle": subtitle,
+        "columns": [clean(c) for c in columns],
+        "rows": [[clean(v) for v in r] for r in rows],
+        "notes": [clean(n) for n in (data.get("notes") or [])[:10]],
+    }
+    pdf, mime, _ = omr_reports.render(report, "pdf")
+    log_audit(get_db(), "TABLE_PDF_EXPORTED", resource_type="report", resource_id=None)
+    return Response(pdf, mimetype=mime,
+                    headers={"Content-Disposition": f'attachment; filename="rapor-{datetime.now():%Y%m%d}.pdf"'})
+
+
 _OMR_SCAN_ALLOWED_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
 
