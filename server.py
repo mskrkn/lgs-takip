@@ -6717,6 +6717,57 @@ _KARNE_SUBJECT_NAMES = {
 }
 
 
+def _karne_general_sections(db, student_id, general, subj):
+    """Karnedeki "Genel Denemeler" bölümü (2026-11-09, öğretmen ekranındaki
+    "Tüm Deneme Geçmişi" ile aynı düzen): dersler SATIRDA, denemeler SÜTUNDA
+    (en yeni en solda). Üstte Tarih, Toplam Net, Sınıf ve Okul (kademe)
+    sırası; her ders "net (D/Y)". Okunaklı kalsın diye tablo başına en fazla
+    8 deneme - fazlası ayrı bir devam tablosuna geçer."""
+    exams = general.get("generalResults") or []  # yeni -> eski
+    if not exams:
+        return [{"heading": "📘 Genel Denemeler", "columns": ["Ders"], "rows": []}]
+    st = db.execute("SELECT class_name, organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    grade = _grade_of(st["class_name"]) if st else None
+    ranks = {r["examId"]: _exam_ranks(db, r["examId"], st, r["totalNet"]) for r in exams} if st else {}
+
+    def name(key):
+        if key == "inkilap" and grade and grade < 8:
+            return "Sosyal Bilgiler"
+        return subj(key)
+
+    order = ["turkce", "inkilap", "sosyal", "din", "ingilizce", "matematik", "fen"]
+    keys = sorted({k for r in exams for k in (r.get("subjects") or {})},
+                  key=lambda k: (order.index(k) if k in order else 99, k))
+
+    def rank_txt(rk):
+        return f"{rk['rank']} / {rk['size']}" if rk else "-"
+
+    def num(v):
+        v = round(float(v or 0), 2)
+        return str(int(v)) if v == int(v) else f"{v:g}"
+
+    chunk = 8
+    out = []
+    for start in range(0, len(exams), chunk):
+        part = exams[start:start + chunk]
+        rows = [["Tarih"] + [r.get("examDate") or "-" for r in part],
+                ["Toplam Net"] + [num(r.get("totalNet")) for r in part],
+                ["Sınıf sırası"] + [rank_txt((ranks.get(r["examId"]) or {}).get("class")) for r in part],
+                [f"Okul sırası ({grade}. sınıflar)" if grade else "Okul sırası"]
+                + [rank_txt((ranks.get(r["examId"]) or {}).get("school")) for r in part]]
+        for k in keys:
+            row = [name(k)]
+            for r in part:
+                d = (r.get("subjects") or {}).get(k)
+                row.append(f"{num(d.get('net'))} ({d.get('correct') or 0}/{d.get('wrong') or 0})" if d else "-")
+            rows.append(row)
+        heading = "📘 Genel Denemeler"
+        if len(exams) > chunk:
+            heading += f" ({start + 1}-{start + len(part)}. deneme, en yeni solda)"
+        out.append({"heading": heading, "columns": ["Ders / Deneme"] + [r["examName"] for r in part], "rows": rows})
+    return out
+
+
 def _build_karne(db, org_id, student_id):
     """Öğrenci Karnesi: TEK belgede Genel Denemeler (ortalama/trend özeti) ve
     Kazanım Testleri (liste + kazanım gelişimi) - ikisi ayrı bölümlerdir,
@@ -6732,6 +6783,7 @@ def _build_karne(db, org_id, student_id):
         return _KARNE_SUBJECT_NAMES.get(key, key.title()) if key else "-"
 
     rank = general.get("classRank")
+    school_rank = (general.get("latestRanks") or {}).get("school")
     general_results = list(reversed(general.get("generalResults", [])))  # eski -> yeni
     kazanim_rows = [r for r in kazanim["rows"] if r[1] != "ORTALAMA"]
     kazanim_avg = round(sum(r[8] for r in kazanim_rows) / len(kazanim_rows)) if kazanim_rows else None
@@ -6743,13 +6795,16 @@ def _build_karne(db, org_id, student_id):
         ["En güçlü ders", subj(general.get("strongestSubject"))],
         ["Geliştirilmesi gereken ders", subj(general.get("weakestSubject"))],
         ["Sınıf sırası (son genel deneme)", f"{rank['rank']} / {rank['classSize']}" if rank else "-"],
+        ["Okul sırası (son genel deneme, kademe içinde)",
+         f"{school_rank['rank']} / {school_rank['size']}" if school_rank else "-"],
         ["Kazanım testi sayısı", len(kazanim_rows)],
         ["Kazanım testleri ortalama başarı %", kazanim_avg if kazanim_avg is not None else "-"],
     ]
     sections = [
         {"heading": "Özet", "columns": ["Gösterge", "Değer"], "rows": summary},
-        {"heading": "📘 Genel Denemeler", "columns": ["Tarih", "Deneme", "Toplam Net"],
-         "rows": [[r["examDate"] or "", r["examName"], r["totalNet"]] for r in general_results]},
+    ]
+    sections += _karne_general_sections(db, student_id, general, subj)
+    sections += [
         {"heading": "🎯 Kazanım Testleri",
          "columns": ["Tarih", "Test", "Ders", "Kazanım", "D/Y/B", "Net", "Başarı %", "Sınıf Ort. %"],
          "rows": [[r[0], r[1], r[2], r[3], f"{r[4]}/{r[5]}/{r[6]}" if r[1] != "ORTALAMA" else "", r[7], r[8], r[9]]
@@ -6768,7 +6823,8 @@ def _build_karne(db, org_id, student_id):
         "title": "Öğrenci Karnesi",
         "subtitle": f"{student['firstName']} {student['lastName']} · No {student['schoolNumber'] or '-'} · {student['className'] or '-'}",
         "sections": sections,
-        "notes": ["Genel Deneme ve Kazanım Testi netleri farklı ölçeklerdedir; bu yüzden ayrı bölümlerde ve birleştirilmeden gösterilir."],
+        "notes": ["Genel Denemeler tablosunda ders hücreleri: net (doğru/yanlış). Sıralar: sınıf içinde ve okulda aynı kademe (ör. tüm 8. sınıflar) içinde.",
+                  "Genel Deneme ve Kazanım Testi netleri farklı ölçeklerdedir; bu yüzden ayrı bölümlerde ve birleştirilmeden gösterilir."],
     }
 
 
@@ -9304,6 +9360,14 @@ def api_teacher_student_detail(student_id):
     # Öğrenci detayındaki "🎯 Kazanım Denemeleri" sekmesi (veli/öğrenci
     # portalıyla aynı veri) - bkz. Genel/Kazanım birleştirme planı.
     report["masteryTrend"] = _build_mastery_trend(db, student_id)
+    # "Tüm Deneme Geçmişi" tablosu: HER Genel Deneme için sınıf + okul (kademe)
+    # sırası (öğretmen tam sırayı görür; öğrenci panelindeki "alt yarıda numara
+    # yok" kuralı yalnızca öğrencinin kendi ekranı için).
+    st = db.execute("SELECT class_name, organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    report["examRanks"] = {
+        str(r["examId"]): _exam_ranks(db, r["examId"], st, r["totalNet"])
+        for r in report.get("generalResults") or []
+    } if st else {}
     return jsonify(report)
 
 
