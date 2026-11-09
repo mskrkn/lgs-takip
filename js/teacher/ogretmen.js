@@ -24,6 +24,64 @@
     let studentDetailReturnPage = 'students'; // öğrenci detayının açıldığı sayfa ("← Geri" buraya döner)
     let studentDetailRequestSeq = 0; // eski isteğin yanıtı yeni öğrencinin üzerine yazmasın
 
+    // ---- "Tüm Deneme Geçmişi" (2026-11-09): dersler SATIRDA (sol sütun
+    // sabit), denemeler SÜTUNDA (en yeni en solda) - telefonda yana kaydırınca
+    // ders adı kaybolmaz. Üstte Toplam Net + sınıf/okul (kademe) sırası.
+    const EH_SUBJECT_ORDER = ['turkce', 'inkilap', 'sosyal', 'din', 'ingilizce', 'matematik', 'fen'];
+    function renderExamHistoryTable(generalResults, examRanks) {
+      const exams = generalResults || [];
+      const keys = [...new Set(exams.flatMap(r => Object.keys(r.subjects || {})))]
+        .sort((a, b) => {
+          const ia = EH_SUBJECT_ORDER.indexOf(a), ib = EH_SUBJECT_ORDER.indexOf(b);
+          return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+      const fmtD = (d) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || '');
+        return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', year: '2-digit' }) : (d || '-');
+      };
+      const rankCell = (rk) => rk ? `<b>${rk.rank}</b><small>/${rk.size}</small>` : '<span class="text-muted">-</span>';
+      const anyRanks = exams.some(r => examRanks[String(r.examId)]);
+      const grade = (() => { for (const r of exams) { const x = examRanks[String(r.examId)]; if (x && x.school && x.school.grade) return x.school.grade; } return null; })();
+
+      const head = exams.map(r => `
+        <th class="eh-exam" title="${escapeHtml(r.examName)}">
+          <span class="eh-exam-name">${escapeHtml(r.examName)}</span>
+          <span class="eh-exam-date">${fmtD(r.examDate)}</span>
+        </th>`).join('');
+      const totalRow = exams.map((r, i) => {
+        const older = exams[i + 1];
+        const d = older ? Math.round((r.totalNet - older.totalNet) * 100) / 100 : null;
+        const dHtml = d == null ? '' : d > 0 ? `<span class="net-up">▲ ${d}</span>` : d < 0 ? `<span class="net-down">▼ ${Math.abs(d)}</span>` : '<span class="text-muted">＝</span>';
+        return `<td class="eh-total"><span class="badge-net">${r.totalNet}</span>${dHtml}</td>`;
+      }).join('');
+      const classRow = exams.map(r => `<td class="eh-rank">${rankCell((examRanks[String(r.examId)] || {}).class)}</td>`).join('');
+      const schoolRow = exams.map(r => `<td class="eh-rank">${rankCell((examRanks[String(r.examId)] || {}).school)}</td>`).join('');
+      const subjRows = keys.map(k => `
+        <tr>
+          <th class="eh-sticky" scope="row">${escapeHtml(subjectName(k))}</th>
+          ${exams.map(r => {
+            const d = (r.subjects || {})[k];
+            if (!d) return '<td class="eh-sub"><span class="text-muted">-</span></td>';
+            return `<td class="eh-sub"><b>${d.net || 0}</b><small>${d.correct || 0}D · ${d.wrong || 0}Y</small></td>`;
+          }).join('')}
+        </tr>`).join('');
+
+      return `
+        ${exams.length > 2 ? '<p class="eh-hint">👉 Eski denemeler için tabloyu sola kaydırın — ders adları sabit kalır.</p>' : ''}
+        <div class="eh-wrap">
+          <table class="eh-table">
+            <thead><tr><th class="eh-sticky eh-corner">Ders \\ Deneme</th>${head}</tr></thead>
+            <tbody>
+              <tr class="eh-row-total"><th class="eh-sticky" scope="row">Toplam Net</th>${totalRow}</tr>
+              ${anyRanks ? `
+              <tr class="eh-row-rank"><th class="eh-sticky" scope="row">🏫 Sınıf sırası</th>${classRow}</tr>
+              <tr class="eh-row-rank"><th class="eh-sticky" scope="row">🏆 Okul sırası${grade ? `<small> (${grade}. sınıflar)</small>` : ''}</th>${schoolRow}</tr>` : ''}
+              ${subjRows}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
     function subjectName(key) {
       if (typeof subjectDisplayName === 'function') return subjectDisplayName(key);
       return (typeof SUBJECT_LOOKUP !== 'undefined' && SUBJECT_LOOKUP[key]) ? SUBJECT_LOOKUP[key].name : key;
@@ -1745,46 +1803,7 @@
             <div class="card-header"><h4 class="card-title">📝 Katıldığı Tüm Denemeler ve Ders Dökümleri</h4></div>
             <p class="text-muted" style="font-size:12px;padding:0 16px">📘 Genel Denemeler. Kazanım testleri (Optik Okuma) için <a href="#" data-tab-switch="mastery" onclick="return false" style="color:#2dd4bf">🎯 Kazanım Denemeleri</a> sekmesine bakın.</p>
             ${generalResults.length ? `
-            <div class="table-wrapper" style="margin-top:10px">
-              <table class="simple-table">
-                <thead>
-                  <tr>
-                    <th>Deneme Adı</th>
-                    <th>Tarih</th>
-                    <th>Türkçe (D/Y/N)</th>
-                    <th>Matematik (D/Y/N)</th>
-                    <th>Fen (D/Y/N)</th>
-                    <th>İnkılap (D/Y/N)</th>
-                    <th>Din (D/Y/N)</th>
-                    <th>İngilizce (D/Y/N)</th>
-                    <th style="text-align:right">Toplam Net</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${generalResults.map(r => {
-                    const sub = r.subjects || {};
-                    const sCell = (k) => {
-                      const d = sub[k];
-                      if (!d) return '<span class="text-muted">-</span>';
-                      return `${d.correct || 0}/${d.wrong || 0} <b>(${d.net || 0})</b>`;
-                    };
-                    return `
-                      <tr>
-                        <td style="font-weight:700">${escapeHtml(r.examName)}</td>
-                        <td style="color:var(--text-muted);font-size:12px">${r.examDate || '-'}</td>
-                        <td>${sCell('turkce')}</td>
-                        <td>${sCell('matematik')}</td>
-                        <td>${sCell('fen')}</td>
-                        <td>${sCell('inkilap')}</td>
-                        <td>${sCell('din')}</td>
-                        <td>${sCell('ingilizce')}</td>
-                        <td style="text-align:right"><span class="badge-net" style="font-size:15px">${r.totalNet}</span></td>
-                      </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>` : '<p class="text-muted" style="padding:20px">Henüz girilmiş bir deneme sonucu bulunmuyor.</p>'}
+            ${renderExamHistoryTable(generalResults, data.examRanks || {})}` : '<p class="text-muted" style="padding:20px">Henüz girilmiş bir deneme sonucu bulunmuyor.</p>'}
           </div>
         </div>
 
