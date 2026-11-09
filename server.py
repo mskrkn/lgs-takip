@@ -9304,6 +9304,14 @@ def api_teacher_student_detail(student_id):
     # Öğrenci detayındaki "🎯 Kazanım Denemeleri" sekmesi (veli/öğrenci
     # portalıyla aynı veri) - bkz. Genel/Kazanım birleştirme planı.
     report["masteryTrend"] = _build_mastery_trend(db, student_id)
+    # "Tüm Deneme Geçmişi" tablosu: HER Genel Deneme için sınıf + okul (kademe)
+    # sırası (öğretmen tam sırayı görür; öğrenci panelindeki "alt yarıda numara
+    # yok" kuralı yalnızca öğrencinin kendi ekranı için).
+    st = db.execute("SELECT class_name, organization_id FROM students WHERE id = ?", (student_id,)).fetchone()
+    report["examRanks"] = {
+        str(r["examId"]): _exam_ranks(db, r["examId"], st, r["totalNet"])
+        for r in report.get("generalResults") or []
+    } if st else {}
     return jsonify(report)
 
 
