@@ -9098,8 +9098,23 @@ def _kazanim_stats(exam, results_by_exam, class_ids, grade_ids):
         for idx, entry in enumerate(entries or []):
             label = (entry or {}).get("kazanim") or "(Kazanım belirtilmemiş)"
             row = out.setdefault((skey, label), {"subject": skey, "kazanim": label, "questions": [],
-                                                 "class": [0, 0, 0], "grade": [0, 0, 0]})
-            row["questions"].append((entry or {}).get("dizilim") or idx + 1)
+                                                 "class": [0, 0, 0], "grade": [0, 0, 0], "per": {}})
+            qno = (entry or {}).get("dizilim") or idx + 1
+            row["questions"].append(qno)
+            # 2026-11-10: sinifta bu kazanimin sorularini kim kacirdi (Sinif
+            # Detayi > Kazanim Analizi satirina tiklayinca acilan liste)
+            for sid in class_ids:
+                ans = ((res.get(sid) or {}).get(skey) or {}).get("answers")
+                if not ans or idx >= len(ans) or ans[idx] not in ("D", "Y", "B"):
+                    continue
+                st = row["per"].setdefault(sid, {"id": sid, "correct": 0, "total": 0, "wrong": [], "blank": []})
+                st["total"] += 1
+                if ans[idx] == "D":
+                    st["correct"] += 1
+                elif ans[idx] == "Y":
+                    st["wrong"].append(qno)
+                else:
+                    st["blank"].append(qno)
             for scope, ids in (("class", class_ids), ("grade", grade_ids)):
                 agg = row[scope]
                 for sid in ids:
@@ -9118,6 +9133,9 @@ def _kazanim_stats(exam, results_by_exam, class_ids, grade_ids):
             "subject": r["subject"], "kazanim": r["kazanim"], "questions": r["questions"],
             "classRate": round(c[0] / c[2] * 100, 1), "gradeRate": round(g[0] / g[2] * 100, 1) if g[2] else None,
             "classAnswers": c[2], "classWrongRate": round(c[1] / c[2] * 100, 1),
+            "classStudents": len(r["per"]),
+            "missed": sorted((m for m in r["per"].values() if m["wrong"] or m["blank"]),
+                             key=lambda m: (m["correct"] / m["total"], -len(m["wrong"]) - len(m["blank"]))),
         })
     rows.sort(key=lambda r: (r["classRate"], r["kazanim"]))
     return rows
