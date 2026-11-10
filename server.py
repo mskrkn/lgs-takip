@@ -11276,22 +11276,36 @@ def _build_student_report(db, student_id, exam_id=None, with_ranks=True):
 
     topic_stats = None
     topic_stats_exam_id = None
-    if result_rows:
-        target_row = None
-        if exam_id:
-            target_row = next((r for r in result_rows if r["exam_id"] == exam_id), None)
-        if target_row is None:
-            # varsayilan: EN SON Kazanım Denemesi (topicMap'i olan) - yoksa
-            # kronolojik son deneme. Aksi halde bir OMR testinden SONRA
-            # normal bir deneme girilince kazanım sekmesi "veri yok" görünürdü.
-            mastery_rows = [r for r in result_rows if _is_mastery_exam_type(r["exam_type"])]
-            target_row = mastery_rows[-1] if mastery_rows else result_rows[-1]
-        topic_stats_exam_id = target_row["exam_id"]
-        exam_data = json.loads(target_row["exam_json"])
-        target_result_data = json.loads(target_row["data_json"])
-        qs = build_question_stats(exam_data, [target_result_data])
-        if qs:
-            topic_stats = build_topic_stats(qs)
+    # Konu/kazanım analizi yapılabilen denemeler (topicMap + cevap dizisi var)
+    # - öğretmen ekranındaki deneme seçici için, en yeniden eskiye.
+    topic_exams = []
+    stats_by_exam = {}
+    for r in reversed(result_rows):
+        qs = build_question_stats(json.loads(r["exam_json"] or "{}"), [json.loads(r["data_json"] or "{}")])
+        if not qs:
+            continue
+        stats_by_exam[r["exam_id"]] = qs
+        topic_exams.append({
+            "examId": r["exam_id"], "examName": r["exam_name"], "examDate": r["exam_date"],
+            "mastery": _is_mastery_exam_type(r["exam_type"]),
+            "subjectName": mastery_subject_names.get(r["exam_id"]),
+        })
+    if topic_exams:
+        target = None
+        if exam_id and exam_id in stats_by_exam:
+            target = exam_id
+        if target is None:
+            # 2026-11-10: varsayilan EN SON Genel Deneme (kazanim verisi olan).
+            # Eskiden en son Kazanim Denemesi seciliyordu - o tek ders/tek
+            # kazanim oldugu icin "Konu & Kazanim Analizi" tek satira
+            # dusuyordu (6/F). Genel Denemede kazanim verisi yoksa yine en son
+            # Kazanim Denemesine duser.
+            general = [t for t in topic_exams if not t["mastery"]]
+            target = (general or topic_exams)[0]["examId"]
+        topic_stats_exam_id = target
+        topic_stats = build_topic_stats(stats_by_exam[target])
+    elif result_rows:
+        topic_stats_exam_id = result_rows[-1]["exam_id"]
 
     subject_avgs = {k: round(sum(v) / len(v), 2) for k, v in subject_nets.items() if v}
     strongest = max(subject_avgs, key=subject_avgs.get) if subject_avgs else None
@@ -11447,6 +11461,7 @@ def _build_student_report(db, student_id, exam_id=None, with_ranks=True):
                      for r in general_results],
         "latestExamTopicStats": topic_stats,
         "topicStatsExamId": topic_stats_exam_id,
+        "topicExams": topic_exams,
         "classSubjectAverages": class_subject_averages,
         "classRank": class_rank,
         "latestRanks": latest_ranks,

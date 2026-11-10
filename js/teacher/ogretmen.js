@@ -217,6 +217,12 @@
         switchStudentModalTab(tabBtn.dataset.tabSwitch, tabBtn);
       });
 
+      // Konu & Kazanım Analizi: deneme seçici
+      document.body.addEventListener('change', (e) => {
+        const sel = e.target.closest('[data-topic-exam]');
+        if (sel) changeTopicExam(Number(sel.value));
+      });
+
       // Tebrik mesajını öğrenciye gönder butonu.
       document.body.addEventListener('click', (e) => {
         const sendBtn = e.target.closest('[data-send-message]');
@@ -1608,6 +1614,76 @@
       renderStudentMasteryChart();
     }
 
+    // "4. Konu & Kazanım Analizi" kartı. 2026-11-10: varsayılan en son GENEL
+    // Deneme (kazanım verisi olan); seçiciden başka bir deneme (genel ya da
+    // kazanım) seçilebilir - yalnızca bu kart yeniden çizilir.
+    function topicExamPicker(data) {
+      const list = data.topicExams || [];
+      if (!list.length) return '';
+      const opt = (t) => `<option value="${t.examId}" ${t.examId === data.topicStatsExamId ? 'selected' : ''}>${escapeHtml(t.examName || '')}${t.subjectName ? ' · ' + escapeHtml(t.subjectName) : ''}${t.examDate ? ' (' + escapeHtml(String(t.examDate).slice(0, 10)) + ')' : ''}</option>`;
+      const gen = list.filter(t => !t.mastery), mas = list.filter(t => t.mastery);
+      return `<select class="form-control" data-topic-exam style="max-width:340px;font-size:13px">
+        ${gen.length ? `<optgroup label="📘 Genel Denemeler">${gen.map(opt).join('')}</optgroup>` : ''}
+        ${mas.length ? `<optgroup label="🎯 Kazanım Denemeleri">${mas.map(opt).join('')}</optgroup>` : ''}
+      </select>`;
+    }
+
+    function topicsCardHtml(data) {
+      return `
+          <div class="card">
+            <div class="card-header" style="flex-wrap:wrap;gap:8px"><h4 class="card-title">🎯 Kazanım ve Konu Başarıları</h4>${topicExamPicker(data)}</div>
+            ${data.latestExamTopicStats && data.latestExamTopicStats.length ? `
+            <div class="table-wrapper" style="margin-top:10px">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th>Ders</th>
+                    <th>Kazanım / Konu</th>
+                    <th>Başarı Durumu</th>
+                    <th>D / Y / B</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.latestExamTopicStats.map(t => {
+                    const cls = t.successRate >= 80 ? 'net-up' : t.successRate >= 50 ? 'text-muted' : 'net-down';
+                    const barColor = t.successRate >= 80 ? '#10b981' : t.successRate >= 50 ? '#f59e0b' : '#ef4444';
+                    return `
+                      <tr>
+                        <td style="font-weight:700">${subjectName(t.subjectKey)}</td>
+                        <td>${escapeHtml(t.kazanim)}</td>
+                        <td>
+                          <div style="display:flex;align-items:center;gap:10px">
+                            <div style="width:100px;height:7px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
+                              <div style="width:${t.successRate}%;height:100%;background:${barColor};border-radius:4px"></div>
+                            </div>
+                            <span class="${cls}" style="font-weight:700">%${t.successRate}</span>
+                          </div>
+                        </td>
+                        <td>${t.correct} Doğru / ${t.wrong} Yanlış / ${t.blank} Boş</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>` : '<p class="text-muted" style="padding:20px">Optik okuma / konu kazanım bilgisi içeren deneme bulunamadı.</p>'}
+          </div>`;
+    }
+
+    async function changeTopicExam(examId) {
+      const d = currentStudentDetailData;
+      const host = document.getElementById('sd-topics-host');
+      if (!d || !host || !d.student) return;
+      host.style.opacity = '0.5';
+      try {
+        const res = await fetch(`/api/teacher/student/${d.student.id}?exam_id=${encodeURIComponent(examId)}`).then(r => r.json());
+        if (res.error || currentStudentDetailData !== d) return;
+        const view = { ...d, latestExamTopicStats: res.latestExamTopicStats, topicStatsExamId: res.topicStatsExamId, topicExams: res.topicExams };
+        host.innerHTML = topicsCardHtml(view);
+      } finally {
+        host.style.opacity = '';
+      }
+    }
+
     // Öğrenci detayı ayrı bir sayfa (#page-student-detail) - önceden modaldı,
     // telefon/tablette dar kaldığı için tam sayfaya taşındı. Geri tuşu
     // açıldığı sayfaya döner (NavHistory).
@@ -1814,43 +1890,7 @@
 
         <!-- ============ SEKME 4: KONU & KAZANIM ANALİZİ ============ -->
         <div class="detail-tab-pane" id="tab-pane-topics">
-          <div class="card">
-            <div class="card-header"><h4 class="card-title">🎯 Son Denemedeki Kazanım ve Konu Başarıları</h4></div>
-            ${data.latestExamTopicStats && data.latestExamTopicStats.length ? `
-            <div class="table-wrapper" style="margin-top:10px">
-              <table class="simple-table">
-                <thead>
-                  <tr>
-                    <th>Ders</th>
-                    <th>Kazanım / Konu</th>
-                    <th>Başarı Durumu</th>
-                    <th>D / Y / B</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${data.latestExamTopicStats.map(t => {
-                    const cls = t.successRate >= 80 ? 'net-up' : t.successRate >= 50 ? 'text-muted' : 'net-down';
-                    const barColor = t.successRate >= 80 ? '#10b981' : t.successRate >= 50 ? '#f59e0b' : '#ef4444';
-                    return `
-                      <tr>
-                        <td style="font-weight:700">${subjectName(t.subjectKey)}</td>
-                        <td>${escapeHtml(t.kazanim)}</td>
-                        <td>
-                          <div style="display:flex;align-items:center;gap:10px">
-                            <div style="width:100px;height:7px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
-                              <div style="width:${t.successRate}%;height:100%;background:${barColor};border-radius:4px"></div>
-                            </div>
-                            <span class="${cls}" style="font-weight:700">%${t.successRate}</span>
-                          </div>
-                        </td>
-                        <td>${t.correct} Doğru / ${t.wrong} Yanlış / ${t.blank} Boş</td>
-                      </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>` : '<p class="text-muted" style="padding:20px">Optik okuma / konu kazanım bilgisi içeren deneme bulunamadı.</p>'}
-          </div>
+          <div id="sd-topics-host">${topicsCardHtml(data)}</div>
         </div>
 
         <!-- ============ SEKME 5: HATA HAFIZASI & KOÇ ============ -->
