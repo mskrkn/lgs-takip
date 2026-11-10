@@ -89,3 +89,25 @@
 /* Kazanım analizi başarı çubuğu */
 .sn-rate { height: 8px; border-radius: 4px; background: var(--bg-glass); overflow: hidden; min-width: 60px; }
 .sn-rate > span { display: block; height: 100%; border-radius: 4px; }
+
+/* Kazanım analizi: satıra tıklayınca yapamayanlar (2026-11-10) */
+.sn-table tr.sn-kaz-row { cursor: pointer; }
+.sn-table tr.sn-kaz-row:hover td { background: var(--bg-glass); }
+.sn-table tr.sn-kaz-open td { background: rgba(99, 102, 241, 0.10); }
+.sn-kaz-caret { display: inline-block; width: 12px; color: var(--text-muted); }
+.sn-kaz-miss-count { font-size: 11px; font-weight: 700; color: #fb7185; white-space: nowrap; }
+.sn-table tr.sn-kaz-detail > td { padding: 0 !important; background: transparent; }
+.sn-kaz-panel { margin: 4px 0 10px; padding: 12px; border-radius: 12px; background: var(--bg-glass); border: 1px solid var(--bg-glass-border); white-space: normal; }
+.sn-kaz-group { margin-top: 10px; }
+.sn-kaz-group-t { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.sn-kaz-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sn-kaz-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer;
+  background: var(--bg-card, rgba(255,255,255,0.04)); border: 1px solid var(--bg-glass-border); border-radius: 10px; padding: 6px 10px; font-size: 13px; color: var(--text-primary); font-family: inherit; }
+.sn-kaz-chip:hover { border-color: var(--accent-primary-light, #2dd4bf); }
+.sn-kaz-chip small { color: var(--text-muted); font-weight: 600; }
+.sn-kaz-q { font-size: 11.5px; color: var(--text-muted); }
+@media (max-width: 600px) {
+  .sn-kaz-chip { flex: 1 1 100%; }
+  /* tablo yana kaydırılabilir; açılan liste ekran genişliğinde ve solda sabit kalsın */
+  .sn-kaz-panel { position: sticky; left: 0; width: calc(100vw - 72px); box-sizing: border-box; }
+}

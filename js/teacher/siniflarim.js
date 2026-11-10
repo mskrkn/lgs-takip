@@ -14,7 +14,7 @@ const Siniflarim = (function () {
   let summary = null;               // son /class-summary yanıtı (tüm kademeler)
   let detailState = null;           // { className, examId, returnPage }
   let subjectReport = { key: null, data: null };  // Okul Geneli > Branş Görünümü
-  let kazState = { subject: null, all: false };  // Sınıf Detayı > Kazanım Analizi filtresi
+  let kazState = { subject: null, all: false, open: null };  // Sınıf Detayı > Kazanım Analizi filtresi + açık satır
   let detailSort = null;            // null = öğretmenin dersi varsa o, yoksa toplam; 'total' | ders anahtarı
 
   const ORDER = ['turkce', 'inkilap', 'din', 'ingilizce', 'matematik', 'fen'];
@@ -244,7 +244,7 @@ const Siniflarim = (function () {
       box.dataset.open = '1';
       box.innerHTML = `<div class="mt-2" style="border-top:1px solid var(--bg-glass-border);padding-top:12px">
           <div class="sn-grade-head"><b>${esc(d.exam.name)}: ${total} öğrenci girmedi</b>
-            <button type="button" class="btn btn-secondary btn-sm" data-sn-absent-csv="${esc(grade)}">⬇️ Excel'e aktar</button></div>
+            <div class="sn-actions"><button type="button" class="btn btn-secondary btn-sm" data-sn-absent-csv="${esc(grade)}">⬇️ Excel'e aktar</button><button type="button" class="btn btn-secondary btn-sm" data-sn-absent-pdf="${esc(grade)}">⬇️ PDF</button></div></div>
           ${d.classes.map(c => `<div class="mt-1"><div style="font-weight:700;margin-bottom:6px">${esc(c.className)} (${c.students.length})</div>
             <div class="sn-absent-list">${c.students.map(s => `<span>${s.schoolNumber ? esc(s.schoolNumber) + ' · ' : ''}${esc(s.firstName)} ${esc(s.lastName)}</span>`).join('')}</div></div>`).join('')}
         </div>`;
@@ -314,12 +314,12 @@ const Siniflarim = (function () {
         return `<tr class="${k === d.mySubject ? 'sn-focus-row' : ''}"><td>${esc(subjLabel(k, d.grade))}${k === d.mySubject ? ' <small class="sn-mine-tag">dersiniz</small>' : ''}</td><td class="num">${qc[k] || '-'}</td><td class="num"><b>${fmt(c.subjects[k])}</b></td><td class="num">${fmt(g.gradeStats.subjects[k])}</td><td class="num">${signed(diff)}</td><td class="sn-hide-sm">${bar}</td></tr>`;
       }).join('')}
       </tbody></table></div></div>`;
-    kazState = { subject: d.mySubject && (d.kazanim || []).some(k => k.subject === d.mySubject) ? d.mySubject : 'ALL', all: false };
+    kazState = { subject: d.mySubject && (d.kazanim || []).some(k => k.subject === d.mySubject) ? d.mySubject : 'ALL', all: false, open: null };
     if ((d.kazanim || []).length) html += `<div class="card mt-2" id="sn-kazanim">${kazanimHtml(d)}</div>`;
     html += `<div class="card mt-2" id="sn-ranking">${rankingHtml(d)}</div>`;
     // Girmeyenler
     html += `<div class="card mt-2"><div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">📋</span> Sınava Girmeyenler (${d.absent.length})</h3>
-        ${d.absent.length ? '<button type="button" class="btn btn-secondary btn-sm" data-sn-detail-absent-csv>⬇️ Excel\'e aktar</button>' : ''}</div>
+        ${d.absent.length ? '<div class="sn-actions"><button type="button" class="btn btn-secondary btn-sm" data-sn-detail-absent-csv>⬇️ Excel\'e aktar</button><button type="button" class="btn btn-secondary btn-sm" data-sn-detail-absent-pdf>⬇️ PDF</button></div>' : ''}</div>
       ${d.absent.length ? `<div class="sn-absent-list">${d.absent.map(s => `<span>${s.schoolNumber ? esc(s.schoolNumber) + ' · ' : ''}${esc(s.firstName)} ${esc(s.lastName)}</span>`).join('')}</div>`
         : '<p class="sn-empty">Bu sınıftaki tüm öğrenciler sınava girdi. 🎉</p>'}
       </div>`;
@@ -336,19 +336,65 @@ const Siniflarim = (function () {
     const pill = (val, label) => `<button type="button" class="filter-pill ${kazState.subject === val ? 'active' : ''}" data-sn-kaz-subject="${esc(val)}">${esc(label)}</button>`;
     const bar = (rate) => `<div class="sn-rate"><span style="width:${Math.max(0, Math.min(100, rate))}%;background:${rate < 40 ? 'var(--danger)' : rate < 60 ? 'var(--warning)' : 'var(--success)'}"></span></div>`;
     return `<div class="card-header" style="flex-wrap:wrap;gap:8px"><h3 class="card-title"><span class="card-icon">🎯</span> Kazanım Analizi <small style="font-weight:600;color:var(--text-muted)">(en zayıftan güçlüye)</small></h3>
-        <button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-csv>⬇️ Excel'e aktar</button></div>
+        <div class="sn-actions"><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-csv>⬇️ Excel'e aktar</button><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-pdf>⬇️ PDF</button></div></div>
       <div class="sn-sort" style="margin-bottom:10px">${pill('ALL', 'Tüm dersler')}${subjects.map(k => pill(k, subjLabel(k, d.grade))).join('')}</div>
       <div class="sn-matrix-wrap"><table class="sn-table"><thead><tr><th class="sn-hide-sm">Ders</th><th>Kazanım</th><th class="num">Soru</th><th class="num">Sınıf</th><th class="sn-hide-sm" style="width:18%"></th><th class="num">Kademe</th><th class="num">Fark</th></tr></thead><tbody>
       ${shown.map(k => {
         const diff = k.gradeRate == null ? null : k.classRate - k.gradeRate;
-        return `<tr class="${k.subject === d.mySubject ? 'sn-focus-row' : ''}"><td class="sn-hide-sm">${esc(subjLabel(k.subject, d.grade, true))}</td>
-          <td style="min-width:220px">${esc(k.kazanim)}</td><td class="num">${esc(k.questions.join(', '))}</td>
+        const key = kazKey(k), isOpen = kazState.open === key, nMiss = (k.missed || []).length;
+        return `<tr class="sn-kaz-row ${k.subject === d.mySubject ? 'sn-focus-row' : ''} ${isOpen ? 'sn-kaz-open' : ''}" data-sn-kaz-row="${esc(key)}" title="Yapamayanları görmek için tıklayın"><td class="sn-hide-sm">${esc(subjLabel(k.subject, d.grade, true))}</td>
+          <td style="min-width:220px"><span class="sn-kaz-caret">${isOpen ? '▾' : '▸'}</span> ${esc(k.kazanim)}${nMiss ? ` <span class="sn-kaz-miss-count">${nMiss} öğrenci</span>` : ''}</td><td class="num">${esc(k.questions.join(', '))}</td>
           <td class="num"><b>%${Math.round(k.classRate)}</b></td><td class="sn-hide-sm">${bar(k.classRate)}</td>
-          <td class="num">${k.gradeRate == null ? '-' : '%' + Math.round(k.gradeRate)}</td><td class="num">${signed(diff, '')}</td></tr>`;
+          <td class="num">${k.gradeRate == null ? '-' : '%' + Math.round(k.gradeRate)}</td><td class="num">${signed(diff, '')}</td></tr>
+          ${isOpen ? `<tr class="sn-kaz-detail"><td colspan="7">${kazMissHtml(d, k)}</td></tr>` : ''}`;
       }).join('')}
       </tbody></table></div>
       ${list.length > 10 ? `<div style="margin-top:8px"><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-all>${kazState.all ? 'Yalnızca ilk 10' : `Tümünü göster (${list.length})`}</button></div>` : ''}
-      <p class="text-muted" style="font-size:12px;margin-top:8px">Başarı: soruyu doğru yapan öğrencilerin oranı. Fark yüzde puan olarak kademeye göredir.</p>`;
+      <p class="text-muted" style="font-size:12px;margin-top:8px">Başarı: soruyu doğru yapan öğrencilerin oranı. Fark yüzde puan olarak kademeye göredir. Bir kazanıma tıklayınca o kazanımı yapamayan öğrenciler açılır.</p>`;
+  }
+
+  // --- Kazanımı yapamayanlar (satıra tıklayınca) ---
+  const kazKey = (k) => `${k.subject}::${k.kazanim}`;
+  function kazFind(d, key) { return (d.kazanim || []).find(k => kazKey(k) === key); }
+  function studentMap(d) {
+    if (!d._stMap) {
+      d._stMap = {};
+      (d.participants || []).forEach(p => { d._stMap[p.id] = p; });
+    }
+    return d._stMap;
+  }
+  // Bir kazanımdaki her öğrencinin durumu: Yanlış (en az bir yanlış) / Boş (yalnız boş)
+  function kazMissRows(d, k) {
+    const st = studentMap(d);
+    return (k.missed || []).map(m => {
+      const p = st[m.id] || {};
+      const parts = [...m.wrong.map(q => `S${q} ✗`), ...m.blank.map(q => `S${q} boş`)];
+      return {
+        id: m.id, no: p.schoolNumber || '', name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || '-',
+        kind: m.wrong.length ? 'Yanlış' : 'Boş', qs: parts.join(', '), score: `${m.correct}/${m.total}`, m,
+        // dosyalar için (PDF yazı tipinde ✗ yok)
+        qsText: [...m.wrong.map(q => `S${q} yanlış`), ...m.blank.map(q => `S${q} boş`)].join(', '),
+      };
+    });
+  }
+  function kazMissHtml(d, k) {
+    const rows = kazMissRows(d, k);
+    const total = k.classStudents || 0;
+    if (!rows.length) return `<div class="sn-kaz-panel"><b>🎉 Sınava giren herkes bu kazanımın sorularını doğru yaptı.</b></div>`;
+    const multi = k.questions.length > 1;
+    const chip = (r) => `<button type="button" class="sn-kaz-chip" data-open-student data-student-id="${r.id}" data-student-name="${esc(r.name)}">
+        ${r.no ? `<small>${esc(r.no)}</small> ` : ''}${esc(r.name)}<span class="sn-kaz-q">${esc(r.qs)}${multi ? ` · ${esc(r.score)} doğru` : ''}</span></button>`;
+    const wrong = rows.filter(r => r.kind === 'Yanlış'), blank = rows.filter(r => r.kind === 'Boş');
+    return `<div class="sn-kaz-panel">
+        <div class="sn-grade-head" style="flex-wrap:wrap;gap:8px"><b>Bu kazanımı yapamayanlar: ${rows.length} / ${total} öğrenci</b>
+          <div class="sn-actions"><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-miss-csv>⬇️ Excel</button><button type="button" class="btn btn-secondary btn-sm" data-sn-kaz-miss-pdf>⬇️ PDF</button></div></div>
+        ${wrong.length ? `<div class="sn-kaz-group"><div class="sn-kaz-group-t">❌ Yanlış yapanlar (${wrong.length})</div><div class="sn-kaz-chips">${wrong.map(chip).join('')}</div></div>` : ''}
+        ${blank.length ? `<div class="sn-kaz-group"><div class="sn-kaz-group-t">⚪ Boş bırakanlar (${blank.length})</div><div class="sn-kaz-chips">${blank.map(chip).join('')}</div></div>` : ''}
+        <p class="text-muted" style="font-size:11.5px;margin:6px 0 0">${multi ? 'Bu kazanımın sorularından en az birini kaçıranlar. ' : ''}İsme tıklayınca öğrencinin detayı açılır.</p>
+      </div>`;
+  }
+  function kazMissNames(d, k) {
+    return kazMissRows(d, k).map(r => `${r.name}${r.no ? ' (' + r.no + ')' : ''}`).join(', ');
   }
 
   // Sınıf içi sıralama: öğretmenin dersi varsa varsayılan o derse göre,
@@ -473,9 +519,55 @@ const Siniflarim = (function () {
       if (e.target.closest('[data-sn-kaz-csv]')) {
         const dd = document.getElementById('class-detail-body')._data;
         if (!dd) return;
-        const rows = [['Ders', 'Kazanım', 'Soru', 'Sınıf Başarı %', 'Kademe Başarı %', 'Fark (puan)']];
-        (dd.kazanim || []).forEach(k => rows.push([subjLabel(k.subject, dd.grade), k.kazanim, k.questions.join(', '), n2(k.classRate), n2(k.gradeRate), k.gradeRate == null ? '' : n2(k.classRate - k.gradeRate)]));
+        const rows = [['Ders', 'Kazanım', 'Soru', 'Sınıf Başarı %', 'Kademe Başarı %', 'Fark (puan)', 'Yapamayan Sayısı', 'Yapamayanlar']];
+        (dd.kazanim || []).forEach(k => rows.push([subjLabel(k.subject, dd.grade), k.kazanim, k.questions.join(', '), n2(k.classRate), n2(k.gradeRate), k.gradeRate == null ? '' : n2(k.classRate - k.gradeRate), (k.missed || []).length, kazMissNames(dd, k)]));
         downloadCsv(`${dd.summary.exam.name} - ${dd.className} kazanım analizi.csv`, rows);
+        return;
+      }
+      const kazPdf = e.target.closest('[data-sn-kaz-pdf]');
+      if (kazPdf) {
+        const dd = document.getElementById('class-detail-body')._data;
+        if (!dd) return;
+        const rows = (dd.kazanim || []).map(k => [subjLabel(k.subject, dd.grade, true), k.kazanim, k.questions.join(', '),
+          '%' + Math.round(k.classRate), k.gradeRate == null ? '-' : '%' + Math.round(k.gradeRate),
+          k.gradeRate == null ? '-' : ((k.classRate - k.gradeRate) > 0 ? '+' : '') + Math.round(k.classRate - k.gradeRate), kazMissNames(dd, k) || '-']);
+        downloadPdf(`${dd.summary.exam.name} - ${dd.className} kazanım analizi.pdf`, {
+          title: `${dd.className} Kazanım Analizi`,
+          subtitle: `${dd.summary.exam.name}${dd.summary.exam.date ? ' · ' + dd.summary.exam.date : ''} · en zayıftan güçlüye`,
+          columns: ['Ders', 'Kazanım', 'Soru', 'Sınıf', 'Kademe', 'Fark', 'Yapamayanlar'], rows,
+          notes: ['Başarı: soruyu doğru yapan öğrencilerin oranı. Fark: kademeye göre yüzde puan. Yapamayanlar: kazanımın sorularından en az birini yanlış yapan ya da boş bırakan öğrenciler.'],
+        }, kazPdf);
+        return;
+      }
+      const kazRow = e.target.closest('[data-sn-kaz-row]');
+      if (kazRow) {
+        const key = kazRow.dataset.snKazRow;
+        kazState.open = kazState.open === key ? null : key;
+        const box = document.getElementById('sn-kazanim');
+        const dd = document.getElementById('class-detail-body')._data;
+        if (box && dd) box.innerHTML = kazanimHtml(dd);
+        return;
+      }
+      const missCsv = e.target.closest('[data-sn-kaz-miss-csv]');
+      const missPdf = e.target.closest('[data-sn-kaz-miss-pdf]');
+      if (missCsv || missPdf) {
+        const dd = document.getElementById('class-detail-body')._data;
+        const k = dd && kazFind(dd, kazState.open);
+        if (!k) return;
+        const rows = kazMissRows(dd, k);
+        const base = `${dd.summary.exam.name} - ${dd.className} - ${k.kazanim}`.slice(0, 150);
+        if (missCsv) {
+          downloadCsv(`${base} yapamayanlar.csv`, [['Okul No', 'Ad Soyad', 'Durum', 'Kaçırılan Sorular', 'Doğru'],
+            ...rows.map(r => [r.no, r.name, r.kind, r.qsText, r.score])]);
+        } else {
+          downloadPdf(`${base} yapamayanlar.pdf`, {
+            title: `${dd.className} · Kazanımı Yapamayanlar`,
+            subtitle: `${subjLabel(k.subject, dd.grade)} · ${k.kazanim} · ${dd.summary.exam.name} · Soru: ${k.questions.join(', ')} · ${rows.length}/${k.classStudents || 0} öğrenci`,
+            columns: ['No', 'Ad Soyad', 'Durum', 'Kaçırılan Sorular', 'Doğru'],
+            rows: rows.map(r => [r.no || '-', r.name, r.kind, r.qsText, r.score]),
+            notes: ['Soru numaraları A kitapçığına göredir. Doğru: kazanımın sorularından kaçını doğru yaptığı.'],
+          }, missPdf);
+        }
         return;
       }
       const sortBtn = e.target.closest('[data-sn-sort]');
@@ -496,6 +588,20 @@ const Siniflarim = (function () {
         const rows = [['Şube', 'Okul No', 'Ad', 'Soyad']];
         d.classes.forEach(c => c.students.forEach(s => rows.push([c.className, s.schoolNumber, s.firstName, s.lastName])));
         downloadCsv(`${d.exam.name} - ${d.grade}. sınıf girmeyenler.csv`, rows);
+        return;
+      }
+      const absPdf = e.target.closest('[data-sn-absent-pdf]');
+      if (absPdf) {
+        const box = document.getElementById(`sn-absent-${absPdf.dataset.snAbsentPdf}`);
+        const ad = box && box._data;
+        if (!ad) return;
+        const rows = [];
+        ad.classes.forEach(c => c.students.forEach(s => rows.push([c.className, s.schoolNumber || '-', `${s.firstName} ${s.lastName}`])));
+        downloadPdf(`${ad.exam.name} - ${ad.grade}. sınıf girmeyenler.pdf`, {
+          title: `${ad.grade}. Sınıf · Sınava Girmeyenler`,
+          subtitle: `${ad.exam.name}${ad.exam.date ? ' · ' + ad.exam.date : ''} · ${rows.length} öğrenci`,
+          columns: ['Şube', 'Okul No', 'Ad Soyad'], rows,
+        }, absPdf);
         return;
       }
       const host = document.getElementById('class-detail-body');
@@ -526,6 +632,16 @@ const Siniflarim = (function () {
           columns, rows,
           notes: ['Ders hücreleri: net (doğru/yanlış). Kademe sırası: aynı kademedeki ' + d.gradeParticipants + ' katılımcı arasında toplam nete göre.'],
         }, pdfBtn);
+        return;
+      }
+      const dAbsPdf = d && e.target.closest('[data-sn-detail-absent-pdf]');
+      if (dAbsPdf) {
+        downloadPdf(`${d.summary.exam.name} - ${d.className} girmeyenler.pdf`, {
+          title: `${d.className} · Sınava Girmeyenler`,
+          subtitle: `${d.summary.exam.name}${d.summary.exam.date ? ' · ' + d.summary.exam.date : ''} · ${d.absent.length} öğrenci`,
+          columns: ['Okul No', 'Ad Soyad'],
+          rows: d.absent.map(s => [s.schoolNumber || '-', `${s.firstName} ${s.lastName}`]),
+        }, dAbsPdf);
         return;
       }
       if (d && e.target.closest('[data-sn-detail-absent-csv]')) {

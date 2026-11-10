@@ -106,6 +106,11 @@ const AdminUsers = {
     const canManageAccounts = isRealAdmin || (App.currentUser?.actsAsSuperAdmin && !!App.actingSchool);
     this._users = users; // Bölüm 6 filtreleri (branş/sınıf/durum/isim) için
     this._canManageAccounts = canManageAccounts;
+    // 2026-11-10: 1200+ ogrenci hesapli okulda tum satirlar (+ veli formunda
+    // her ogrenci icin bir onay kutusu) tek seferde cizilince sayfa donuyordu.
+    // Tablo parca parca, veli cocuk listesi aramayla ve sinirli cizilir.
+    this._tableLimit = this.TABLE_PAGE;
+    this._childSel = new Set();
 
     container.innerHTML = `
       ${App.currentUser?.actsAsSuperAdmin && App.actingSchool ? `
@@ -196,13 +201,10 @@ const AdminUsers = {
           </div>
           <div id="new-user-children-wrap" style="display:none">
             <label class="form-label">Çocuk(lar) (Veli İçin, birden fazla seçilebilir)</label>
-            <div style="max-height:160px;overflow-y:auto;border:1px solid var(--bg-glass-border);border-radius:10px;padding:8px">
-              ${students.map(s => `
-                <label style="display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:15px;cursor:pointer">
-                  <input type="checkbox" class="new-user-child-checkbox" value="${s.id}" style="width:16px;height:16px">
-                  ${s.first_name} ${s.last_name} (${s.class_name || '-'})
-                </label>`).join('')}
-            </div>
+            <input type="text" id="new-user-child-search" class="form-control" style="margin-bottom:6px"
+              placeholder="Öğrenci adı / sınıf / numara ara..." oninput="AdminUsers._renderChildList()">
+            <div id="new-user-child-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--bg-glass-border);border-radius:10px;padding:8px"></div>
+            <small id="new-user-child-selected" class="text-muted" style="display:block;margin-top:6px"></small>
           </div>
         </div>
         <button class="btn btn-primary mt-2" onclick="AdminUsers.createUser()">Hesabı Oluştur</button>
@@ -243,7 +245,7 @@ const AdminUsers = {
           <h3 class="card-title"><span class="card-icon">👥</span> Mevcut Hesaplar</h3>
         </div>
         ${this._renderUserFilters(users)}
-        <div id="users-list">${this._renderUsersTable(users, canManageAccounts)}</div>
+        <div id="users-list">${this._renderUsersTable(users, canManageAccounts, true)}</div>
       </div>
 
       <div class="card mt-2">
@@ -282,7 +284,7 @@ const AdminUsers = {
     const classNames = [...new Set(users.filter(u => u.role === 'teacher' && u.className).map(u => u.className))].sort();
     return `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-        <input type="text" id="users-filter-search" class="form-control" style="max-width:220px" placeholder="İsim ara..." oninput="AdminUsers._applyUserFilters()">
+        <input type="text" id="users-filter-search" class="form-control" style="max-width:220px" placeholder="İsim ara..." oninput="AdminUsers._onUserSearchInput()">
         <select id="users-filter-role" class="form-control" style="max-width:160px" onchange="AdminUsers._applyUserFilters()">
           <option value="">Tüm Roller</option>
           <option value="teacher">Öğretmen</option>
@@ -306,8 +308,63 @@ const AdminUsers = {
     `;
   },
 
+  TABLE_PAGE: 100,
+  CHILD_LIST_MAX: 100,
+
+  _onUserSearchInput() {
+    clearTimeout(this._searchTimer);
+    this._searchTimer = setTimeout(() => this._applyUserFilters(), 250);
+  },
+
+  _showMoreUsers() {
+    this._tableLimit += this.TABLE_PAGE * 2;
+    document.getElementById('users-list').innerHTML =
+      this._renderUsersTable(this._lastFilteredUsers || this._users || [], this._canManageAccounts, true);
+  },
+
+  _showAllUsers() {
+    this._tableLimit = Infinity;
+    document.getElementById('users-list').innerHTML =
+      this._renderUsersTable(this._lastFilteredUsers || this._users || [], this._canManageAccounts, true);
+  },
+
+  _renderChildList() {
+    const box = document.getElementById('new-user-child-list');
+    if (!box) return;
+    const q = (document.getElementById('new-user-child-search')?.value || '').toLocaleLowerCase('tr-TR').trim();
+    const all = this._students || [];
+    const match = q ? all.filter(s =>
+      `${s.first_name} ${s.last_name} ${s.class_name || ''} ${s.school_number || ''}`.toLocaleLowerCase('tr-TR').includes(q)) : all;
+    // Secili olanlar her zaman listede kalsin (arama degisince kaybolmasin)
+    const shown = all.filter(s => this._childSel.has(s.id) && !match.includes(s))
+      .concat(match.slice(0, this.CHILD_LIST_MAX));
+    box.innerHTML = shown.map(s => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:15px;cursor:pointer">
+        <input type="checkbox" class="new-user-child-checkbox" value="${s.id}" style="width:16px;height:16px"
+          ${this._childSel.has(s.id) ? 'checked' : ''} onchange="AdminUsers._toggleChild(${s.id}, this.checked)">
+        ${s.first_name} ${s.last_name} (${s.class_name || '-'})
+      </label>`).join('') +
+      (match.length > this.CHILD_LIST_MAX
+        ? `<div class="text-muted" style="font-size:12.5px;padding:6px 2px">${match.length} öğrenciden ilk ${this.CHILD_LIST_MAX} tanesi gösteriliyor — aramayla daraltın.</div>`
+        : (match.length ? '' : '<div class="text-muted" style="font-size:12.5px;padding:6px 2px">Eşleşen öğrenci yok.</div>'));
+    this._updateChildSelectedNote();
+  },
+
+  _toggleChild(id, on) {
+    if (on) this._childSel.add(id); else this._childSel.delete(id);
+    this._updateChildSelectedNote();
+  },
+
+  _updateChildSelectedNote() {
+    const el = document.getElementById('new-user-child-selected');
+    if (!el) return;
+    const names = (this._students || []).filter(s => this._childSel.has(s.id)).map(s => `${s.first_name} ${s.last_name}`);
+    el.textContent = names.length ? `Seçili: ${names.join(', ')}` : '';
+  },
+
   _applyUserFilters() {
-    const q = (document.getElementById('users-filter-search')?.value || '').toLocaleLowerCase('tr-TR').trim();
+    this._tableLimit = this.TABLE_PAGE;
+    const q =(document.getElementById('users-filter-search')?.value || '').toLocaleLowerCase('tr-TR').trim();
     const role = document.getElementById('users-filter-role')?.value || '';
     const subject = document.getElementById('users-filter-subject')?.value || '';
     const className = document.getElementById('users-filter-class')?.value || '';
@@ -321,11 +378,14 @@ const AdminUsers = {
       if (status === 'inactive' && u.active) return false;
       return true;
     });
-    document.getElementById('users-list').innerHTML = this._renderUsersTable(filtered, this._canManageAccounts);
+    document.getElementById('users-list').innerHTML = this._renderUsersTable(filtered, this._canManageAccounts, true);
   },
 
-  _renderUsersTable(users, isRealAdmin) {
-    if (!users.length) return '<p class="text-muted">Eşleşen hesap bulunamadı.</p>';
+  _renderUsersTable(allUsers, isRealAdmin, paged = false) {
+    if (paged) this._lastFilteredUsers = allUsers;
+    if (!allUsers.length) return '<p class="text-muted">Eşleşen hesap bulunamadı.</p>';
+    const limit = paged ? (this._tableLimit || this.TABLE_PAGE) : Infinity;
+    const users = allUsers.length > limit ? allUsers.slice(0, limit) : allUsers;
     let html = `<div class="table-wrapper"><table style="width:100%;border-collapse:collapse">
       <tr style="text-align:left;color:var(--text-muted);font-size:13px">
         <th style="padding:8px">Rol</th><th style="padding:8px">Ad</th><th style="padding:8px">Kullanıcı Adı</th>
@@ -366,6 +426,13 @@ const AdminUsers = {
       </tr>`;
     });
     html += '</table></div>';
+    if (users.length < allUsers.length) {
+      html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+        <span class="text-muted" style="font-size:13px">${allUsers.length} hesabın ${users.length} tanesi gösteriliyor — aramak için yukarıdaki filtreleri kullanın.</span>
+        <button class="btn btn-secondary btn-sm" onclick="AdminUsers._showMoreUsers()">Daha fazla göster</button>
+        <button class="btn btn-secondary btn-sm" onclick="AdminUsers._showAllUsers()">Tümünü göster</button>
+      </div>`;
+    }
     return html;
   },
 
@@ -407,6 +474,7 @@ const AdminUsers = {
     document.getElementById('new-user-class-wrap').style.display = role === 'teacher' ? '' : 'none';
     document.getElementById('new-user-student-wrap').style.display = role === 'student' ? '' : 'none';
     document.getElementById('new-user-children-wrap').style.display = role === 'parent' ? '' : 'none';
+    if (role === 'parent') this._renderChildList();
   },
 
   onAllClassesToggle() {
@@ -574,8 +642,7 @@ const AdminUsers = {
     const className = allClasses ? '*' : selectedClasses.join(',');
 
     const studentId = document.getElementById('new-user-studentid').value;
-    const studentIds = Array.from(document.querySelectorAll('.new-user-child-checkbox:checked'))
-      .map(cb => Number(cb.value));
+    const studentIds = [...(this._childSel || [])].map(Number);
     const subject = document.getElementById('new-user-subject').value.trim();
     const homeroomClassName = document.getElementById('new-user-homeroom-class')?.value || '';
 
@@ -944,9 +1011,8 @@ const AdminUsers = {
       const usersListEl = document.getElementById('users-list');
       if (usersListEl) {
         const freshUsers = await fetch(`/api/admin/users${this._schoolQuery()}`).then(r => r.json());
-        const canManageAccounts = (App.currentUser?.role === 'admin' && !App.actingSchool) ||
-          (App.currentUser?.actsAsSuperAdmin && !!App.actingSchool);
-        usersListEl.innerHTML = this._renderUsersTable(freshUsers, canManageAccounts);
+        this._users = freshUsers;
+        this._applyUserFilters();
       }
     }
   },

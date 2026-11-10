@@ -7856,22 +7856,34 @@ def api_admin_list_users():
         "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
+    # 2026-11-10: 1200+ ogrenci hesapli okulda satir basina sorgu yerine
+    # ogrenci/veli adlari tek seferde alinir.
+    name_by_sid = {
+        s["id"]: f'{s["first_name"] or ""} {s["last_name"] or ""}'.strip()
+        for s in db.execute("SELECT id, first_name, last_name FROM students WHERE organization_id = ?", (org_id,))
+    }
+    children_by_parent = {}
+    for ps in db.execute(
+        "SELECT ps.parent_user_id, s.first_name, s.last_name FROM parent_students ps "
+        "JOIN students s ON s.id = ps.student_id JOIN users u ON u.id = ps.parent_user_id "
+        "WHERE u.organization_id = ? ORDER BY s.last_name, s.first_name",
+        (org_id,),
+    ):
+        children_by_parent.setdefault(ps["parent_user_id"], []).append(
+            f'{ps["first_name"] or ""} {ps["last_name"] or ""}'.strip())
     out = []
     for r in rows:
         student_names = []
         if r["role"] == "student" and r["student_id"]:
-            st = db.execute("SELECT first_name, last_name FROM students WHERE id = ?",
-                             (r["student_id"],)).fetchone()
-            if st:
-                student_names = [f'{st["first_name"]} {st["last_name"]}'.strip()]
+            if r["student_id"] in name_by_sid:
+                student_names = [name_by_sid[r["student_id"]]]
+            else:  # baska okulda kayitli eski bir baglanti olabilir
+                st = db.execute("SELECT first_name, last_name FROM students WHERE id = ?",
+                                (r["student_id"],)).fetchone()
+                if st:
+                    student_names = [f'{st["first_name"]} {st["last_name"]}'.strip()]
         elif r["role"] == "parent":
-            rows2 = db.execute(
-                "SELECT s.first_name, s.last_name FROM parent_students ps "
-                "JOIN students s ON s.id = ps.student_id WHERE ps.parent_user_id = ? "
-                "ORDER BY s.last_name, s.first_name",
-                (r["id"],),
-            ).fetchall()
-            student_names = [f'{s["first_name"]} {s["last_name"]}'.strip() for s in rows2]
+            student_names = children_by_parent.get(r["id"], [])
         out.append({
             "id": r["id"], "username": r["username"], "role": r["role"],
             "displayName": r["display_name"],
@@ -9086,8 +9098,23 @@ def _kazanim_stats(exam, results_by_exam, class_ids, grade_ids):
         for idx, entry in enumerate(entries or []):
             label = (entry or {}).get("kazanim") or "(Kazanım belirtilmemiş)"
             row = out.setdefault((skey, label), {"subject": skey, "kazanim": label, "questions": [],
-                                                 "class": [0, 0, 0], "grade": [0, 0, 0]})
-            row["questions"].append((entry or {}).get("dizilim") or idx + 1)
+                                                 "class": [0, 0, 0], "grade": [0, 0, 0], "per": {}})
+            qno = (entry or {}).get("dizilim") or idx + 1
+            row["questions"].append(qno)
+            # 2026-11-10: sinifta bu kazanimin sorularini kim kacirdi (Sinif
+            # Detayi > Kazanim Analizi satirina tiklayinca acilan liste)
+            for sid in class_ids:
+                ans = ((res.get(sid) or {}).get(skey) or {}).get("answers")
+                if not ans or idx >= len(ans) or ans[idx] not in ("D", "Y", "B"):
+                    continue
+                st = row["per"].setdefault(sid, {"id": sid, "correct": 0, "total": 0, "wrong": [], "blank": []})
+                st["total"] += 1
+                if ans[idx] == "D":
+                    st["correct"] += 1
+                elif ans[idx] == "Y":
+                    st["wrong"].append(qno)
+                else:
+                    st["blank"].append(qno)
             for scope, ids in (("class", class_ids), ("grade", grade_ids)):
                 agg = row[scope]
                 for sid in ids:
@@ -9106,6 +9133,9 @@ def _kazanim_stats(exam, results_by_exam, class_ids, grade_ids):
             "subject": r["subject"], "kazanim": r["kazanim"], "questions": r["questions"],
             "classRate": round(c[0] / c[2] * 100, 1), "gradeRate": round(g[0] / g[2] * 100, 1) if g[2] else None,
             "classAnswers": c[2], "classWrongRate": round(c[1] / c[2] * 100, 1),
+            "classStudents": len(r["per"]),
+            "missed": sorted((m for m in r["per"].values() if m["wrong"] or m["blank"]),
+                             key=lambda m: (m["correct"] / m["total"], -len(m["wrong"]) - len(m["blank"]))),
         })
     rows.sort(key=lambda r: (r["classRate"], r["kazanim"]))
     return rows
@@ -11264,22 +11294,36 @@ def _build_student_report(db, student_id, exam_id=None, with_ranks=True):
 
     topic_stats = None
     topic_stats_exam_id = None
-    if result_rows:
-        target_row = None
-        if exam_id:
-            target_row = next((r for r in result_rows if r["exam_id"] == exam_id), None)
-        if target_row is None:
-            # varsayilan: EN SON Kazanım Denemesi (topicMap'i olan) - yoksa
-            # kronolojik son deneme. Aksi halde bir OMR testinden SONRA
-            # normal bir deneme girilince kazanım sekmesi "veri yok" görünürdü.
-            mastery_rows = [r for r in result_rows if _is_mastery_exam_type(r["exam_type"])]
-            target_row = mastery_rows[-1] if mastery_rows else result_rows[-1]
-        topic_stats_exam_id = target_row["exam_id"]
-        exam_data = json.loads(target_row["exam_json"])
-        target_result_data = json.loads(target_row["data_json"])
-        qs = build_question_stats(exam_data, [target_result_data])
-        if qs:
-            topic_stats = build_topic_stats(qs)
+    # Konu/kazanım analizi yapılabilen denemeler (topicMap + cevap dizisi var)
+    # - öğretmen ekranındaki deneme seçici için, en yeniden eskiye.
+    topic_exams = []
+    stats_by_exam = {}
+    for r in reversed(result_rows):
+        qs = build_question_stats(json.loads(r["exam_json"] or "{}"), [json.loads(r["data_json"] or "{}")])
+        if not qs:
+            continue
+        stats_by_exam[r["exam_id"]] = qs
+        topic_exams.append({
+            "examId": r["exam_id"], "examName": r["exam_name"], "examDate": r["exam_date"],
+            "mastery": _is_mastery_exam_type(r["exam_type"]),
+            "subjectName": mastery_subject_names.get(r["exam_id"]),
+        })
+    if topic_exams:
+        target = None
+        if exam_id and exam_id in stats_by_exam:
+            target = exam_id
+        if target is None:
+            # 2026-11-10: varsayilan EN SON Genel Deneme (kazanim verisi olan).
+            # Eskiden en son Kazanim Denemesi seciliyordu - o tek ders/tek
+            # kazanim oldugu icin "Konu & Kazanim Analizi" tek satira
+            # dusuyordu (6/F). Genel Denemede kazanim verisi yoksa yine en son
+            # Kazanim Denemesine duser.
+            general = [t for t in topic_exams if not t["mastery"]]
+            target = (general or topic_exams)[0]["examId"]
+        topic_stats_exam_id = target
+        topic_stats = build_topic_stats(stats_by_exam[target])
+    elif result_rows:
+        topic_stats_exam_id = result_rows[-1]["exam_id"]
 
     subject_avgs = {k: round(sum(v) / len(v), 2) for k, v in subject_nets.items() if v}
     strongest = max(subject_avgs, key=subject_avgs.get) if subject_avgs else None
@@ -11435,6 +11479,7 @@ def _build_student_report(db, student_id, exam_id=None, with_ranks=True):
                      for r in general_results],
         "latestExamTopicStats": topic_stats,
         "topicStatsExamId": topic_stats_exam_id,
+        "topicExams": topic_exams,
         "classSubjectAverages": class_subject_averages,
         "classRank": class_rank,
         "latestRanks": latest_ranks,
