@@ -7856,22 +7856,34 @@ def api_admin_list_users():
         "WHERE role NOT IN ('admin', 'super_admin') AND organization_id = ? ORDER BY role, username",
         (org_id,),
     ).fetchall()
+    # 2026-11-10: 1200+ ogrenci hesapli okulda satir basina sorgu yerine
+    # ogrenci/veli adlari tek seferde alinir.
+    name_by_sid = {
+        s["id"]: f'{s["first_name"] or ""} {s["last_name"] or ""}'.strip()
+        for s in db.execute("SELECT id, first_name, last_name FROM students WHERE organization_id = ?", (org_id,))
+    }
+    children_by_parent = {}
+    for ps in db.execute(
+        "SELECT ps.parent_user_id, s.first_name, s.last_name FROM parent_students ps "
+        "JOIN students s ON s.id = ps.student_id JOIN users u ON u.id = ps.parent_user_id "
+        "WHERE u.organization_id = ? ORDER BY s.last_name, s.first_name",
+        (org_id,),
+    ):
+        children_by_parent.setdefault(ps["parent_user_id"], []).append(
+            f'{ps["first_name"] or ""} {ps["last_name"] or ""}'.strip())
     out = []
     for r in rows:
         student_names = []
         if r["role"] == "student" and r["student_id"]:
-            st = db.execute("SELECT first_name, last_name FROM students WHERE id = ?",
-                             (r["student_id"],)).fetchone()
-            if st:
-                student_names = [f'{st["first_name"]} {st["last_name"]}'.strip()]
+            if r["student_id"] in name_by_sid:
+                student_names = [name_by_sid[r["student_id"]]]
+            else:  # baska okulda kayitli eski bir baglanti olabilir
+                st = db.execute("SELECT first_name, last_name FROM students WHERE id = ?",
+                                (r["student_id"],)).fetchone()
+                if st:
+                    student_names = [f'{st["first_name"]} {st["last_name"]}'.strip()]
         elif r["role"] == "parent":
-            rows2 = db.execute(
-                "SELECT s.first_name, s.last_name FROM parent_students ps "
-                "JOIN students s ON s.id = ps.student_id WHERE ps.parent_user_id = ? "
-                "ORDER BY s.last_name, s.first_name",
-                (r["id"],),
-            ).fetchall()
-            student_names = [f'{s["first_name"]} {s["last_name"]}'.strip() for s in rows2]
+            student_names = children_by_parent.get(r["id"], [])
         out.append({
             "id": r["id"], "username": r["username"], "role": r["role"],
             "displayName": r["display_name"],
