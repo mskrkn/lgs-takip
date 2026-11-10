@@ -238,11 +238,27 @@ def api_meta():
 # başarılı girişlerinde hash'leri sessizce Argon2'ye yükseltilir.
 # ============================================================
 
-_argon2_hasher = PasswordHasher()
+# 2026-11-10: varsayilan (m=64MiB, t=3, p=4) VM'de (e2-small, 2 vCPU) ~194ms/hash
+# idi - bir sinif ayni anda giris/ilk sifre degistirme yapinca kuyruk olusuyordu.
+# OWASP'in Argon2id onerisi (m=19MiB, t=2, p=1). Eski hash'ler kendi
+# parametreleriyle dogrulanmaya devam eder (parametre hash'in icinde).
+_argon2_hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
 
 
 def hash_password(password):
     return _argon2_hasher.hash(password)
+
+
+# Gecici (4 haneli okul numarasi) sifreler icin HAFIF Argon2 (~4ms, varsayilan
+# ~30-100ms). Gecici sifre zaten numaranin kendisi - agir parametre guvenlik
+# kazandirmaz, yalniz toplu hesap acmayi/sifirlamayi dakikalarca surduruyordu
+# (2026-11-10). verify_password her parametreyle dogrular; ogrenci ilk giriste
+# sifresini degistirmek zorunda oldugundan kalici sifresi varsayilanla saklanir.
+_argon2_temp_hasher = PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1)
+
+
+def hash_temp_password(password):
+    return _argon2_temp_hasher.hash(password)
 
 
 def verify_password(stored_hash, password):
@@ -252,9 +268,14 @@ def verify_password(stored_hash, password):
     if stored_hash.startswith("$argon2"):
         try:
             _argon2_hasher.verify(stored_hash, password)
-            return True, False
         except (VerifyMismatchError, InvalidHash):
             return False, False
+        # Eski (agir) ya da gecici (hafif) parametreli hash -> girişte guncel
+        # parametrelerle yeniden yazilir (bkz. api_login'deki needs_rehash yolu).
+        try:
+            return True, _argon2_hasher.check_needs_rehash(stored_hash)
+        except InvalidHash:
+            return True, False
     if check_password_hash(stored_hash, password):
         return True, True
     return False, False
@@ -2212,6 +2233,57 @@ def _sync_user_roles_and_profiles(conn, org_id):
     conn.commit()
 
 
+def _sync_new_users(conn, user_ids):
+    """Yeni acilan kullanici(lar) icin run_v2_migration'in YALNIZCA o
+    kullanicilara dokunan kismi: user_roles, ogretmen/veli profili, ogretmenin
+    sinif baglantisi (teacher_classes), ogrenci hesabinin student_profiles'a
+    baglanmasi. 2026-11-10: kayit/hesap acma uclari tum okullari yeniden kuran
+    run_v2_migration'i cagiriyordu (VM'de ~30-40 s yazma kilidi) - ayni anda
+    giris yapan ogrencilerin yazmalari "database is locked" ile dusuyor, kayit
+    istekleri zaman asimina ugruyordu. Turetilmis sinav tablolari bir sonraki
+    okul senkronunda zaten yeniden kurulur."""
+    ids = [int(u) for u in (user_ids or []) if u]
+    if not ids:
+        return
+    conn.row_factory = sqlite3.Row
+    now = datetime.now().isoformat()
+    ay = conn.execute("SELECT id FROM academic_years WHERE is_active = 1 LIMIT 1").fetchone()
+    placeholders = ",".join("?" * len(ids))
+    for u in conn.execute(
+        f"SELECT id, role, organization_id, class_name, student_id FROM users WHERE id IN ({placeholders})", ids
+    ).fetchall():
+        new_role = LEGACY_ROLE_TO_NEW_ROLE.get(u["role"])
+        if new_role:
+            role_row = conn.execute("SELECT id FROM roles WHERE name=?", (new_role,)).fetchone()
+            if role_row:
+                conn.execute("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)", (u["id"], role_row["id"]))
+        org = u["organization_id"] or _get_default_org_id(conn)
+        if u["role"] == "teacher":
+            conn.execute(
+                "INSERT OR IGNORE INTO teacher_profiles (user_id, organization_id, created_at, updated_at) VALUES (?,?,?,?)",
+                (u["id"], org, now, now),
+            )
+            if ay and u["class_name"]:
+                for cn in [c.strip() for c in str(u["class_name"]).split(",") if c.strip()] or [u["class_name"]]:
+                    cls = conn.execute(
+                        "SELECT id FROM classes WHERE name=? AND academic_year_id=? LIMIT 1", (cn, ay["id"])
+                    ).fetchone()
+                    if cls:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO teacher_classes (teacher_id, class_id, academic_year_id, created_at) VALUES (?,?,?,?)",
+                            (u["id"], cls["id"], ay["id"], now),
+                        )
+        elif u["role"] == "parent":
+            conn.execute(
+                "INSERT OR IGNORE INTO parent_profiles (user_id, organization_id, created_at, updated_at) VALUES (?,?,?,?)",
+                (u["id"], org, now, now),
+            )
+        elif u["role"] == "student" and u["student_id"]:
+            conn.execute("UPDATE student_profiles SET user_id=?, updated_at=? WHERE legacy_student_id=?",
+                         (u["id"], now, u["student_id"]))
+    conn.commit()
+
+
 def sync_derived_tables(conn, org_id):
     """students/exams/results (asıl kaynak) verisinden normalize edilmiş
     tabloları yeniden kurar. init_db()'de VE her /api/admin/sync sonrasında
@@ -2374,7 +2446,7 @@ def sync_derived_tables(conn, org_id):
     conn.execute("DELETE FROM performance_insights")
     insight_type_map = {"strong": "STRONG", "developing": "IMPROVING", "attention": "WATCH", "priority": "PRIORITY"}
     for s in conn.execute("SELECT id FROM students").fetchall():
-        report = _build_student_report(conn, s["id"])
+        report = _build_student_report(conn, s["id"], with_ranks=False)
         if not report:
             continue
         exam_count = len(report.get("results") or [])
@@ -4605,7 +4677,7 @@ def api_register_teacher():
          org["id"], datetime.now().isoformat(), homeroom_class or None),
     )
     db.commit()
-    run_v2_migration(db)
+    _sync_new_users(db, [cur.lastrowid])
     log_audit(db, "TEACHER_SELF_REGISTERED", resource_type="user", resource_id=cur.lastrowid)
     return jsonify({"ok": True})
 
@@ -4741,7 +4813,7 @@ def api_register_student():
             (cur.lastrowid, student_id),
         )
     db.commit()
-    run_v2_migration(db)
+    _sync_new_users(db, [cur.lastrowid])
     log_audit(db, "STUDENT_SELF_REGISTERED" if role == "student" else "PARENT_SELF_REGISTERED",
               resource_type="user", resource_id=cur.lastrowid)
     return jsonify({"ok": True})
@@ -5204,7 +5276,11 @@ def api_admin_sync_delta():
         db.rollback()
         raise
     if applied:
-        run_v2_migration(db)
+        # 2026-11-10: run_v2_migration KALDIRILDI - turetilmis tablolari (exam_results,
+        # student_question_results, performance_insights...) hicbir ekran okumuyor;
+        # her fark senkronunda tum okullari yeniden kurmak VM'de ~30-40 s yazma
+        # kilidi tutup ayni anda giris/kayit yapanlari "database is locked" ile
+        # dusuruyordu. Tam senkron (/api/admin/sync) hala yeniden kurar.
         now = datetime.now().isoformat()
         # 'Son senkron' gostergesi (bkz. admin ozeti lastSync) fark senkronunu da gorsun
         db.execute(
@@ -7893,7 +7969,7 @@ def api_admin_create_user():
     else:
         new_user_id = cur.lastrowid
     db.commit()
-    run_v2_migration(db)
+    _sync_new_users(db, [new_user_id])
     log_audit(db, "USER_CREATED", resource_type="user", resource_id=new_user_id)
     return jsonify({"ok": True})
 
@@ -8233,14 +8309,15 @@ def api_admin_student_accounts_summary():
 @login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_student_accounts_generate():
     """Hesabi olmayan ogrenciler icin hesap acar. dryRun=true ise yalniz
-    on izleme dondurur. Argon2 (~40ms/hesap) nedeniyle istemci `limit`'li
-    partilerle tekrar tekrar cagirir; `remaining` 0 olana kadar."""
+    on izleme dondurur. 2026-11-10: gecici sifreler hafif Argon2 ile
+    (hash_temp_password, ~4ms) - butun okul TEK istekte acilir (limit en
+    fazla 3000); istemci yine de `remaining` 0 olana kadar tekrar cagirir."""
     data = request.get_json(silent=True) or {}
     prefix = _clean_prefix(data.get("prefix"))
     if not prefix:
         return jsonify({"error": "Okul kodu 2-10 karakter (harf/rakam) olmalı, örn: dho"}), 400
     dry_run = bool(data.get("dryRun"))
-    limit = max(1, min(int(data.get("limit") or 100), 200))
+    limit = max(1, min(int(data.get("limit") or 3000), 3000))
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
@@ -8291,16 +8368,18 @@ def api_admin_student_accounts_generate():
     batch = pending[:limit]
     created = []
     now = datetime.now().isoformat()
+    new_ids = []
     for s, uname, temp_pw, label in batch:
-        db.execute(
+        cur = db.execute(
             "INSERT INTO users (username, password_hash, role, display_name, class_name, student_id, "
             "organization_id, must_change_password, created_at) VALUES (?,?,?,?,?,?,?,1,?)",
-            (uname, hash_password(temp_pw), "student", label, s["class_name"], s["id"], org_id, now),
+            (uname, hash_temp_password(temp_pw), "student", label, s["class_name"], s["id"], org_id, now),
         )
+        new_ids.append(cur.lastrowid)
         created.append({"className": s["class_name"], "name": label, "username": uname, "tempPassword": temp_pw})
     db.commit()
     if created:
-        run_v2_migration(db)
+        _sync_new_users(db, new_ids)
         log_audit(db, "STUDENT_ACCOUNTS_GENERATED", resource_type="organization", resource_id=org_id)
     return jsonify({"ok": True, "created": created, "createdCount": len(created),
                     "remaining": len(pending) - len(batch), **result})
@@ -8334,7 +8413,7 @@ def api_admin_student_accounts_reset():
             skipped += 1
             continue
         db.execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?",
-                   (hash_password(creds[1]), r["id"]))
+                   (hash_temp_password(creds[1]), r["id"]))
         done += 1
     db.commit()
     log_audit(db, "STUDENT_PASSWORDS_RESET", resource_type="organization", resource_id=org_id)
@@ -8381,7 +8460,6 @@ def api_homeroom_add_student():
         (new_id, org_id, school_number, first_name, last_name, hc),
     )
     db.commit()
-    run_v2_migration(db)
     log_audit(db, "STUDENT_ADDED_BY_HOMEROOM", resource_type="student", resource_id=new_id)
     return jsonify({"ok": True, "id": new_id, "className": hc})
 
@@ -8409,7 +8487,6 @@ def api_homeroom_delete_student(student_id):
             "VALUES (?,?,?,?)", (org_id, student_id, session.get("user_id"), datetime.now().isoformat()))
     db.execute("DELETE FROM students WHERE id=?", (student_id,))
     db.commit()
-    run_v2_migration(db)
     log_audit(db, "STUDENT_DELETED_BY_HOMEROOM", resource_type="student", resource_id=student_id)
     return jsonify({"ok": True})
 
@@ -11130,7 +11207,7 @@ def _exam_ranks(db, exam_id, student, my_total):
     return out
 
 
-def _build_student_report(db, student_id, exam_id=None):
+def _build_student_report(db, student_id, exam_id=None, with_ranks=True):
     """Tek bir öğrencinin deneme geçmişi + konu analizi + güçlü/zayıf ders özeti.
     /api/parent/child/<id> ve /api/student/overview tarafından ortak kullanılır.
     exam_id verilirse konu analizi EN SON deneme yerine o denemeye göre
@@ -11333,7 +11410,7 @@ def _build_student_report(db, student_id, exam_id=None):
     # Sınıf + okul (kademe) sıralaması: son ve bir önceki Genel Deneme -
     # öğrenci panelinde "geçen denemeye göre +N sıra" gösterebilmek için.
     latest_ranks, prev_ranks = None, None
-    if general_results:
+    if general_results and with_ranks:
         latest_ranks = _exam_ranks(db, general_results[-1]["examId"], student, general_results[-1]["totalNet"])
         if len(general_results) >= 2:
             prev_ranks = _exam_ranks(db, general_results[-2]["examId"], student, general_results[-2]["totalNet"])
