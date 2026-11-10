@@ -116,11 +116,14 @@ const StudentAccounts = {
 
     btn.disabled = true;
     let created = 0;
+    // 2026-11-10: tüm hesaplar TEK istekte açılır (sunucu geçici şifreleri
+    // hafif Argon2 ile işler) - döngü yalnızca sunucu bir şeyi bırakırsa diye.
+    prog.innerHTML = `⏳ <b>${pd.willCreate}</b> hesap oluşturuluyor, lütfen bekleyin…`;
     try {
       for (;;) {
         const r = await fetch(`/api/admin/student-accounts/generate${this._q()}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prefix, limit: 100 }),
+          body: JSON.stringify({ prefix, limit: 3000 }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Hesap oluşturulamadı');
