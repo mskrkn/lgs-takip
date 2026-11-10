@@ -245,6 +245,18 @@ def hash_password(password):
     return _argon2_hasher.hash(password)
 
 
+# Gecici (4 haneli okul numarasi) sifreler icin HAFIF Argon2 (~4ms, varsayilan
+# ~30-100ms). Gecici sifre zaten numaranin kendisi - agir parametre guvenlik
+# kazandirmaz, yalniz toplu hesap acmayi/sifirlamayi dakikalarca surduruyordu
+# (2026-11-10). verify_password her parametreyle dogrular; ogrenci ilk giriste
+# sifresini degistirmek zorunda oldugundan kalici sifresi varsayilanla saklanir.
+_argon2_temp_hasher = PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1)
+
+
+def hash_temp_password(password):
+    return _argon2_temp_hasher.hash(password)
+
+
 def verify_password(stored_hash, password):
     """(doğru_mu, yeniden_hash_gerekli_mi) döner. Eski pbkdf2 hash'i doğru
     şifreyle eşleşirse ikinci değer True olur - çağıran taraf hash'i
@@ -8233,14 +8245,15 @@ def api_admin_student_accounts_summary():
 @login_required(role=("admin", "teacher", "super_admin"), permission="users.manage")
 def api_admin_student_accounts_generate():
     """Hesabi olmayan ogrenciler icin hesap acar. dryRun=true ise yalniz
-    on izleme dondurur. Argon2 (~40ms/hesap) nedeniyle istemci `limit`'li
-    partilerle tekrar tekrar cagirir; `remaining` 0 olana kadar."""
+    on izleme dondurur. 2026-11-10: gecici sifreler hafif Argon2 ile
+    (hash_temp_password, ~4ms) - butun okul TEK istekte acilir (limit en
+    fazla 3000); istemci yine de `remaining` 0 olana kadar tekrar cagirir."""
     data = request.get_json(silent=True) or {}
     prefix = _clean_prefix(data.get("prefix"))
     if not prefix:
         return jsonify({"error": "Okul kodu 2-10 karakter (harf/rakam) olmalı, örn: dho"}), 400
     dry_run = bool(data.get("dryRun"))
-    limit = max(1, min(int(data.get("limit") or 100), 200))
+    limit = max(1, min(int(data.get("limit") or 3000), 3000))
     db = get_db()
     org_id = _effective_org_id(db)
     if org_id is None:
@@ -8295,7 +8308,7 @@ def api_admin_student_accounts_generate():
         db.execute(
             "INSERT INTO users (username, password_hash, role, display_name, class_name, student_id, "
             "organization_id, must_change_password, created_at) VALUES (?,?,?,?,?,?,?,1,?)",
-            (uname, hash_password(temp_pw), "student", label, s["class_name"], s["id"], org_id, now),
+            (uname, hash_temp_password(temp_pw), "student", label, s["class_name"], s["id"], org_id, now),
         )
         created.append({"className": s["class_name"], "name": label, "username": uname, "tempPassword": temp_pw})
     db.commit()
@@ -8334,7 +8347,7 @@ def api_admin_student_accounts_reset():
             skipped += 1
             continue
         db.execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?",
-                   (hash_password(creds[1]), r["id"]))
+                   (hash_temp_password(creds[1]), r["id"]))
         done += 1
     db.commit()
     log_audit(db, "STUDENT_PASSWORDS_RESET", resource_type="organization", resource_id=org_id)
