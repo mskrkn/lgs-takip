@@ -308,8 +308,9 @@ const AdminUsers = {
     `;
   },
 
-  TABLE_PAGE: 100,
-  CHILD_LIST_MAX: 100,
+  // 2026-11-11 kullanici: 50 yeterli, fazlasi kasmasin
+  TABLE_PAGE: 50,
+  CHILD_LIST_MAX: 50,
 
   _onUserSearchInput() {
     clearTimeout(this._searchTimer);
@@ -317,13 +318,7 @@ const AdminUsers = {
   },
 
   _showMoreUsers() {
-    this._tableLimit += this.TABLE_PAGE * 2;
-    document.getElementById('users-list').innerHTML =
-      this._renderUsersTable(this._lastFilteredUsers || this._users || [], this._canManageAccounts, true);
-  },
-
-  _showAllUsers() {
-    this._tableLimit = Infinity;
+    this._tableLimit += this.TABLE_PAGE;
     document.getElementById('users-list').innerHTML =
       this._renderUsersTable(this._lastFilteredUsers || this._users || [], this._canManageAccounts, true);
   },
@@ -430,7 +425,6 @@ const AdminUsers = {
       html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
         <span class="text-muted" style="font-size:13px">${allUsers.length} hesabın ${users.length} tanesi gösteriliyor — aramak için yukarıdaki filtreleri kullanın.</span>
         <button class="btn btn-secondary btn-sm" onclick="AdminUsers._showMoreUsers()">Daha fazla göster</button>
-        <button class="btn btn-secondary btn-sm" onclick="AdminUsers._showAllUsers()">Tümünü göster</button>
       </div>`;
     }
     return html;
