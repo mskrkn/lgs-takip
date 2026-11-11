@@ -363,6 +363,126 @@ const SchoolView = {
     }
   },
 
+  // Raporlar & Paylaşım - "Okula Gir" ile bakarken. Eski renderReports()
+  // tarayıcının YEREL IndexedDB'sini okuyordu: platform hesabının yereli o
+  // okulun eski/bayat kopyası olabildiği için silinmiş denemeler görünüyor,
+  // sunucuya sonradan eklenenler görünmüyordu (2026-11-11). Burada hepsi
+  // sunucudan: öğrenci raporu = Öğrenci Karnesi PDF'i, deneme raporu = okul
+  // sıralaması PDF'i (/api/teacher/table-pdf).
+  async renderReports() {
+    const container = document.getElementById('page-reports');
+    if (!container) return;
+    container.innerHTML = `${this._banner()}<p class="text-muted mt-2">Yükleniyor...</p>`;
+    let data;
+    try {
+      data = await this._loadOverview();
+    } catch (err) {
+      container.innerHTML = `${this._banner()}<div class="card mt-2"><p class="text-muted">❌ ${_svEscapeHtml(err.message)}</p></div>`;
+      return;
+    }
+    this._reportStudents = data.students || [];
+    const exams = (data.exams || []).filter(e => e.exam_type !== 'optik_kamera' && e.stats)
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    this._reportExams = exams;
+    const groups = {};
+    exams.forEach(e => {
+      const g = e.stats?.dominantGrade || '';
+      (groups[g] = groups[g] || []).push(e);
+    });
+    const gradeKeys = Object.keys(groups).sort((a, b) => (Number(b) || 0) - (Number(a) || 0));
+    const options = gradeKeys.map(g => `<optgroup label="${g ? g + '. Sınıf' : 'Diğer'}">${groups[g].map(e =>
+      `<option value="${e.id}">${_svEscapeHtml(e.name)}${e.date ? ' (' + _svEscapeHtml(UI.formatDate(e.date)) + ')' : ''} · ${e.stats.studentCount} öğrenci</option>`).join('')}</optgroup>`).join('');
+
+    container.innerHTML = `
+      ${this._banner()}
+      <div class="grid-2 mt-2">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">📄</span> Öğrenci Raporu</h3></div>
+          <p class="text-muted mb-2" style="font-size:13px">Bir öğrenci seçin: Öğrenci Karnesi (Genel + Kazanım denemeleri) PDF olarak iner.</p>
+          <div class="form-group">
+            <label class="form-label">Öğrenci Ara</label>
+            <input type="text" class="form-input" id="sv-report-student-search" placeholder="Ad, soyad, sınıf veya okul no..." oninput="SchoolView._reportSearch()">
+          </div>
+          <div id="sv-report-student-results"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title"><span class="card-icon">📊</span> Deneme Raporu</h3></div>
+          <p class="text-muted mb-2" style="font-size:13px">Bir deneme seçin: okul sıralaması (sınıf, ders netleri, toplam) PDF olarak iner.</p>
+          <div class="form-group">
+            <label class="form-label">Deneme Seçin</label>
+            <select class="form-select" id="sv-report-exam-select">${options || '<option value="">Sonucu olan deneme yok</option>'}</select>
+          </div>
+          <button class="btn btn-primary mt-1" id="sv-report-exam-btn" onclick="SchoolView.downloadExamReport(this)" ${exams.length ? '' : 'disabled'}>📄 PDF İndir</button>
+        </div>
+      </div>
+      <p class="text-muted mt-2" style="font-size:12px">ℹ️ Bu ekran okulun sunucudaki güncel verisini kullanır. JSON yedekleme/geri yükleme yalnızca okulun kendi admin hesabında bulunur.</p>`;
+  },
+
+  _reportSearch() {
+    const q = (document.getElementById('sv-report-student-search')?.value || '').toLocaleLowerCase('tr-TR').trim();
+    const box = document.getElementById('sv-report-student-results');
+    if (!box) return;
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    const found = (this._reportStudents || []).filter(s =>
+      `${s.first_name || ''} ${s.last_name || ''} ${s.class_name || ''} ${s.school_number || ''}`.toLocaleLowerCase('tr-TR').includes(q)).slice(0, 30);
+    box.innerHTML = found.length ? found.map(s => `
+      <div class="search-result-item" style="border-radius:8px;margin-bottom:4px;border:1px solid var(--bg-glass-border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div><div class="name">${_svEscapeHtml(s.first_name)} ${_svEscapeHtml(s.last_name)}</div>
+          <div class="meta">${_svEscapeHtml(s.class_name || '-')} · No: ${_svEscapeHtml(s.school_number || '-')}</div></div>
+        <a class="btn btn-secondary btn-sm" href="/api/teacher/omr/reports/karne?studentId=${s.id}&format=pdf${App.actingSchool ? '&school_id=' + App.actingSchool.id : ''}" download>📄 Karne PDF</a>
+      </div>`).join('') : '<p class="text-muted" style="font-size:13px">Eşleşen öğrenci yok.</p>';
+  },
+
+  async downloadExamReport(btn) {
+    const examId = Number(document.getElementById('sv-report-exam-select')?.value);
+    const exam = (this._reportExams || []).find(e => e.id === examId);
+    if (!exam) return;
+    const label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Hazırlanıyor...'; }
+    try {
+      const res = await fetch(`/api/teacher/exam/${examId}${this._schoolQuery()}`);
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Deneme alınamadı.');
+      const grade = exam.stats?.dominantGrade || null;
+      const order = ['turkce', 'inkilap', 'din', 'ingilizce', 'matematik', 'fen'];
+      const keys = [];
+      d.myClassResults.forEach(r => Object.keys(r.subjects || {}).forEach(k => { if (!keys.includes(k)) keys.push(k); }));
+      keys.sort((a, b) => ((order.indexOf(a) + 1) || 99) - ((order.indexOf(b) + 1) || 99));
+      const name = (k) => (typeof subjectDisplayName === 'function' ? subjectDisplayName(k, grade) : k);
+      const n2 = (v) => (v == null ? '-' : String(Math.round(Number(v) * 100) / 100));
+      const rows = d.myClassResults.slice().sort((a, b) => a.schoolRank - b.schoolRank).map(r => [
+        r.schoolRank, r.schoolNumber || '-', r.studentName, r.className || '-',
+        ...keys.map(k => { const s = r.subjects[k]; return s ? `${n2(s.net)} (${s.correct || 0}/${s.wrong || 0})` : '-'; }),
+        n2(r.totalNet)]);
+      const avg = rows.length ? d.myClassResults.reduce((t, r) => t + r.totalNet, 0) / rows.length : 0;
+      const payload = {
+        title: `${d.exam.name} - Okul Sıralaması`,
+        subtitle: `${App.actingSchool?.name || ''}${d.exam.date ? ' · ' + d.exam.date : ''} · ${rows.length} öğrenci · Ortalama toplam net ${n2(avg)}`,
+        columns: ['Sıra', 'No', 'Ad Soyad', 'Sınıf', ...keys.map(name), 'Toplam'],
+        rows,
+        notes: ['Ders hücreleri: net (doğru/yanlış). Sıra: okuldaki tüm katılımcılar arasında toplam nete göre.'],
+      };
+      const pdf = await fetch('/api/teacher/table-pdf', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!pdf.ok) {
+        let msg = 'PDF oluşturulamadı.';
+        try { msg = (await pdf.json()).error || msg; } catch (_) { /* json değil */ }
+        throw new Error(msg);
+      }
+      const blob = await pdf.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${d.exam.name} - okul sıralaması.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  },
+
   async renderExams() {
     const container = document.getElementById('page-exams');
     if (!container) return;
