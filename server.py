@@ -4524,18 +4524,28 @@ def api_superadmin_audit_logs():
     kendi okulunun loglarini gorur, ?school_id= YOK SAYILIR (_effective_org_id
     ile ayni IDOR-guvenli desen)."""
     db = get_db()
-    org_id = _effective_org_id(db)
-    if org_id is None:
+    # 2026-11-11: saf platform hesabinin (organization_id NULL) kendi okulu
+    # yok - eskiden bu uc her zaman 400 "Okul secilmedi" donuyordu. Platform
+    # yetkilisi okul secmezse TUM platformun loglarini gorur (okulsuz,
+    # platform islemleri dahil); ?school_id= ile tek okula suzer.
+    platform_wide = (has_permission(db, session["user_id"], "organization.manage")
+                     and not request.args.get("school_id")
+                     and _effective_org_id(db) is None)
+    org_id = None if platform_wide else _effective_org_id(db)
+    if org_id is None and not platform_wide:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
     limit = min(request.args.get("limit", 50, type=int) or 50, 200)
     before_id = request.args.get("before_id", type=int)
     query = (
         "SELECT al.id, al.action, al.resource_type, al.resource_id, al.ip_address, al.created_at, "
-        "u.username, u.display_name "
+        "al.organization_id, o.name AS org_name, u.username, u.display_name "
         "FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id "
-        "WHERE al.organization_id = ?"
+        "LEFT JOIN organizations o ON o.id = al.organization_id WHERE 1=1"
     )
-    params = [org_id]
+    params = []
+    if not platform_wide:
+        query += " AND al.organization_id = ?"
+        params.append(org_id)
     if before_id:
         query += " AND al.id < ?"
         params.append(before_id)
@@ -4546,6 +4556,7 @@ def api_superadmin_audit_logs():
         "id": r["id"], "action": r["action"], "resourceType": r["resource_type"],
         "resourceId": r["resource_id"], "ipAddress": r["ip_address"], "createdAt": r["created_at"],
         "actorUsername": r["username"], "actorDisplayName": r["display_name"],
+        "organizationId": r["organization_id"], "organizationName": r["org_name"],
     } for r in rows])
 
 
