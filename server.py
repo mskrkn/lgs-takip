@@ -9389,7 +9389,7 @@ def api_teacher_exam_detail(exam_id):
     if my_student_ids:
         placeholders_s = ",".join("?" * len(my_student_ids))
         my_students = db.execute(
-            f"SELECT id, first_name, last_name, school_number FROM students WHERE id IN ({placeholders_s})",
+            f"SELECT id, first_name, last_name, school_number, class_name FROM students WHERE id IN ({placeholders_s})",
             tuple(my_student_ids)
         ).fetchall()
     else:
@@ -9415,6 +9415,7 @@ def api_teacher_exam_detail(exam_id):
                 "studentId": r["student_id"],
                 "studentName": f'{student["first_name"]} {student["last_name"]}'.strip(),
                 "schoolNumber": student["school_number"],
+                "className": student["class_name"],
                 "subjects": data.get("subjects", {}),
                 "totalNet": total_net,
             })
