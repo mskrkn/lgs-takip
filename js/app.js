@@ -652,14 +652,16 @@ const App = {
         await this.renderQuestionBank();
         break;
       case 'reports':
-        // Not: gate şimdilik sadece "önce okul seç" istemini gösteriyor -
-        // renderReports() (öğrenci/deneme PDF raporu, JSON yedekle/geri
-        // yükle) henüz seçili okulun sunucu verisine göre ÇALIŞMIYOR, hâlâ
-        // yerel IndexedDB okuyor (bkz. proje notu - bu ayrı, daha büyük bir
-        // iş: js/export.js'in PDF/JSON mantığının okul-farkındalı hale
-        // getirilmesi gerekiyor).
+        // Okulun kendi admini: renderReports() yerel IndexedDB'yi okur (5A ile
+        // girişte sunucuyla eşlenmiş). Platform hesabı bir okula girmişken
+        // ise yereli o okulun bayat kopyası olabilir - SchoolView.renderReports
+        // sunucudan çalışır (2026-11-11: silinen denemeler görünüyor, yeniler
+        // görünmüyordu).
         if (this.needsActiveSchool()) {
           this.showSchoolRequiredPrompt('page-reports');
+        } else if (this.currentUser?.actsAsSuperAdmin && this.actingSchool) {
+          // Okula girmişken yerel (bayat olabilen) kopya değil, sunucu verisi.
+          await SchoolView.renderReports();
         } else {
           await this.renderReports();
         }
