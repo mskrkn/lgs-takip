@@ -68,6 +68,7 @@ document.addEventListener('DOMContentLoaded', function() {
   let lastScrollTop = 0;
 
   window.addEventListener('scroll', function() {
+    if (!navbar) return; // yeni giris sayfasinda .navbar yok
     const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
 
     if (scrollTop > 50) {
