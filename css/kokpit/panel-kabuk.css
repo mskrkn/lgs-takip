@@ -89,3 +89,35 @@ html body.okul-kabuk .stat-card {
   html body.okul-kabuk .mobile-bottom-nav { background: #fff; border-top: 1px solid #E2E8F0; }
   html body.okul-kabuk .mobile-nav-item.active { color: var(--ok-navy); }
 }
+
+/* ---------------- ilk boyama (sunucu <body class="okul-kabuk"> ile gönderir) ----------------
+   Menü js/okulMenu.js'ten kurulana kadar panelin ESKİ menüsü, logosu ve
+   "Anasayfa" başlığı görünmesin; Okul Geneli'ndeki gibi lacivert menü boş
+   başlar, içerik yerine aynı iskelet/yükleniyor gösterilir. */
+html.okul-kabuk-html { background: #F1F5F9; }
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-nav,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-header,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-footer,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .header,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .mobile-bottom-nav { visibility: hidden; }
+html body.okul-kabuk .loading-spinner { border-color: #E2E8F0; border-top-color: var(--ok-navy); }
+html body.okul-kabuk #page-dashboard .text-muted { color: var(--ok-muted); }
+/* kaydırma çubuğu: panelin turkuaz çubuğu yerine Okul Geneli'ndeki sade çubuk */
+html body.okul-kabuk .sidebar { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+html body.okul-kabuk ::-webkit-scrollbar-thumb { background: #CBD5E1; border: 0; }
+html body.okul-kabuk .sidebar::-webkit-scrollbar-thumb { background: #334155; }
+html body.okul-kabuk ::-webkit-scrollbar-track { background: transparent; }
+/* ilk yükleme iskeleti (kokpit.okul_kabugu_index ekler) - Okul Geneli ile aynı */
+html body.okul-kabuk .okul-iskelet { display: grid; gap: 16px; padding: 28px 8px; }
+html body.okul-kabuk .okul-iskelet div {
+  border-radius: 16px;
+  background: linear-gradient(90deg, #E2E8F0 25%, #F1F5F9 50%, #E2E8F0 75%);
+  background-size: 200% 100%;
+  animation: okul-iskelet 1.3s infinite;
+}
+html body.okul-kabuk .okul-iskelet div:nth-child(1) { height: 72px; }
+html body.okul-kabuk .okul-iskelet div:nth-child(2) { height: 180px; }
+html body.okul-kabuk .okul-iskelet div:nth-child(3), html body.okul-kabuk .okul-iskelet div:nth-child(4) { height: 140px; }
+@keyframes okul-iskelet { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { html body.okul-kabuk .okul-iskelet div { animation: none; } }
+html body.okul-kabuk .kp-sr { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

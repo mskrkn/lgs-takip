@@ -276,6 +276,31 @@ class CokOkulTesti(unittest.TestCase):
         self.assertNotIn(a_ogr, [o["id"] for o in d["ogrenciler"]])
         self.assertEqual(self.get(11, "/api/okullar/2/kokpit/ogrenci-ara?q=soyad")[0], 403)
 
+    def test_okul_admini_paneli_ilk_boyamada_kabuklu(self):
+        """index.html Okul Admini'ne <body class="okul-kabuk"> + iskeletle gider;
+        Anasayfa bolumu (page-dashboard) HTML'de kalmali (app.js ona yazar)."""
+        from flask import session as fs
+        kok = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        eski = kokpit.S.BASE_DIR
+        kokpit.S.BASE_DIR = kok
+        try:
+            with self.app.test_request_context("/index.html"):
+                fs["user_id"], fs["role"] = 11, "admin"
+                db = sqlite3.connect(self.yol)
+                db.row_factory = sqlite3.Row
+                html = kokpit.okul_kabugu_index(db).get_data(as_text=True)
+                fs["user_id"], fs["role"] = PLATFORM, "super_admin"
+                self.assertIsNone(kokpit.okul_kabugu_index(db))
+                db.close()
+        finally:
+            kokpit.S.BASE_DIR = eski
+        self.assertIn('<body class="okul-kabuk">', html)
+        self.assertIn('class="okul-kabuk-html" data-theme="light"', html)
+        self.assertIn('id="page-dashboard"', html)
+        self.assertIn("okul-iskelet", html)
+        self.assertIn('id="page-exams"', html)
+        self.assertFalse(any(ord(c) < 9 for c in html))
+
     def test_ogretmen_ve_oturumsuz(self):
         s, _ = self.get(11, "/api/okullar/1/kokpit", rol="teacher")
         self.assertEqual(s, 403)
