@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify, redirect, request, send_file, session
+from flask import Blueprint, Response, jsonify, redirect, request, send_file, session
 
 import kokpit_hesap as K
 
@@ -536,6 +536,33 @@ def api_ayarlar(db, okul_id, kapsam):
     S.log_audit(db, "KOKPIT_AYAR_GUNCELLE", resource_type="organization", resource_id=okul_id)
     ayar, kayitli = _ayarlar(db, okul_id)
     return jsonify({"ok": True, "ayarlar": ayar, "degistirilen": list(kayitli)})
+
+
+def okul_kabugu_index(db):
+    """Okul Admini icin index.html'i ILK BOYAMADAN once kabuklu dondurur:
+    <html class="okul-kabuk-html" data-theme="light"> + <body class="okul-kabuk">.
+    Boylece panelin turkuaz ambiyans zemini, eski menu ve "Anasayfa" basligi
+    hic gorunmez (eskiden sinif /api/me cevabindan sonra JS ile ekleniyordu).
+    Uygun degilse None (cagiran normal statik dosyayi verir)."""
+    if not varsayilan_acilis(db):
+        return None
+    yol = os.path.join(S.BASE_DIR, "index.html")
+    try:
+        with open(yol, encoding="utf-8") as f:
+            html = f.read()
+    except OSError:
+        return None
+    html = html.replace('<html lang="tr">', '<html lang="tr" class="okul-kabuk-html" data-theme="light">', 1)
+    html = html.replace("<body>", '<body class="okul-kabuk">', 1)
+    # Yukleniyor: Okul Geneli'ndeki gibi iskelet kartlar (donen gosterge yerine)
+    iskelet = ('<section class="page-section active" id="page-dashboard">'
+               '<div class="okul-iskelet" aria-busy="true"><div></div><div></div><div></div><div></div>'
+               '<span class="kp-sr">Yükleniyor…</span></div></section>')
+    html = re.sub(r'<section class="page-section active" id="page-dashboard">.*?</section>',
+                  lambda _m: iskelet, html, count=1, flags=re.S)
+    resp = Response(html, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 def varsayilan_acilis(db):

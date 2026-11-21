@@ -198,6 +198,7 @@ const App = {
     // Okul Admini: panelin menusu/gorunumu Okul Geneli ile ayni (ortak kabuk).
     // setupNavigation'dan ONCE kurulur ki yeni menu ogeleri tiklama olayini alsin.
     if (this._okulGeneliAnasayfa()) this._okulKabuguKur();
+    else document.body.classList.remove('okul-kabuk');  // sunucu kabuklu gonderdiyse ama rol degistiyse
     this.setupNavigation();
     this.setupSidebar();
 
@@ -1077,7 +1078,7 @@ const App = {
   // Geneli/Subeler/Veri Durumu okul-kokpiti.html'e gider. Gorunum
   // css/kokpit/panel-kabuk.css'te (body.okul-kabuk altinda).
   _okulKabuguKur() {
-    if (!window.OkulMenu) return;
+    if (!window.OkulMenu) { document.body.classList.remove('okul-kabuk'); return; }
     document.body.classList.add('okul-kabuk');
     // Okul Geneli yalnizca aydinlik; secimi kalici degistirmeden aydinlik goster
     document.documentElement.setAttribute('data-theme', 'light');
@@ -1111,6 +1112,7 @@ const App = {
         if (o && el) el.textContent = o.ad;
       }).catch(() => {});
     }
+    document.body.classList.add('okul-kabuk-hazir');
   },
 
   // Kendi okulu olan, platform/veri giris/delege OLMAYAN okul admini mi?

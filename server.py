@@ -3216,7 +3216,8 @@ def root():
 def index_html():
     role = session.get("role")
     if role in ("admin", "super_admin"):
-        return _safe_send("index.html")
+        # Okul Admini: panel ilk boyamadan Okul Geneli gorunumuyle gelir (kokpit.py)
+        return kokpit.okul_kabugu_index(get_db()) or _safe_send("index.html")
     if role == "teacher" and has_permission(get_db(), session.get("user_id"), "users.manage"):
         return _safe_send("index.html")
     return redirect("/login.html")
