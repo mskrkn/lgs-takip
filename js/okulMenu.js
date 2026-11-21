@@ -16,7 +16,6 @@
     { anahtar: 'denemeler', ad: 'Denemeler', spa: 'exams' },
     { anahtar: 'subeler', ad: 'Şubeler', kokpit: 'subeler' },
     { anahtar: 'ogrenciler', ad: 'Öğrenciler', spa: 'students' },
-    { anahtar: 'odevler', ad: 'Ödevler', href: '/ogretmen.html?page=assignments', dis: true },
     { anahtar: 'raporlar', ad: 'Raporlar', spa: 'reports' },
     { anahtar: 'veri', ad: 'Veri Durumu', kokpit: 'veri' },
     { anahtar: 'kokpit-ayarlar', ad: 'Kokpit ayarları', kokpit: 'ayarlar' },
@@ -24,7 +23,6 @@
     { anahtar: 'kullanicilar', ad: 'Kullanıcılar', spa: 'users' },
     { anahtar: 'veri-girisi', ad: 'Veri Girişi', spa: 'import' },
     { anahtar: 'soru-girisi', ad: 'Soru Girişi', spa: 'question-bank' },
-    { anahtar: 'kazanim', ad: 'Kazanım Testleri', href: '/ogretmen.html?page=omr', dis: true },
     { anahtar: 'panel-ayarlar', ad: 'Panel ayarları', spa: 'settings' },
   ];
 
