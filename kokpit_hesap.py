@@ -20,7 +20,7 @@ from datetime import date, timedelta
 # ---------------------------------------------------------------- sabitler
 # Ozet tablodaki satirlari etkileyen bir hesap kurali (net, puan, eksik
 # karne) degisince artirilir: kokpit.init_schema tum denemeleri yeniden kurar.
-HESAP_SURUMU = "2"
+HESAP_SURUMU = "3"
 DERS_SIRASI = ["turkce", "inkilap", "din", "ingilizce", "matematik", "fen"]
 DERS_AD = {
     "turkce": "Türkçe", "inkilap": "İnkılap Tarihi", "din": "Din Kültürü",
@@ -31,6 +31,31 @@ DERS_KISA = {
     "matematik": "Matematik", "fen": "Fen",
 }
 KATSAYI = {"turkce": 4, "matematik": 4, "fen": 4, "inkilap": 1, "din": 1, "ingilizce": 1}
+
+
+def lgs_turu(exam_type):
+    """Deneme LGS turunde mi? Projede tur bos birakilan denemeler LGS sayilir
+    (js/subjectSets.js getSubjectsForExam ile ayni varsayilan)."""
+    return (exam_type or "LGS").strip().upper() == "LGS"
+
+
+def baglam(seviye=None, lgs=True):
+    """Seviyeye ve sinav turune gore ders adlari + katsayilar. 5-7. siniflarda
+    'inkilap' anahtari Sosyal Bilgiler'dir (subjectSets.js subjectDisplayName);
+    LGS katsayilari (x4/x1) yalnizca LGS turu denemelerde uygulanir, digerlerinde
+    tum dersler x1 sayilir. Okula ozel hicbir sey icermez."""
+    ad, kisa = dict(DERS_AD), dict(DERS_KISA)
+    try:
+        sev = int(str(seviye)) if seviye not in (None, "") else None
+    except ValueError:
+        sev = None
+    if sev is not None and sev < 8:
+        ad["inkilap"] = kisa["inkilap"] = "Sosyal Bilgiler"
+    return {"ad": ad, "kisa": kisa, "katsayi": dict(KATSAYI) if lgs else {}, "lgs": bool(lgs), "seviye": sev}
+
+
+def _b(bag):
+    return bag or baglam()
 VARSAYILAN_SORU = {"turkce": 20, "matematik": 20, "fen": 20, "inkilap": 10, "din": 10, "ingilizce": 10}
 AY_AD = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
          "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
@@ -238,7 +263,7 @@ PUAN_TABAN = 194.752082  # yaklasik hesapta 0 netin puani
 _HAZIR_PUAN_ALANLARI = ("lgsPuan", "lgsPuani", "puan", "score")
 
 
-def sonuc_ozeti(veri, sorular=None):
+def sonuc_ozeti(veri, sorular=None, lgs=True):
     """results.data_json -> kokpit satiri. Ders neti d - y/3 ile YENIDEN
     hesaplanir (dogru/yanlis yoksa kayitli net kullanilir). Sonuc dosyasi
     yayinevinin hesapladigi bir puan tasiyorsa (ör. lgsPuan) o kullanilir,
@@ -273,7 +298,7 @@ def sonuc_ozeti(veri, sorular=None):
         if isinstance(v, (int, float)) and 100 <= v <= 500:
             puan, yaklasik = float(v), False
             break
-    if puan is None and dersler:
+    if puan is None and dersler and lgs:  # LGS puani yalnizca LGS turu denemelerde
         puan = lgs_puani({k: v["net"] for k, v in dersler.items()}, sorular)["puan"]
     return {
         "dersler": dersler, "toplamNet": sum(v["net"] for v in dersler.values()),
@@ -464,26 +489,28 @@ def _r2(x):
     return None if x is None else round(x, 2)
 
 
-def _ders_listesi(ist, ayar):
+def _ders_listesi(ist, ayar, bag=None):
+    bag = _b(bag)
     out = []
     for k, d in ist["dersler"].items():
         out.append({
-            "ders": k, "ad": DERS_AD.get(k, k), "kisa": DERS_KISA.get(k, k),
-            "katsayi": KATSAYI.get(k, 1), "net": d["net"], "soru": d["soru"], "oran": d["oran"],
+            "ders": k, "ad": bag["ad"].get(k, k), "kisa": bag["kisa"].get(k, k),
+            "katsayi": bag["katsayi"].get(k, 1), "net": d["net"], "soru": d["soru"], "oran": d["oran"],
             "esikAlti": d["oran"] is not None and d["oran"] * 100 < ayar["basariEsigi"],
         })
     out.sort(key=lambda d: -(d["oran"] or 0))
     return out
 
 
-def kaldirac(ist):
+def kaldirac(ist, bag=None):
     """En buyuk kaldirac (5.4): acik = (soru - ortalama net) x katsayi en buyuk ders."""
+    bag = _b(bag)
     en = None
     for k, d in ist["dersler"].items():
-        acik = (d["soru"] - d["net"]) * KATSAYI.get(k, 1)
+        acik = (d["soru"] - d["net"]) * bag["katsayi"].get(k, 1)
         if en is None or acik > en["acik"]:
-            en = {"ders": k, "ad": DERS_AD.get(k, k), "acik": acik, "oran": d["oran"],
-                  "katsayi": KATSAYI.get(k, 1), "net": d["net"], "soru": d["soru"]}
+            en = {"ders": k, "ad": bag["ad"].get(k, k), "acik": acik, "oran": d["oran"],
+                  "katsayi": bag["katsayi"].get(k, 1), "net": d["net"], "soru": d["soru"]}
     return en
 
 
@@ -506,7 +533,8 @@ def _yuzde_eki(n):
     return ek(str(n), "in")[len(str(n)):]
 
 
-def _degisim(once, sonra, ayar, etiket_once, etiket_sonra):
+def _degisim(once, sonra, ayar, etiket_once, etiket_sonra, bag=None):
+    bag = _b(bag)
     if not once or not sonra or not once["n"] or not sonra["n"]:
         return {"var": False, "mesaj": "Karşılaştırma için önceki dönemde deneme yok", "dersler": []}
     satirlar = []
@@ -515,7 +543,7 @@ def _degisim(once, sonra, ayar, etiket_once, etiket_sonra):
         if not a or not b:
             continue
         fark = b["net"] - a["net"]
-        satirlar.append({"ders": k, "ad": DERS_AD.get(k, k), "kisa": DERS_KISA.get(k, k),
+        satirlar.append({"ders": k, "ad": bag["ad"].get(k, k), "kisa": bag["kisa"].get(k, k),
                          "once": a["net"], "sonra": b["net"], "fark": fark,
                          "belirgin": abs(round(fark, 2)) >= ayar["degisimEsigi"]})
     satirlar.sort(key=lambda s: -s["fark"])
@@ -525,7 +553,7 @@ def _degisim(once, sonra, ayar, etiket_once, etiket_sonra):
     zaman = ek(ay, "de")[len(ay) + 1:]
     zaman = f"{ay}{zaman}" if ay else "bu dönem"
     if dusen:
-        adlar = [s["kisa"].lower() if s["kisa"] not in ("Türkçe", "İngilizce", "İnkılap") else s["kisa"] for s in dusen]
+        adlar = [s["kisa"].lower() if s["kisa"] not in ("Türkçe", "İngilizce", "İnkılap", "Sosyal Bilgiler") else s["kisa"] for s in dusen]
         liste = adlar[0] if len(adlar) == 1 else ", ".join(adlar[:-1]) + " ve " + adlar[-1]
         baslik = f"{zaman.capitalize()} {liste} geriledi"
     elif artan:
@@ -590,10 +618,11 @@ def _katilim_grafigi(katilim, ayar, etiket_sonra, sonra_araligi):
     return {"baslik": baslik, "cubuklar": cubuklar, "hedef": ayar["katilimHedef"]}
 
 
-def uyarilar(cur, once, sonra, katilim, ayar, etiket_sonra="", donem_kodu="", sonra_araligi=None):
+def uyarilar(cur, once, sonra, katilim, ayar, etiket_sonra="", donem_kodu="", sonra_araligi=None, bag=None):
     """Sartname 6'daki kurallar. VERI_EKSIK burada uretilmez (veri_durumu()).
     Ayni subede SUBE_PUAN_DUSUS varsa o subenin DERS_NET_DUSUS'lari ayri satir
     olmak yerine puan dususu uyarisinin detayina katilir (taslaktaki gibi)."""
+    bag = _b(bag)
     out = []
     ay = (etiket_sonra or "").lower()
     zaman = (ay + ek(ay, "de")[len(ay) + 1:]) if ay else "bu dönem"
@@ -622,7 +651,7 @@ def uyarilar(cur, once, sonra, katilim, ayar, etiket_sonra="", donem_kodu="", so
                 fark = d["net"] - a["net"]
                 if round(fark, 2) <= -ayar["dersNetDusus"]:
                     ders_dusus.setdefault(cls, []).append(
-                        {"ders": k, "ad": DERS_KISA.get(k, k), "once": a["net"], "sonra": d["net"], "fark": fark})
+                        {"ders": k, "ad": bag["kisa"].get(k, k), "once": a["net"], "sonra": d["net"], "fark": fark})
         for lst in ders_dusus.values():
             lst.sort(key=lambda x: x["fark"])
 
@@ -643,7 +672,7 @@ def uyarilar(cur, once, sonra, katilim, ayar, etiket_sonra="", donem_kodu="", so
                         if a:
                             tum.append((d["net"] - a["net"], k))
                     tum.sort()
-                    parcalar = [f"{DERS_KISA.get(k, k)} {fmt_isaret(f)} net" for f, k in tum[:2] if f < 0]
+                    parcalar = [f"{bag['kisa'].get(k, k)} {fmt_isaret(f)} net" for f, k in tum[:2] if f < 0]
                 detay = ", ".join(parcalar) + "." if parcalar else ""
                 if sa.get("yanlis") is not None and sb.get("yanlis") is not None:
                     ya, yb = fmt(sa["yanlis"], 1), fmt(sb["yanlis"], 1)
@@ -754,7 +783,7 @@ def _kisa_tarih(t):
     return d.strftime("%d.%m") if d else "-"
 
 
-def acilis_analizi(cur, once, sonra, katilim, ayar, donem):
+def acilis_analizi(cur, once, sonra, katilim, ayar, donem, bag=None):
     """Acilis ekraninin hesaplanan bolumleri.
     cur: secili donem istatistigi; once/sonra: karsilastirma donemleri
     (tum donemde son ay ve onceki ay); katilim: secili donemdeki denemeler
@@ -762,8 +791,9 @@ def acilis_analizi(cur, once, sonra, katilim, ayar, donem):
     et_once = (donem.get("once") or {}).get("etiket", "")
     et_sonra = (donem.get("sonra") or {}).get("etiket", "")
     sonra_araligi = donem.get("sonra")
-    dersler = _ders_listesi(cur, ayar)
-    kal = kaldirac(cur)
+    bag = _b(bag)
+    dersler = _ders_listesi(cur, ayar, bag)
+    kal = kaldirac(cur, bag)
     karsilastirma = bool(once and sonra and once["n"] and sonra["n"])
     if kal and karsilastirma and kal["ders"] in once["dersler"] and kal["ders"] in sonra["dersler"]:
         kal["degisim"] = sonra["dersler"][kal["ders"]]["net"] - once["dersler"][kal["ders"]]["net"]
@@ -774,7 +804,7 @@ def acilis_analizi(cur, once, sonra, katilim, ayar, donem):
     son = yuklu[-1] if yuklu else None
     kartlar = {
         "puan": {
-            "deger": cur["puan"], "yaklasik": True,
+            "deger": cur["puan"], "yaklasik": True, "lgs": bag["lgs"],
             "once": once["puan"] if karsilastirma else None,
             "sonra": sonra["puan"] if karsilastirma else None,
             "fark": (sonra["puan"] - once["puan"]) if karsilastirma and once["puan"] is not None and sonra["puan"] is not None else None,
@@ -797,10 +827,12 @@ def acilis_analizi(cur, once, sonra, katilim, ayar, donem):
         "kartlar": kartlar,
         "dersler": {"baslik": _ders_basligi(dersler, ayar), "liste": dersler,
                     "esik": ayar["basariEsigi"], "denemeSayisi": cur["denemeSayisi"]},
-        "degisim": dict(_degisim(once, sonra, ayar, et_once, et_sonra), esik=ayar["degisimEsigi"]),
+        "degisim": dict(_degisim(once, sonra, ayar, et_once, et_sonra, bag), esik=ayar["degisimEsigi"]),
         "subeler": _sube_tablosu(cur, once, sonra, ayar, dersler),
         "katilim": _katilim_grafigi(katilim, ayar, et_sonra, sonra_araligi),
-        "uyarilar": uyarilar(cur, once, sonra, katilim, ayar, et_sonra, donem.get("kod", ""), sonra_araligi),
+        "uyarilar": uyarilar(cur, once, sonra, katilim, ayar, et_sonra, donem.get("kod", ""), sonra_araligi, bag),
+        "dersAdlari": {k: {"ad": bag["ad"].get(k, k), "kisa": bag["kisa"].get(k, k), "katsayi": bag["katsayi"].get(k, 1)}
+                       for k in cur["dersler"]},
     }
 
 

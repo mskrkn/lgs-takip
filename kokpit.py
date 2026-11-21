@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS kokpit_deneme (
     ad TEXT, tarih TEXT, grade TEXT, genel INTEGER NOT NULL DEFAULT 1,
     soru_json TEXT, katilan INTEGER NOT NULL DEFAULT 0, eksik_karne INTEGER NOT NULL DEFAULT 0,
     anahtar_var INTEGER NOT NULL DEFAULT 0, kazanim_durumu TEXT,
-    built_at TEXT
+    built_at TEXT, tur TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kokpit_deneme_org ON kokpit_deneme(organization_id);
 CREATE TABLE IF NOT EXISTS kokpit_ozet (
@@ -139,6 +139,8 @@ def init_schema(db_path):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE notifications ADD COLUMN {col} {'INTEGER' if col == 'organization_id' else 'TEXT'}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)")
+        if "tur" not in [r[1] for r in conn.execute("PRAGMA table_info(kokpit_deneme)").fetchall()]:
+            conn.execute("ALTER TABLE kokpit_deneme ADD COLUMN tur TEXT")
         r = conn.execute("SELECT deger FROM kokpit_meta WHERE anahtar = 'hesap_surumu'").fetchone()
         if not r or r[0] != K.HESAP_SURUMU:
             # hesap kurali degisti: tum ozet satirlari bir sonraki okumada yeniden kurulur
@@ -242,6 +244,8 @@ def ozet_guncelle(db, org_id):
         data = json.loads(e["data_json"]) if e["data_json"] else {}
         sorular = K.soru_sayilari(data.get("questionCounts"))
         genel = 0 if e["exam_type"] == "optik_kamera" else 1
+        tur = (e["exam_type"] or data.get("examType") or "LGS")
+        lgs = K.lgs_turu(tur)
         acc, satirlar, grade_say, eksik = {}, [], {}, 0
         if genel:
             for r in db.execute("SELECT student_id, data_json FROM results WHERE exam_id = ?", (exam_id,)).fetchall():
@@ -249,7 +253,7 @@ def ozet_guncelle(db, org_id):
                 if sid not in ogrenci:
                     continue
                 veri = json.loads(r["data_json"]) if r["data_json"] else {}
-                o = K.sonuc_ozeti(veri, sorular)
+                o = K.sonuc_ozeti(veri, sorular, lgs)
                 cls = ogrenci[sid] or "(Şubesiz)"
                 g = _grade(cls)
                 grade_say[g] = grade_say.get(g, 0) + 1
@@ -276,10 +280,11 @@ def ozet_guncelle(db, org_id):
             [(org_id, exam_id, g, cls, k, *a) for (cls, g, k), a in acc.items()])
         ak = data.get("answerKey") or {}
         db.execute(
-            "INSERT OR REPLACE INTO kokpit_deneme VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO kokpit_deneme (exam_id, organization_id, ad, tarih, grade, genel, soru_json, katilan, "
+            "eksik_karne, anahtar_var, kazanim_durumu, built_at, tur) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (exam_id, org_id, e["name"], (e["date"] or "")[:10], grade, genel, json.dumps(sorular), len(satirlar),
              eksik, 1 if (ak.get("A") if isinstance(ak, dict) else ak) else 0,
-             _kazanim_durumu(data, sorular), simdi))
+             _kazanim_durumu(data, sorular), simdi, tur))
     db.executemany("DELETE FROM kokpit_kirli WHERE exam_id = ?", [(x,) for x in hedef])
     db.commit()
     return len(hedef)
@@ -372,6 +377,14 @@ def _donem_secenekleri(veri, donem):
     return out
 
 
+def _baglam(veri, ids=None):
+    """Secili seviye + denemelerin turu -> ders adlari ve katsayilar. Donemdeki
+    denemelerin HEPSI LGS turundeyse LGS katsayilari uygulanir."""
+    d = [x for x in veri["denemeler"] if ids is None or x["exam_id"] in ids]
+    lgs = all(K.lgs_turu(x.get("tur")) for x in d) if d else True
+    return K.baglam(veri["seviye"], lgs)
+
+
 def _analiz_paketi(db, org_id, veri, donem, ayar):
     d = veri["denemeler"]
     cur_ids = _ids(d, donem["secili"])
@@ -383,7 +396,7 @@ def _analiz_paketi(db, org_id, veri, donem, ayar):
     katilim = _katilim_listesi(d, donem["secili"], len(veri["kayitli"]))
     capa = (donem["sonra"] or donem["secili"])["bas"][:7] if donem["kod"] != "ozel" else \
         donem["secili"]["bas"] + "_" + donem["secili"]["bit"]
-    analiz = K.acilis_analizi(cur, once, sonra, katilim, ayar, dict(donem, kod=capa))
+    analiz = K.acilis_analizi(cur, once, sonra, katilim, ayar, dict(donem, kod=capa), _baglam(veri, cur_ids))
     return cur, once, sonra, katilim, analiz
 
 
@@ -579,6 +592,7 @@ def _ortak(db, okul_id, veri, donem, kapsam):
 
 def sube_detayi(db, okul_id, veri, donem, sube, ayar):
     (cur_ids, once_ids, sonra_ids), (cur, once, sonra) = _donem_istatistikleri(veri, donem)
+    bag = _baglam(veri, cur_ids)
     sc = cur["subeler"].get(sube) if cur else None
     so = once["subeler"].get(sube) if once else None
     ss = sonra["subeler"].get(sube) if sonra else None
@@ -600,7 +614,7 @@ def sube_detayi(db, okul_id, veri, donem, sube, ayar):
         okul_d = cur["dersler"].get(k)
         a = ((so or {}).get("dersler") or {}).get(k)
         b = ((ss or {}).get("dersler") or {}).get(k)
-        dersler.append({"ders": k, "ad": K.DERS_AD.get(k, k), "net": dd["net"], "soru": dd["soru"], "oran": dd["oran"],
+        dersler.append({"ders": k, "ad": bag["ad"].get(k, k), "net": dd["net"], "soru": dd["soru"], "oran": dd["oran"],
                         "okulOran": okul_d["oran"] if okul_d else None, "okulNet": okul_d["net"] if okul_d else None,
                         "degisim": (b["net"] - a["net"]) if a and b else None})
     cur_o = _ogrenci_ortalamalari(db, okul_id, veri["seviye"], cur_ids, sube)
@@ -618,7 +632,7 @@ def sube_detayi(db, okul_id, veri, donem, sube, ayar):
         })
     risk = K.risk_listesi([o for o in ogrenciler if o["net"] is not None], ayar)
     return {"sube": sube, "kartlar": kartlar, "trend": trend, "dersler": dersler, "ogrenciler": ogrenciler,
-            "risk": risk, "denemeSayisi": len(cur_ids)}
+            "risk": risk, "denemeSayisi": len(cur_ids), "lgs": bag["lgs"]}
 
 
 @bp.route("/api/okullar/<int:okul_id>/kokpit/subeler/<path:sube>")
@@ -691,6 +705,7 @@ def api_ders(db, okul_id, kapsam, ders):
     veri = _okul_verisi(db, okul_id, request.args.get("seviye"))
     donem = _donem(veri)
     (cur_ids, _, _), (cur, once, sonra) = _donem_istatistikleri(veri, donem)
+    bag = _baglam(veri, cur_ids)
     if not cur or ders not in cur["dersler"]:
         return jsonify({"error": "Bu dönemde bu dersin verisi yok."}), 404
     subeler = []
@@ -706,7 +721,7 @@ def api_ders(db, okul_id, kapsam, ders):
     sube = request.args.get("sube") or None
     out = _ortak(db, okul_id, veri, donem, kapsam)
     out.update({
-        "ders": ders, "ad": K.DERS_AD.get(ders, ders), "katsayi": K.KATSAYI.get(ders, 1),
+        "ders": ders, "ad": bag["ad"].get(ders, ders), "katsayi": bag["katsayi"].get(ders, 1), "lgs": bag["lgs"],
         "ozet": {"net": o["net"], "soru": o["soru"], "oran": o["oran"], "yanlis": o["yanlis"],
                  "degisim": (sonra["dersler"][ders]["net"] - once["dersler"][ders]["net"])
                  if once and sonra and ders in once["dersler"] and ders in sonra["dersler"] else None},
@@ -912,7 +927,7 @@ def aksiyon_plani(db, okul_id, govde, args):
         kaz = [str(k)[:300] for k in (hedef.get("kazanimlar") or [])][:5]
         if hedef.get("kazanim"):
             kaz = [str(hedef["kazanim"])[:300]] + [k for k in kaz if k != hedef["kazanim"]]
-        u = {"kod": "KAZANIM_ZAYIF", "anahtar": anahtar[:400], "baslik": f"{K.DERS_AD[ders]}: zayıf kazanım",
+        u = {"kod": "KAZANIM_ZAYIF", "anahtar": anahtar[:400], "baslik": f"{K.baglam(veri['seviye'])['ad'][ders]}: zayıf kazanım",
              "detay": "; ".join(kaz[:3]), "hedef": {"sube": hedef.get("sube"), "ders": ders}}
         subeler = [hedef["sube"]] if hedef.get("sube") else sorted({s["class_name"] for s in veri["kayitli"]})
         cur = None
@@ -925,6 +940,7 @@ def aksiyon_plani(db, okul_id, govde, args):
         subeler = [u["hedef"]["sube"]] if u["hedef"].get("sube") else []
         kaz = []
     okul_ad = _okul_adi(db, okul_id)
+    AD = K.baglam(veri["seviye"])["ad"]
     plan = {"tur": tur, "anahtar": u["anahtar"], "kod": u["kod"], "hedef": u["hedef"], "uyari": u,
             "alicilar": [], "not": None, "ek": {}}
 
@@ -959,23 +975,23 @@ def aksiyon_plani(db, okul_id, govde, args):
                 # dersin ogretmeni yoksa sinif ogretmenine (o da yoksa subeye giren ilk ogretmene)
                 ders_ogr = [t for t in ogr if t["homeroom_class_name"] == sube] or ogr[:1]
                 if ders_ogr:
-                    plan["not"] = f"{sube} şubesinde {K.DERS_AD[ders]} öğretmeni tanımlı değil; taslak {ders_ogr[0]['display_name']} adlı öğretmene gidecek."
+                    plan["not"] = f"{sube} şubesinde {AD[ders]} öğretmeni tanımlı değil; taslak {ders_ogr[0]['display_name']} adlı öğretmene gidecek."
             if not ders_ogr:
                 continue
             t = ders_ogr[0]
-            alicilar.append(_alici(t, f"{sube} · {K.DERS_AD[ders]}"))
+            alicilar.append(_alici(t, f"{sube} · {AD[ders]}"))
             taslaklar.append({"ogretmen": t["id"], "sube": sube})
         if not alicilar:
             return None, "İlgili şube(ler)de bu dersin öğretmeni bulunamadı; önce öğretmen branş/sınıf atamasını yapın."
         plan["alicilar"] = alicilar
-        plan["ek"] = {"ders": ders, "dersAd": K.DERS_AD[ders], "subjectId": subject_id, "soruSayisi": adet,
+        plan["ek"] = {"ders": ders, "dersAd": AD[ders], "subjectId": subject_id, "soruSayisi": adet,
                       "soruIds": soru_ids, "sorular": _sorular(db, soru_ids), "taslaklar": taslaklar,
                       "kazanimlar": kaz, "mod": "auto"}
         if len(soru_ids) < adet and not plan["not"]:
             plan["not"] = (f"Soru havuzunda bu derste yalnızca {len(soru_ids)} yayınlanmış soru bulundu. "
                            "Öğretmen taslağı yayınlarken akıllı modu seçebilir.")
-        plan["baslik"] = f"Taslak ödev önerisi: {K.DERS_AD[ders]}"
-        plan["metin"] = (f"{u['baslik']}. Okul yönetimi {K.DERS_AD[ders]} dersi için {adet} soruluk bir ödev öneriyor"
+        plan["baslik"] = f"Taslak ödev önerisi: {AD[ders]}"
+        plan["metin"] = (f"{u['baslik']}. Okul yönetimi {AD[ders]} dersi için {adet} soruluk bir ödev öneriyor"
                          + (f" (kazanımlar: {', '.join(kaz[:3])})" if kaz else "")
                          + ". Taslağı inceleyip uygun görürseniz yayınlayabilirsiniz; öğrencilere siz yayınlayınca gider.")
         plan["link"] = None  # taslak id'si gonderimde belli olur
@@ -1134,7 +1150,7 @@ def api_bildirim_okundu(bid):
 
 
 def _taslak_json(db, r, detay=False):
-    out = {"id": r["id"], "sube": r["class_name"], "ders": r["subject"], "dersAd": K.DERS_AD.get(r["subject"], r["subject"]),
+    out = {"id": r["id"], "sube": r["class_name"], "ders": r["subject"], "dersAd": K.baglam(_grade(r["class_name"]))["ad"].get(r["subject"], r["subject"]),
            "baslik": r["title"], "aciklama": r["description"], "mod": r["mode"], "durum": r["status"],
            "soruSayisi": r["question_count"], "kazanimlar": json.loads(r["kazanimlar_json"] or "[]"),
            "odevId": r["assignment_id"], "tarih": r["created_at"]}

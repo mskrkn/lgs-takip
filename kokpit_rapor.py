@@ -18,7 +18,10 @@ _XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 # ---------------------------------------------------------------- ortak tablolar
 def bolumler(v, ogrenciler):
-    """Rapor bolumleri: [(sayfa_adi, baslik, kolonlar, satirlar)] - sayilar ham."""
+    """Rapor bolumleri: [(sayfa_adi, baslik, kolonlar, satirlar)] - sayilar ham.
+    Ders adlari okulun secili seviyesinden gelir (v["dersAdlari"])."""
+    KISA = {k: x["kisa"] for k, x in (v.get("dersAdlari") or {}).items()}
+    kisa = lambda k: KISA.get(k) or K.DERS_KISA.get(k, k)  # noqa: E731
     k = v["kartlar"]
     p, n, kat, kal = k["puan"], k["toplamNet"], k["katilim"], k["kaldirac"]
     kartlar = [
@@ -41,7 +44,7 @@ def bolumler(v, ogrenciler):
                 [(x["ad"], x["once"], x["sonra"], x["fark"], "evet" if x["belirgin"] else "hayır") for x in g.get("dersler", [])]))
     sd = [k_ for k_ in K.DERS_SIRASI if any(k_ in s["dersler"] for s in v["subeler"]["satirlar"])]
     out.append(("Şubeler", v["subeler"]["baslik"],
-                ["Şube", "Öğrenci", "Toplam net", "LGS puanı", "Ort. yanlış"] + [K.DERS_KISA[x] for x in sd]
+                ["Şube", "Öğrenci", "Toplam net", "LGS puanı", "Ort. yanlış"] + [kisa(x) for x in sd]
                 + ["Önceki puan", "Bu dönem puan"],
                 [(s["sube"], s["ogrenci"], s["toplamNet"], s["puan"], s["yanlis"]) + tuple(s["dersler"].get(x) for x in sd)
                  + (s["puanOnce"], s["puanSonra"]) for s in v["subeler"]["satirlar"]]))
@@ -51,7 +54,7 @@ def bolumler(v, ogrenciler):
     if ogrenciler is not None:
         dersler = [x for x in K.DERS_SIRASI if any(x in o["dersler"] for o in ogrenciler)]
         out.append(("Öğrenci netleri", "Öğrenci bazında net listesi",
-                    ["No", "Öğrenci", "Şube", "Deneme", "Tarih"] + [K.DERS_KISA[x] for x in dersler]
+                    ["No", "Öğrenci", "Şube", "Deneme", "Tarih"] + [kisa(x) for x in dersler]
                     + ["Toplam net", "Doğru", "Yanlış", "LGS puanı"],
                     [(o["numara"], o["ad"], o["sube"], o["deneme"], o["tarih"]) + tuple(o["dersler"].get(x) for x in dersler)
                      + (o["toplamNet"], o["d"], o["y"], o["puan"]) for o in ogrenciler]))
@@ -269,10 +272,11 @@ def pdf(v):
         akis += [Paragraph("Dönem değişimi", st["h2"]), Paragraph(E(g.get("mesaj")), st["p"])]
     sb = v["subeler"]
     sd = sb["varsayilanDersler"]
+    KISA = {k: x["kisa"] for k, x in (v.get("dersAdlari") or {}).items()}
     once_et = (v["donem"].get("once") or {}).get("etiket", "Önceki")
     sonra_et = (v["donem"].get("sonra") or {}).get("etiket", "bu dönem")
     akis += [Paragraph(E(sb["baslik"]), st["h2"]),
-             tablo(["Şube", "Öğrenci", "Toplam net", "LGS puanı", "Ort. yanlış"] + [K.DERS_KISA[x] for x in sd]
+             tablo(["Şube", "Öğrenci", "Toplam net", "LGS puanı", "Ort. yanlış"] + [kisa(x) for x in sd]
                    + [f"{once_et} -> {sonra_et} puan"],
                    [(x["sube"], x["ogrenci"], x["toplamNet"], x["puan"], x["yanlis"]) + tuple(x["dersler"].get(d) for d in sd)
                     + (f"{K.fmt(x['puanOnce'])} -> {K.fmt(x['puanSonra'])}" if x["puanOnce"] is not None and x["puanSonra"] is not None else "-",)

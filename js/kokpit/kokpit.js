@@ -28,7 +28,11 @@
   const yuzde = (x) => (x == null || isNaN(x)) ? '–' : '%' + Math.round(x * 100);
   const trTarih = (s) => { if (!s) return '–'; const [y, m, d] = String(s).slice(0, 10).split('-'); return `${d}.${m}.${y}`; };
   const kisaTarih = (s) => { if (!s) return '–'; const [, m, d] = String(s).slice(0, 10).split('-'); return `${d}.${m}`; };
-  const dersAd = (k) => DERS_AD[k] || k;
+  // Ders adları sunucudan, okulun seçili seviyesine göre gelir (5-7. sınıfta
+  // "inkilap" = Sosyal Bilgiler); sabit tablo yalnızca yedek.
+  const dersBilgi = (k) => (ST.veri && ST.veri.dersAdlari && ST.veri.dersAdlari[k]) || null;
+  const dersAd = (k) => (dersBilgi(k) || {}).ad || DERS_AD[k] || k;
+  const kisaAd = (k) => (dersBilgi(k) || {}).kisa || DERS_KISA[k] || k;
 
   const ST = {
     okulId: null, kapsam: null, okullar: [], veri: null, sube: { sira: 'toplamNet', yon: -1, dersler: null },
@@ -222,7 +226,7 @@
       : '';
     return `<section class="kp-grid-kpi" aria-label="Gösterge kartları">
       <article class="kp-card"><p class="kp-kpi-label">Ortalama LGS puanı <span class="kp-tag" title="Katsayılı yaklaşık hesap; gerçek LGS puanı standart puana dayanır.">yaklaşık</span></p>
-        <p class="kp-kpi-value">${fmt(p.deger)}</p><p class="kp-kpi-foot">${puanAlt}</p></article>
+        <p class="kp-kpi-value">${fmt(p.deger)}</p><p class="kp-kpi-foot">${p.lgs === false && p.deger == null ? 'Bu dönemdeki denemeler LGS türünde değil; puan hesaplanmaz.' : puanAlt}</p></article>
       <article class="kp-card"><p class="kp-kpi-label">Toplam net</p>
         <p class="kp-kpi-value">${fmt(n.deger)} <small>/ ${fmt(n.soru, 0)}</small></p>
         <p class="kp-kpi-foot">Soruların ${yuzde(n.oran)}'ü · dönem hedefi ${fmt(n.hedef, 0)}</p></article>
@@ -293,7 +297,7 @@
     return `<article class="kp-card"><h2>${esc(d.dersler.baslik)}</h2>
       <p class="kp-card-sub">Ders başarı oranı = ortalama net / soru sayısı · ${d.dersler.denemeSayisi} deneme</p>
       <div class="kp-hbars" role="group" aria-label="Ders başarı oranları grafiği">${L.map(satir).join('')}</div>
-      <div class="kp-legend"><span><i style="background:var(--kp-orange)"></i>%${fmt(esik, 0)}'ın altında</span><span><i style="background:var(--kp-blue)"></i>%${fmt(esik, 0)} ve üstü</span><span>×4 = LGS katsayısı</span></div>
+      <div class="kp-legend"><span><i style="background:var(--kp-orange)"></i>%${fmt(esik, 0)}'ın altında</span><span><i style="background:var(--kp-blue)"></i>%${fmt(esik, 0)} ve üstü</span>${d.kartlar.puan.lgs === false ? '' : '<span>×4 = LGS katsayısı</span>'}</div>
       <div class="kp-sr"><table><caption>Ders başarısı</caption><thead><tr><th>Ders</th><th>Başarı</th><th>Net</th><th>Soru</th></tr></thead>
       <tbody>${L.map((x) => `<tr><td>${esc(x.ad)}</td><td>${yuzde(x.oran)}</td><td>${fmt(x.net)}</td><td>${fmt(x.soru, 0)}</td></tr>`).join('')}</tbody></table></div></article>`;
   }
@@ -325,7 +329,7 @@
     const tumDersler = d.dersler.liste.map((x) => x.ders);
     const kolonlar = [
       ['sube', 'Şube'], ['ogrenci', 'Öğrenci'], ['toplamNet', 'Toplam net'], ['puan', 'LGS puanı'], ['yanlis', 'Ort. yanlış'],
-      ...dersler.map((k) => [`d:${k}`, DERS_KISA[k] || k]),
+      ...dersler.map((k) => [`d:${k}`, kisaAd(k)]),
       ['puanFark', `${(d.donem.once || {}).etiket || 'Önceki'} → ${(d.donem.sonra || {}).etiket || 'bu dönem'} puan`],
     ];
     const deger = (s, k) => (k.startsWith('d:') ? s.dersler[k.slice(2)] : s[k]);
@@ -349,7 +353,7 @@
         <td>${s.ogrenci == null ? '–' : s.ogrenci}</td><td>${fmt(s.toplamNet)}</td><td>${fmt(s.puan)}</td><td>${fmt(s.yanlis, 1)}</td>
         ${dersler.map((k) => `<td>${fmt(s.dersler[k])}</td>`).join('')}<td>${trendHucre(s)}</td></tr>`).join('');
     const secici = `<div class="kp-col-pick" role="group" aria-label="Tabloda gösterilecek dersler"><span>Ders kolonları:</span>
-      ${tumDersler.map((k) => `<label><input type="checkbox" data-kolon="${k}"${dersler.includes(k) ? ' checked' : ''}>${esc(DERS_KISA[k] || k)}</label>`).join('')}</div>`;
+      ${tumDersler.map((k) => `<label><input type="checkbox" data-kolon="${k}"${dersler.includes(k) ? ' checked' : ''}>${esc(kisaAd(k))}</label>`).join('')}</div>`;
     return `<article class="kp-card"><h2>${esc(S.baslik)}</h2>
       <p class="kp-card-sub">${d.dersler.denemeSayisi} deneme ortalaması · satıra tıklayınca şube detayı açılır${tamEkran ? '' : ''}</p>
       ${secici}
@@ -529,7 +533,7 @@
 
   // Diğer modüller (detay ekranları, aksiyonlar, raporlar) için ortak yardımcılar
   window.Kokpit = {
-    ST, api, okulYolu, filtreQS, esc, fmt, isaretli, yuzde, trTarih, kisaTarih, dersAd, DERS_AD, DERS_KISA,
+    ST, api, okulYolu, filtreQS, esc, fmt, isaretli, yuzde, trTarih, kisaTarih, dersAd, kisaAd, DERS_AD, DERS_KISA,
     toast, modalAc, modalKapat, baslikCiz, filtreBagla, sonDenemeMetni, iskelet, hataCiz, ciz, EKRANLAR, setParams, params,
     bagla, menuCiz, turAd,
   };
