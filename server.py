@@ -3192,6 +3192,11 @@ def _safe_send(filename):
 def root():
     role = session.get("role")
     if role in ("admin", "super_admin"):
+        # Okul Kokpiti (okul yoneticisi bolumu): kendi okulu olan Okul Admini
+        # girince kokpit acilir. Veri Giris Admini ve platform hesaplari eskisi
+        # gibi yonetim paneline duser; panel her zaman /index.html'de.
+        if kokpit.varsayilan_acilis(get_db()):
+            return redirect("/okul-kokpiti.html")
         return _safe_send("index.html")
     if role == "teacher":
         # Yetki devredilmis (delege) bir ogretmense hesap ekleme/listeleme
@@ -13806,17 +13811,24 @@ def main():
 # init_db()'yi TEK SEFERDE bir worker'a kilitler; digerleri kilidi
 # beklerken sema zaten guncellenmis olur, onlarin kendi init_db()
 # cagrilari da idempotent kontroller sayesinde hizli birer no-op'a doner.
+# Okul Kokpiti (okul yoneticisi bolumu) - rotalar/ozet tablo kokpit.py'de,
+# hesaplar kokpit_hesap.py'de. Mevcut tablolardan yalnizca okur.
+import kokpit
+kokpit.register(app, sys.modules[__name__])
+
 os.chdir(BASE_DIR)
 try:
     import fcntl
     with open(os.path.join(BASE_DIR, ".init_db.lock"), "w") as _init_db_lock_file:
         fcntl.flock(_init_db_lock_file, fcntl.LOCK_EX)
         init_db()
+        kokpit.init_schema(DB_PATH)
         fcntl.flock(_init_db_lock_file, fcntl.LOCK_UN)
 except ImportError:
     # fcntl Windows'ta yok - yerel gelistirmede tek surec (python server.py)
     # calistigi icin zaten yaris riski olmuyor, kilide gerek yok.
     init_db()
+    kokpit.init_schema(DB_PATH)
 
 if __name__ == "__main__":
     main()

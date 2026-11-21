@@ -17,6 +17,10 @@ deneme_sonuclari.csv
 !omr_reports.py
 !backup_db.py
 !deneme_sihirbazi.py
+!kokpit.py
+!kokpit_hesap.py
+!kokpit_rapor.py
+!tests/test_kokpit*.py
 yedekler/
 __pycache__/
 
@@ -40,6 +44,8 @@ tunnel_hata.txt
 # içerir, asla paylaşılmamalı/yayınlanmamalı
 yetki_veritabani.db
 .flask_secret_key
+# Okul Kokpiti: uretilen PDF/Excel raporlari (ogrenci verisi icerir, imzali baglantiyla indirilir)
+.kokpit_raporlar/
 firebase-adminsdk-key.json
 
 # Drive Soru Havuzu entegrasyonu (2. Adım) - EduPusula Soru Merkezi'nin

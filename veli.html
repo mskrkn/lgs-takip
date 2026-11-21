@@ -62,7 +62,7 @@
           <h2 class="page-title" id="page-title">Ana Sayfa <span id="page-subtitle">Kontrol Merkezi</span></h2>
         </div>
         <div class="header-right" style="display:flex;align-items:center;gap:12px">
-          <button class="menu-toggle" onclick="comingSoon('Bildirimler')" title="Bildirimler">🔔</button>
+          <a class="menu-toggle" id="bildirim-link" href="/bildirimler.html" title="Bildirimler" aria-label="Bildirimler" style="position:relative;text-decoration:none;display:inline-flex;align-items:center;justify-content:center">🔔<span id="bildirim-rozet" aria-hidden="true" style="display:none;position:absolute;top:2px;right:2px;min-width:16px;height:16px;border-radius:99px;background:#EF4444;color:#fff;font-size:9px;font-weight:800;align-items:center;justify-content:center;padding:0 3px"></span></a>
           <button class="menu-toggle" onclick="comingSoon('Edu AI')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
           <div id="header-sub" class="sync-status-pill sync-offline" title="Hesap"><span class="sync-dot"></span><span>Yükleniyor...</span></div>
         </div>
@@ -211,5 +211,6 @@
   <script src="js/pwGuard.js"></script>
   <script src="js/navHistory.js"></script>
   <script src="js/parent/veli.js"></script>
+  <script src="js/bildirimRozeti.js"></script>
 </body>
 </html>
