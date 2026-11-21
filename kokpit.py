@@ -448,13 +448,6 @@ def kokpit_sayfasi():
     return S._safe_send("okul-kokpiti.html")
 
 
-@bp.route("/kokpit-taslak.html")
-def taslak_sayfasi():
-    if session.get("role") not in ("teacher", "admin", "super_admin"):
-        return redirect("/login.html")
-    return S._safe_send("kokpit-taslak.html")
-
-
 @bp.route("/api/kokpit/okullar")
 def api_okullar():
     """Kokpit acilisi icin okul secenekleri: Okul/Veri Admini -> kendi okulu,
@@ -754,3 +747,457 @@ def api_veri_durumu(db, okul_id, kapsam):
     out = _ortak(db, okul_id, veri, donem, kapsam)
     out.update({"denemeler": veri_durumu_detayi(db, veri, donem), "ozet": _veri_durumu_paketi(veri, donem)})
     return jsonify(out)
+
+
+# ================================================================ aksiyonlar (sartname 9)
+# Hicbir aksiyon onizlemesiz gonderilmez: once ?onizleme=1 ile cagrilir, sunucu
+# alici listesini hesaplayip imzali bir onayKodu dondurur; gonderim istegi bu
+# kodu (ayni kullanici, ayni okul, ayni tur/uyari, ayni alicilar, ONAY_OMRU
+# icinde) tasimazsa 409/400 doner. Metni kullanici onizlemede duzenleyebilir.
+AKSIYON_TURLERI = ("ogretmen_bildirim", "odev_oneri", "veli_bildirim")
+ODEV_VARSAYILAN_SORU = 10
+
+
+def _imza(*parcalar):
+    msg = "|".join(str(p) for p in parcalar).encode("utf-8")
+    key = S.app.secret_key if isinstance(S.app.secret_key, bytes) else str(S.app.secret_key).encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _onay_kodu(okul_id, tur, anahtar, alici_ids, ts=None):
+    ts = int(ts if ts is not None else time.time())
+    ids = ",".join(str(i) for i in sorted(alici_ids))
+    return f"{ts}.{_imza('aksiyon', session['user_id'], okul_id, tur, anahtar, ids, ts)}"
+
+
+def _onay_dogrula(kod, okul_id, tur, anahtar, alici_ids):
+    try:
+        ts_s, imza = str(kod).split(".", 1)
+        ts = int(ts_s)
+    except (ValueError, AttributeError):
+        return "Önce önizleme yapılmalı."
+    if time.time() - ts > ONAY_OMRU:
+        return "Önizlemenin süresi doldu, lütfen yeniden önizleyin."
+    beklenen = _onay_kodu(okul_id, tur, anahtar, alici_ids, ts).split(".", 1)[1]
+    if not hmac.compare_digest(beklenen, imza):
+        return "Alıcı listesi önizlemeden sonra değişti, lütfen yeniden önizleyin."
+    return None
+
+
+def _ogretmenler(db, org_id):
+    return [dict(r) for r in db.execute(
+        "SELECT id, display_name, username, class_name, homeroom_class_name, subject FROM users "
+        "WHERE organization_id = ? AND role = 'teacher' AND active = 1 ORDER BY display_name", (org_id,)).fetchall()]
+
+
+def _sube_ogretmenleri(db, org_id, sube, dersler=None):
+    """(alicilar, not): subenin ilgili ders(ler) ogretmenleri + sinif ogretmeni.
+    Ders ogretmeni bulunamazsa subeye giren tum ogretmenlere duser (notla)."""
+    tum = _ogretmenler(db, org_id)
+    girer, ders_ogr, sinif_ogr = [], [], []
+    for t in tum:
+        siniflar = S.teacher_class_list(t["class_name"])
+        anahtar = S.branch_subject_key(t["subject"])
+        subeye_girer = (siniflar is None and anahtar in (dersler or [])) or (siniflar is not None and sube in siniflar)
+        if t["homeroom_class_name"] == sube:
+            sinif_ogr.append(t)
+            subeye_girer = True
+        if not subeye_girer:
+            continue
+        girer.append(t)
+        if dersler and anahtar in dersler:
+            ders_ogr.append(t)
+    secim, not_ = [], None
+    if dersler:
+        secim = ders_ogr + [t for t in sinif_ogr if t not in ders_ogr]
+        if not ders_ogr:
+            not_ = "Bu şubede ilgili dersin öğretmeni tanımlı değil; şubeye giren öğretmenlere gönderilecek."
+            secim = girer
+    else:
+        secim = girer
+    return secim, not_
+
+
+def _alici(t, aciklama=""):
+    return {"id": t["id"], "ad": t["display_name"] or t["username"], "aciklama": aciklama}
+
+
+def _uyari_bul(db, okul_id, anahtar, args):
+    """Uyariyi istemciye guvenmeden SUNUCUDA yeniden uretir (metin/hedef
+    sahteciligine karsi). KAZANIM_ZAYIF ders detayindan gelir, uyari listesinde yok."""
+    veri = _okul_verisi(db, okul_id, args.get("seviye"))
+    donem = K.donem_coz(args.get("donem"), [d["tarih"] for d in veri["denemeler"] if d["katilanSeviye"]],
+                        bas=args.get("bas"), bit=args.get("bit"))
+    ayar, _ = _ayarlar(db, okul_id)
+    cur, _, _, katilim, analiz = _analiz_paketi(db, okul_id, veri, donem, ayar)
+    u = next((x for x in analiz["uyarilar"] if x["anahtar"] == anahtar), None)
+    return u, veri, donem, cur, katilim
+
+
+def _odev_dersi(db, org_id, cur, sube):
+    """YANLIS_YUKSEK / SUBE_ACIK icin ders: subenin okula gore en geride
+    kaldigi dersler (basari orani farki) sirasiyla; o subede ders ogretmeni
+    VE soru havuzunda yayinlanmis sorusu olan ilk ders secilir (yoksa ogretmeni
+    olan ilk ders, o da yoksa en geride kalan ders)."""
+    s = cur["subeler"].get(sube) if cur else None
+    if not s or not s["dersler"]:
+        return None
+
+    def fark(k):
+        o = cur["dersler"].get(k)
+        return (s["dersler"][k]["oran"] or 0) - ((o or {}).get("oran") or 0)
+    sira = sorted(s["dersler"], key=lambda k: (fark(k), s["dersler"][k]["oran"] or 0))
+    ogretmenli = [k for k in sira if any(S.branch_subject_key(t["subject"]) == k
+                                         for t in _sube_ogretmenleri(db, org_id, sube, [k])[0])]
+    for k in ogretmenli:
+        if db.execute("SELECT 1 FROM question_bank qb JOIN subjects sj ON sj.id = qb.subject_id "
+                      "WHERE qb.organization_id = ? AND qb.status = 'published' AND sj.code = ? LIMIT 1",
+                      (org_id, k)).fetchone():
+            return k
+    return (ogretmenli or sira)[0]
+
+
+def _soru_oner(db, org_id, ders, kazanimlar, adet):
+    """Mevcut soru havuzundan oneri: once zayif kazanimlara etiketli yayinlanmis
+    sorular (kazanim kodu, ör. 'M.8.1.3 - ...'), sonra mevcut 'otomatik' odev
+    modunun secicisiyle (_auto_select_questions) ayni dersten tamamlanir."""
+    subj = db.execute("SELECT id FROM subjects WHERE code = ?", (ders,)).fetchone()
+    if not subj:
+        return None, []
+    secilen = []
+    kodlar = [k.split(" - ")[0].strip() for k in (kazanimlar or []) if k and k != "Etiketsiz"]
+    for kod in kodlar:
+        if len(secilen) >= adet:
+            break
+        for r in db.execute(
+                "SELECT DISTINCT qb.id FROM question_bank qb JOIN question_curriculum_tags t ON t.question_id = qb.id "
+                "JOIN curriculum_nodes n ON n.id = t.curriculum_node_id "
+                "WHERE qb.organization_id = ? AND qb.status = 'published' AND qb.subject_id = ? "
+                "AND (n.code = ? OR n.code LIKE ?) LIMIT ?",
+                (org_id, subj["id"], kod, kod + ".%", adet - len(secilen))).fetchall():
+            if r["id"] not in secilen:
+                secilen.append(r["id"])
+    if len(secilen) < adet:
+        secilen += S._auto_select_questions(db, org_id, subj["id"], None, None, adet - len(secilen),
+                                            exclude_ids=set(secilen))
+    return subj["id"], secilen
+
+
+def _sorular(db, ids):
+    if not ids:
+        return []
+    ph = ",".join("?" * len(ids))
+    rows = {r["id"]: r for r in db.execute(
+        f"SELECT id, display_code, question_text, image_path, difficulty_level FROM question_bank WHERE id IN ({ph})",
+        list(ids)).fetchall()}
+    return [{"id": i, "kod": rows[i]["display_code"], "metin": (rows[i]["question_text"] or "")[:160],
+             "gorsel": bool(rows[i]["image_path"]), "zorluk": rows[i]["difficulty_level"]} for i in ids if i in rows]
+
+
+def aksiyon_plani(db, okul_id, govde, args):
+    """Onizleme ve gonderimin ORTAK hesabi: (plan, hata). plan: tur, anahtar,
+    kod, alicilar, metin, baslik, link, ek (odev taslaklari / veli-ogrenci)."""
+    tur = govde.get("tur")
+    if tur not in AKSIYON_TURLERI:
+        return None, "Geçersiz aksiyon türü."
+    anahtar = str(govde.get("uyariAnahtari") or "")
+    hedef = govde.get("hedef") or {}
+    if anahtar.startswith("KAZANIM_ZAYIF:"):
+        if tur != "odev_oneri":
+            return None, "Bu uyarı için yalnızca ödev önerilebilir."
+        ders = hedef.get("ders")
+        if ders not in K.DERS_AD:
+            return None, "Geçersiz ders."
+        veri = _okul_verisi(db, okul_id, args.get("seviye"))
+        kaz = [str(k)[:300] for k in (hedef.get("kazanimlar") or [])][:5]
+        if hedef.get("kazanim"):
+            kaz = [str(hedef["kazanim"])[:300]] + [k for k in kaz if k != hedef["kazanim"]]
+        u = {"kod": "KAZANIM_ZAYIF", "anahtar": anahtar[:400], "baslik": f"{K.DERS_AD[ders]}: zayıf kazanım",
+             "detay": "; ".join(kaz[:3]), "hedef": {"sube": hedef.get("sube"), "ders": ders}}
+        subeler = [hedef["sube"]] if hedef.get("sube") else sorted({s["class_name"] for s in veri["kayitli"]})
+        cur = None
+    else:
+        u, veri, donem, cur, katilim = _uyari_bul(db, okul_id, anahtar, args)
+        if not u:
+            return None, "Uyarı artık geçerli değil (veri ya da dönem değişmiş olabilir). Kokpiti yenileyin."
+        if u["aksiyon"]["tur"] != tur:
+            return None, "Bu uyarı için bu aksiyon kullanılamaz."
+        subeler = [u["hedef"]["sube"]] if u["hedef"].get("sube") else []
+        kaz = []
+    okul_ad = _okul_adi(db, okul_id)
+    plan = {"tur": tur, "anahtar": u["anahtar"], "kod": u["kod"], "hedef": u["hedef"], "uyari": u,
+            "alicilar": [], "not": None, "ek": {}}
+
+    if tur == "ogretmen_bildirim":
+        sube = u["hedef"]["sube"]
+        dersler = [u["hedef"]["ders"]] if u["hedef"].get("ders") else \
+            [x["ders"] for x in (u.get("veri") or {}).get("dersler", [])]
+        alicilar, not_ = _sube_ogretmenleri(db, okul_id, sube, dersler or None)
+        plan["alicilar"] = [_alici(t, ", ".join(filter(None, [t["subject"] or "",
+                                                              "sınıf öğretmeni" if t["homeroom_class_name"] == sube else ""])))
+                            for t in alicilar]
+        plan["not"] = not_
+        plan["baslik"] = f"Okul Kokpiti: {u['baslik']}"
+        plan["metin"] = (f"{u['baslik']}. {u['detay']}\n\nOkul yönetimi bu durumu birlikte değerlendirmek istiyor. "
+                         f"Sınıf ayrıntıları için öğretmen panelinizdeki Sınıflarım ekranına bakabilirsiniz.")
+        plan["link"] = "/ogretmen.html"
+    elif tur == "odev_oneri":
+        adet = govde.get("soruSayisi") or ODEV_VARSAYILAN_SORU
+        try:
+            adet = max(1, min(40, int(adet)))
+        except (TypeError, ValueError):
+            adet = ODEV_VARSAYILAN_SORU
+        ders = u["hedef"].get("ders") or _odev_dersi(db, okul_id, cur, subeler[0] if subeler else None)
+        if not ders:
+            return None, "Ödev için ders belirlenemedi."
+        taslaklar, alicilar = [], []
+        subject_id, soru_ids = _soru_oner(db, okul_id, ders, kaz, adet)
+        for sube in subeler:
+            ogr, _ = _sube_ogretmenleri(db, okul_id, sube, [ders])
+            ders_ogr = [t for t in ogr if S.branch_subject_key(t["subject"]) == ders]
+            if not ders_ogr:
+                # dersin ogretmeni yoksa sinif ogretmenine (o da yoksa subeye giren ilk ogretmene)
+                ders_ogr = [t for t in ogr if t["homeroom_class_name"] == sube] or ogr[:1]
+                if ders_ogr:
+                    plan["not"] = f"{sube} şubesinde {K.DERS_AD[ders]} öğretmeni tanımlı değil; taslak {ders_ogr[0]['display_name']} adlı öğretmene gidecek."
+            if not ders_ogr:
+                continue
+            t = ders_ogr[0]
+            alicilar.append(_alici(t, f"{sube} · {K.DERS_AD[ders]}"))
+            taslaklar.append({"ogretmen": t["id"], "sube": sube})
+        if not alicilar:
+            return None, "İlgili şube(ler)de bu dersin öğretmeni bulunamadı; önce öğretmen branş/sınıf atamasını yapın."
+        plan["alicilar"] = alicilar
+        plan["ek"] = {"ders": ders, "dersAd": K.DERS_AD[ders], "subjectId": subject_id, "soruSayisi": adet,
+                      "soruIds": soru_ids, "sorular": _sorular(db, soru_ids), "taslaklar": taslaklar,
+                      "kazanimlar": kaz, "mod": "auto"}
+        if len(soru_ids) < adet and not plan["not"]:
+            plan["not"] = (f"Soru havuzunda bu derste yalnızca {len(soru_ids)} yayınlanmış soru bulundu. "
+                           "Öğretmen taslağı yayınlarken akıllı modu seçebilir.")
+        plan["baslik"] = f"Taslak ödev önerisi: {K.DERS_AD[ders]}"
+        plan["metin"] = (f"{u['baslik']}. Okul yönetimi {K.DERS_AD[ders]} dersi için {adet} soruluk bir ödev öneriyor"
+                         + (f" (kazanımlar: {', '.join(kaz[:3])})" if kaz else "")
+                         + ". Taslağı inceleyip uygun görürseniz yayınlayabilirsiniz; öğrencilere siz yayınlayınca gider.")
+        plan["link"] = None  # taslak id'si gonderimde belli olur
+    else:  # veli_bildirim
+        exam_id = u["hedef"].get("denemeId")
+        girenler = {sid for e, sid, _ in veri["katilim"] if e == exam_id}
+        girmeyen = [s for s in veri["kayitli"] if s["id"] not in girenler]
+        dn = next((d for d in veri["denemeler"] if d["exam_id"] == exam_id), None)
+        veliler = {}
+        ids = [s["id"] for s in girmeyen]
+        if ids:
+            ph = ",".join("?" * len(ids))
+            for r in db.execute(
+                    f"SELECT ps.student_id, u.id uid, u.display_name, u.username FROM parent_students ps "
+                    f"JOIN users u ON u.id = ps.parent_user_id WHERE ps.student_id IN ({ph}) AND u.role = 'parent' "
+                    f"AND u.active = 1", ids).fetchall():
+                v = veliler.setdefault(r["uid"], {"id": r["uid"], "ad": r["display_name"] or r["username"], "ogr": []})
+                v["ogr"].append(r["student_id"])
+        ad = {s["id"]: _ogr_ad(s) for s in girmeyen}
+        plan["alicilar"] = [{"id": v["id"], "ad": v["ad"], "aciklama": ", ".join(ad[x] for x in v["ogr"])}
+                            for v in sorted(veliler.values(), key=lambda v: v["ad"] or "")]
+        velili = {x for v in veliler.values() for x in v["ogr"]}
+        plan["ek"] = {"ogrenciSayisi": len(girmeyen), "velisiOlmayan": len([s for s in girmeyen if s["id"] not in velili]),
+                      "deneme": dn["ad"] if dn else None, "tarih": dn["tarih"] if dn else None,
+                      "veliOgrenci": {str(v["id"]): v["ogr"] for v in veliler.values()}, "ogrAd": {str(k): v for k, v in ad.items()}}
+        if plan["ek"]["velisiOlmayan"]:
+            plan["not"] = f"{plan['ek']['velisiOlmayan']} öğrencinin sisteme bağlı velisi yok; onlara bildirim gitmeyecek."
+        plan["baslik"] = f"{okul_ad}: deneme katılımı"
+        plan["metin"] = (f"Sayın veli, çocuğunuz okulumuzda {K._kisa_tarih(dn['tarih']) if dn else ''} tarihinde yapılan "
+                         f"{dn['ad'] if dn else 'son'} denemesine katılmadı. Düzenli deneme katılımı LGS hazırlığında "
+                         f"önemlidir; bir sonraki denemeye katılımını rica ederiz.")
+        plan["link"] = "/veli.html"
+    if not plan["alicilar"]:
+        return None, plan.get("not") or "Bu aksiyon için alıcı bulunamadı."
+    return plan, None
+
+
+def _onceki_aksiyon(db, okul_id, anahtar):
+    r = db.execute("SELECT tur, created_at, alici_sayisi FROM kokpit_aksiyonlar WHERE organization_id = ? "
+                   "AND uyari_anahtari = ? ORDER BY id DESC LIMIT 1", (okul_id, anahtar)).fetchone()
+    return {"tur": r["tur"], "tarih": r["created_at"], "aliciSayisi": r["alici_sayisi"]} if r else None
+
+
+def _bildirim_ekle(db, user_id, okul_id, baslik, metin, link):
+    db.execute("INSERT INTO notifications (user_id, type, title, message, is_read, created_at, link, organization_id, kaynak) "
+               "VALUES (?,?,?,?,0,?,?,?,'kokpit')",
+               (user_id, "kokpit", baslik[:200], metin, datetime.now().isoformat(timespec="seconds"), link, okul_id))
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/aksiyonlar", methods=["GET", "POST"])
+@_korumali(aksiyon=True)
+def api_aksiyonlar(db, okul_id, kapsam):
+    if request.method == "GET":
+        rows = db.execute(
+            "SELECT a.*, u.display_name FROM kokpit_aksiyonlar a LEFT JOIN users u ON u.id = a.user_id "
+            "WHERE a.organization_id = ? ORDER BY a.id DESC LIMIT 100", (okul_id,)).fetchall()
+        return jsonify({"aksiyonlar": [{
+            "id": r["id"], "tur": r["tur"], "uyariKodu": r["uyari_kodu"], "uyariAnahtari": r["uyari_anahtari"],
+            "hedef": json.loads(r["hedef_json"] or "{}"), "metin": r["metin"], "aliciSayisi": r["alici_sayisi"],
+            "gonderen": r["display_name"], "tarih": r["created_at"], "sonuc": json.loads(r["sonuc_json"] or "{}"),
+        } for r in rows]})
+    if kapsam not in ("platform", "okul"):
+        return jsonify({"error": "Aksiyon alma yetkiniz yok."}), 403
+    govde = request.get_json(silent=True) or {}
+    filtre = govde.get("filtreler") or {}
+    plan, hata = aksiyon_plani(db, okul_id, govde, filtre)
+    if hata:
+        return jsonify({"error": hata}), 400
+    alici_ids = [a["id"] for a in plan["alicilar"]]
+    onizleme = request.args.get("onizleme") in ("1", "true") or govde.get("onizleme")
+    if onizleme:
+        return jsonify({
+            "onizleme": True, "tur": plan["tur"], "uyariAnahtari": plan["anahtar"], "uyari": {
+                "kod": plan["kod"], "baslik": plan["uyari"]["baslik"], "detay": plan["uyari"].get("detay")},
+            "alicilar": plan["alicilar"], "aliciSayisi": len(alici_ids), "baslik": plan["baslik"],
+            "metin": plan["metin"], "not": plan["not"], "ek": {k: v for k, v in plan["ek"].items()
+                                                               if k not in ("veliOgrenci", "ogrAd")},
+            "oncekiAksiyon": _onceki_aksiyon(db, okul_id, plan["anahtar"]),
+            "onayKodu": _onay_kodu(okul_id, plan["tur"], plan["anahtar"], alici_ids),
+        })
+    if not govde.get("onay"):
+        return jsonify({"error": "Gönderim için açık onay gerekli."}), 400
+    hata = _onay_dogrula(govde.get("onayKodu"), okul_id, plan["tur"], plan["anahtar"], alici_ids)
+    if hata:
+        return jsonify({"error": hata, "yenidenOnizle": True}), 409
+    metin = str(govde.get("metin") or plan["metin"]).strip()[:4000]
+    if not metin:
+        return jsonify({"error": "Mesaj metni boş olamaz."}), 400
+    simdi = datetime.now().isoformat(timespec="seconds")
+    sonuc = {}
+    cur = db.execute(
+        "INSERT INTO kokpit_aksiyonlar (organization_id, user_id, tur, uyari_kodu, uyari_anahtari, hedef_json, metin, "
+        "alici_json, alici_sayisi, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (okul_id, session["user_id"], plan["tur"], plan["kod"], plan["anahtar"],
+         json.dumps(plan["hedef"], ensure_ascii=False), metin,
+         json.dumps(plan["alicilar"], ensure_ascii=False), len(alici_ids), simdi))
+    aksiyon_id = cur.lastrowid
+    if plan["tur"] == "ogretmen_bildirim":
+        for uid in alici_ids:
+            _bildirim_ekle(db, uid, okul_id, plan["baslik"], metin, plan["link"])
+    elif plan["tur"] == "odev_oneri":
+        ek = plan["ek"]
+        taslak_ids = []
+        for t in ek["taslaklar"]:
+            c2 = db.execute(
+                "INSERT INTO kokpit_odev_taslaklari (organization_id, teacher_id, class_name, subject, title, description, "
+                "mode, question_ids_json, question_count, kazanimlar_json, status, aksiyon_id, created_by, created_at, "
+                "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?, 'taslak', ?,?,?,?)",
+                (okul_id, t["ogretmen"], t["sube"], ek["ders"], f"{ek['dersAd']} tekrar ödevi ({t['sube']})", metin,
+                 ek["mod"], json.dumps(ek["soruIds"]), ek["soruSayisi"], json.dumps(ek["kazanimlar"], ensure_ascii=False),
+                 aksiyon_id, session["user_id"], simdi, simdi))
+            taslak_ids.append(c2.lastrowid)
+            _bildirim_ekle(db, t["ogretmen"], okul_id, plan["baslik"], metin, f"/bildirimler.html?taslak={c2.lastrowid}")
+        sonuc["taslaklar"] = taslak_ids
+    else:
+        ek = plan["ek"]
+        for uid in alici_ids:
+            cocuklar = [ek["ogrAd"].get(str(s), "") for s in ek["veliOgrenci"].get(str(uid), [])]
+            _bildirim_ekle(db, uid, okul_id, plan["baslik"],
+                           metin + (f"\n\nÖğrenci: {', '.join(cocuklar)}" if cocuklar else ""), plan["link"])
+    db.execute("UPDATE kokpit_aksiyonlar SET sonuc_json = ? WHERE id = ?", (json.dumps(sonuc), aksiyon_id))
+    db.commit()
+    S.log_audit(db, f"KOKPIT_AKSIYON_{plan['tur'].upper()}", resource_type="kokpit_aksiyon", resource_id=aksiyon_id)
+    return jsonify({"ok": True, "id": aksiyon_id, "aliciSayisi": len(alici_ids), "tarih": simdi, "sonuc": sonuc})
+
+
+# ================================================================ bildirimler + taslak odevler (alici tarafi)
+@bp.route("/bildirimler.html")
+def bildirimler_sayfasi():
+    if "user_id" not in session:
+        return redirect("/login.html")
+    return S._safe_send("bildirimler.html")
+
+
+@bp.route("/api/bildirimler")
+def api_bildirimler():
+    if "user_id" not in session:
+        return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
+    db = S.get_db()
+    rows = db.execute("SELECT id, type, title, message, is_read, created_at, link FROM notifications "
+                      "WHERE user_id = ? ORDER BY id DESC LIMIT 50", (session["user_id"],)).fetchall()
+    return jsonify({"bildirimler": [{"id": r["id"], "baslik": r["title"], "metin": r["message"],
+                                     "okundu": bool(r["is_read"]), "tarih": r["created_at"], "link": r["link"]}
+                                    for r in rows],
+                    "okunmamis": sum(1 for r in rows if not r["is_read"]), "rol": session.get("role")})
+
+
+@bp.route("/api/bildirimler/<int:bid>/okundu", methods=["POST"])
+def api_bildirim_okundu(bid):
+    if "user_id" not in session:
+        return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
+    db = S.get_db()
+    db.execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?", (bid, session["user_id"]))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+def _taslak_json(db, r, detay=False):
+    out = {"id": r["id"], "sube": r["class_name"], "ders": r["subject"], "dersAd": K.DERS_AD.get(r["subject"], r["subject"]),
+           "baslik": r["title"], "aciklama": r["description"], "mod": r["mode"], "durum": r["status"],
+           "soruSayisi": r["question_count"], "kazanimlar": json.loads(r["kazanimlar_json"] or "[]"),
+           "odevId": r["assignment_id"], "tarih": r["created_at"]}
+    if detay:
+        ids = json.loads(r["question_ids_json"] or "[]")
+        out["sorular"] = _sorular(db, ids)
+        subj = db.execute("SELECT id FROM subjects WHERE code = ?", (r["subject"],)).fetchone()
+        out["subjectId"] = subj["id"] if subj else None
+    return out
+
+
+@bp.route("/api/kokpit/taslaklar")
+def api_taslaklar():
+    if session.get("role") != "teacher":
+        return jsonify({"taslaklar": []})
+    db = S.get_db()
+    rows = db.execute("SELECT * FROM kokpit_odev_taslaklari WHERE teacher_id = ? ORDER BY id DESC LIMIT 50",
+                      (session["user_id"],)).fetchall()
+    return jsonify({"taslaklar": [_taslak_json(db, r) for r in rows]})
+
+
+def _taslak_sahibi(db, tid):
+    r = db.execute("SELECT * FROM kokpit_odev_taslaklari WHERE id = ?", (tid,)).fetchone()
+    if not r or session.get("role") != "teacher" or r["teacher_id"] != session.get("user_id"):
+        return None
+    return r
+
+
+@bp.route("/api/kokpit/taslaklar/<int:tid>")
+def api_taslak(tid):
+    if "user_id" not in session:
+        return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
+    db = S.get_db()
+    r = _taslak_sahibi(db, tid)
+    if not r:
+        return jsonify({"error": "Taslak bulunamadı ya da size ait değil."}), 404
+    return jsonify(_taslak_json(db, r, detay=True))
+
+
+@bp.route("/api/kokpit/taslaklar/<int:tid>/durum", methods=["POST"])
+def api_taslak_durum(tid):
+    """Ogretmen taslagi yayinladiginda (odev mevcut POST /api/teacher/assignments
+    ile olusturulduktan sonra) ya da reddettiginde taslagin durumunu isler."""
+    if "user_id" not in session:
+        return jsonify({"error": "Giriş yapmanız gerekiyor."}), 401
+    db = S.get_db()
+    r = _taslak_sahibi(db, tid)
+    if not r:
+        return jsonify({"error": "Taslak bulunamadı ya da size ait değil."}), 404
+    if r["status"] != "taslak":
+        return jsonify({"error": "Bu taslak zaten işlendi."}), 409
+    g = request.get_json(silent=True) or {}
+    durum = g.get("durum")
+    odev_id = None
+    if durum == "yayinlandi":
+        odev_id = g.get("odevId")
+        ok = db.execute("SELECT 1 FROM assignments WHERE id = ? AND teacher_id = ? AND organization_id = ?",
+                        (odev_id, session["user_id"], r["organization_id"])).fetchone()
+        if not ok:
+            return jsonify({"error": "Yayınlanan ödev bulunamadı."}), 400
+    elif durum != "reddedildi":
+        return jsonify({"error": "Geçersiz durum."}), 400
+    db.execute("UPDATE kokpit_odev_taslaklari SET status = ?, assignment_id = ?, updated_at = ? WHERE id = ?",
+               (durum, odev_id, datetime.now().isoformat(timespec="seconds"), tid))
+    db.commit()
+    return jsonify({"ok": True})
