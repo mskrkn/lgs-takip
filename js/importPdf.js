@@ -89,6 +89,7 @@ const ImportPDF = {
       document.getElementById('pdf-processing').style.display = '';
       document.getElementById('pdf-preview-section').style.display = 'none';
 
+      await Kutuphane.yukle('pdf');
       const buffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
 
@@ -574,7 +575,8 @@ const ImportPDF = {
   },
 
   // ---- Download extracted PDF data as clean Excel file ----
-  downloadPDFAsExcel() {
+  async downloadPDFAsExcel() {
+    if (!(await Kutuphane.dene('xlsx'))) return;
     if (!this.parsedData || this.parsedData.length === 0) {
       UI.toast('İndirilecek veri bulunamadı', 'warning');
       return;

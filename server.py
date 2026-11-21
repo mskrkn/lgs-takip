@@ -4854,6 +4854,13 @@ def api_admin_snapshot():
     org_id = _current_org_id(db)
     if org_id is None:
         return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+    # Panel hizlandirma: tarayici elindeki surumu soyler; veri o surumden beri
+    # degismediyse tum veri yeniden gonderilmez. Surum, veri okunmadan ONCE
+    # alinir: okuma sirasinda bir yazma olursa tarayici bir sonraki acilista
+    # yine tam veri alir (eksik degil, fazla indirme yonunde hata).
+    surum = kokpit.veri_surumu(db, org_id)
+    if request.args.get("surum") == str(surum):
+        return jsonify({"organizationId": org_id, "degismedi": True, "surum": surum})
     offset = (int(org_id) - 1) * ORG_ID_BLOCK_SIZE
     cid = lambda server_id: (int(server_id) - offset) if server_id is not None else None
 
@@ -4887,7 +4894,7 @@ def api_admin_snapshot():
         "organizationId": org_id,
         "students": students, "exams": exams, "results": results,
         "counts": {"students": len(students), "exams": len(exams), "results": len(results)},
-        "generatedAt": datetime.now().isoformat(),
+        "generatedAt": datetime.now().isoformat(), "surum": surum,
     })
 
 

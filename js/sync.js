@@ -60,6 +60,8 @@ const SyncModule = {
 
   // Connect to Firebase Firestore
   async connectFirebase(config, showToasts = true) {
+    // Firebase artik panelle birlikte yuklenmiyor (hizlandirma) - yalnizca burada
+    if (window.Kutuphane && !(await Kutuphane.dene('firebase'))) return { success: false };
     try {
       this.status = 'connecting';
       this.updateStatus();
