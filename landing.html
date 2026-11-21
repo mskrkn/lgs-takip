@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
-  <meta name="description" content="🧭 EduPusula - Başarının Yönünü Keşfet. Öğrenci deneme sonuçlarını analiz edin, gelişimi takip edin ve doğru hedeflere ilerleyin.">
+  <meta name="description" content="EduPusula deneme sonuçlarını kazanım düzeyinde analiz eder; yönetici, öğretmen, veli ve öğrenciye gelişimi tek platformda gösterir.">
   <title>🧭 EduPusula - Başarının Yönünü Keşfet</title>
 
   <!-- PWA & Mobile Meta Tags -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0F172A">
+  <meta name="theme-color" content="#0B1530">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,672 +20,325 @@
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- Landing CSS -->
-  <link rel="stylesheet" href="css/landing.css">
   <link rel="stylesheet" href="css/platform.css">
   <script src="js/pwa.js" defer></script>
+  <style>
+:root {
+  --primary-blue: #2563EB; --primary-teal: #14B8A6; --bg-white: #FFFFFF; --bg-light: #F8FAFC;
+  --text-dark: #1E293B; --text-muted: #64748B; --radius-sm: 8px; --radius-lg: 16px; --radius-xl: 20px;
+}
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #FFFFFF; }
+.lp-root { font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif; }
+
+/* ===== Yeni giris sayfasi (tasarim: EduPusula - Yeni Giris Sayfasi) ===== */
+/* EduPusula — yeni giriş sayfası stilleri */
+
+.lp-root {
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+.lp-root h1,
+.lp-root h2,
+.lp-root h3 {
+  margin: 0;
+  font-family: inherit;
+}
+.lp-root p {
+  margin: 0;
+}
+
+.lp-wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 28px;
+  box-sizing: border-box;
+}
+.lp-navlinks a {
+  color: #e2e8f0;
+  text-decoration: none;
+}
+.lp-navlinks a:hover {
+  color: #ffffff;
+}
+.lp-btn {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.lp-btn:hover {
+  transform: translateY(-1px);
+}
+.lp-vis {
+  container-type: inline-size;
+}
+@media (max-width: 900px) {
+  .lp-navlinks {
+    display: none !important;
+  }
+}
+.lp-navbtns a {
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .lp-navbtns {
+    gap: 8px !important;
+  }
+  .lp-navbtns a {
+    font-size: 13px !important;
+    padding: 9px 13px !important;
+  }
+  .lp-hideSm {
+    display: none !important;
+  }
+}
+
+/* ---------- Animasyonlar ---------- */
+@keyframes inUp {
+  from { opacity: 0; translate: 0 32px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes inLeft {
+  from { opacity: 0; translate: -56px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes inRight {
+  from { opacity: 0; translate: 56px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+@keyframes inScale {
+  from { opacity: 0; scale: 0.92; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes floatY {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -12px; }
+}
+@keyframes wobble {
+  0%, 100% { transform: rotate(10deg); }
+  50% { transform: rotate(44deg); }
+}
+@keyframes comet {
+  to { stroke-dashoffset: -100; }
+}
+@keyframes glow {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.34; }
+}
+@keyframes grow {
+  from { scale: 1 0; }
+  to { scale: 1 1; }
+}
+@keyframes scan {
+  0% { top: 4%; }
+  50% { top: 94%; }
+  100% { top: 4%; }
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(247, 162, 27, 0.5), 0 12px 30px rgba(0, 0, 0, 0.5); }
+  70%, 100% { box-shadow: 0 0 0 20px rgba(247, 162, 27, 0), 0 12px 30px rgba(0, 0, 0, 0.5); }
+}
+@keyframes parallax {
+  to { translate: 0 110px; }
+}
+@keyframes sun {
+  0%, 100% { opacity: 0.08; }
+  50% { opacity: 0.2; }
+}
+
+.lp-hero-in { animation: inUp 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.lp-d1 { animation-delay: 0.1s; }
+.lp-d2 { animation-delay: 0.25s; }
+.lp-d3 { animation-delay: 0.4s; }
+.lp-d4 { animation-delay: 0.55s; }
+.lp-hero-vis { animation: inScale 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) 0.35s both; }
+.lp-float-a { animation: floatY 7s ease-in-out infinite; }
+.lp-float-b { animation: floatY 5.5s ease-in-out -2s infinite; }
+.lp-float-c { animation: floatY 6.5s ease-in-out -1s infinite; }
+.lp-needle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wobble 6s ease-in-out infinite;
+}
+.lp-comet { animation: comet 7s linear infinite; }
+.lp-glow { animation: glow 4s ease-in-out infinite; }
+.lp-bar {
+  transform-origin: 50% 100%;
+  animation: grow 1s cubic-bezier(0.2, 0.7, 0.2, 1) 0.9s both;
+}
+.lp-bar2 { animation-delay: 1.05s; }
+.lp-scan { animation: scan 3.2s ease-in-out infinite; }
+.lp-pulse { animation: pulse 2.4s ease-out infinite; }
+.lp-sun { animation: sun 5s ease-in-out infinite; }
+
+.lp-card { transition: transform 0.3s ease, box-shadow 0.3s ease; }
+.lp-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 22px 44px rgba(15, 23, 42, 0.12);
+}
+.lp-card img {
+  transition: transform 0.5s ease;
+  transform-origin: 50% 100%;
+}
+.lp-card:hover img { transform: scale(1.05); }
+
+/* Kaydırmaya bağlı bölüm geçişleri (desteklemeyen tarayıcıda içerik normal görünür) */
+@supports (animation-timeline: view()) {
+  .lp-reveal {
+    animation: inUp linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 60%;
+  }
+  .lp-reveal-l {
+    animation: inLeft linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 60%;
+  }
+  .lp-reveal-r {
+    animation: inRight linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 60%;
+  }
+  .lp-reveal-scale {
+    animation: inScale linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 70%;
+  }
+  .lp-reveal.s2 { animation-range: entry 10% entry 75%; }
+  .lp-reveal.s3 { animation-range: entry 20% entry 90%; }
+  .lp-parallax {
+    animation: parallax linear both;
+    animation-timeline: scroll();
+    animation-range: 0 900px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-root *,
+  .lp-root *::before,
+  .lp-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+
+/* ===== Giris penceresi (eski landing.css'ten tasindi) ===== */
+.btn-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  padding: .75rem 1.5rem; border: none; border-radius: var(--radius-lg);
+  font: 600 1rem "Plus Jakarta Sans", system-ui, sans-serif; cursor: pointer;
+  background: #F7A21B; color: #0B1530; transition: transform .15s ease;
+}
+.btn-primary:hover { transform: translateY(-1px); }
+.btn-primary:disabled { opacity: .7; cursor: wait; }
+.login-modal, .login-modal input, .login-modal button { font-family: "Plus Jakarta Sans", system-ui, sans-serif; }
+.login-modal, .login-modal * { box-sizing: border-box; }
+/* ---- GİRİŞ MODALI ---- */
+.login-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-modal-overlay.active {
+  display: flex;
+}
+
+.login-modal {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-white);
+  border-radius: var(--radius-xl);
+  padding: 36px 30px;
+  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.35);
+}
+
+.login-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-light);
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.login-modal-header {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.login-modal-icon {
+  font-size: 36px;
+}
+
+.login-modal-header h2 {
+  font-size: 19px;
+  margin: 8px 0 4px;
+}
+
+.login-modal-header p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+#login-form label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 14px 0 6px;
+  color: var(--text-dark);
+}
+
+#login-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #E2E8F0;
+  font-size: 16px;
+  outline: none;
+  font-family: inherit;
+}
+
+#login-form input:focus {
+  border-color: var(--primary-blue);
+}
+
+.login-error {
+  display: none;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #B91C1C;
+  font-size: 13px;
+}
+
+.login-hint {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+  </style>
 </head>
 <body>
-  <!-- ========== NAVBAR ========== -->
-  <nav class="navbar">
-    <div class="navbar-container">
-      <!-- Logo -->
-      <div class="navbar-logo">
-        <div class="navbar-logo-icon">🧭</div>
-        <div class="navbar-logo-text">
-          <span class="navbar-logo-main">EduPusula</span>
-        </div>
-      </div>
-
-      <!-- Menu Buton (Mobile) -->
-      <button class="navbar-toggle" id="navbar-toggle">
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
-
-      <!-- Menü -->
-      <ul class="navbar-menu" id="navbar-menu">
-        <li><a href="#home" class="navbar-link">Ana Sayfa</a></li>
-        <li><a href="#how-works" class="navbar-link">Nasıl Çalışır?</a></li>
-        <li><a href="#features" class="navbar-link">Özellikler</a></li>
-        <li><a href="#audience" class="navbar-link">Kimler İçin?</a></li>
-      </ul>
-
-      <!-- Butonlar -->
-      <div class="navbar-actions">
-        <a href="#login" class="btn-secondary" data-login-trigger>Giriş Yap</a>
-        <a href="#hero" class="btn-primary">🚀 EduPusula'yı Keşfet</a>
-      </div>
-    </div>
-  </nav>
-
-  <!-- ========== HERO SECTION ========== -->
-  <section class="hero" id="hero">
-    <div class="hero-container">
-      <!-- Sol Taraf -->
-      <div class="hero-content">
-        <div class="hero-badge">
-          🧭 Eğitimde Akıllı Analiz
-        </div>
-
-        <h1 class="hero-title">
-          Başarının <span class="hero-accent">Yönünü Keşfet</span>
-        </h1>
-
-        <p class="hero-description">
-          EduPusula, deneme sonuçlarını anlamlı analizlere dönüştürerek öğrencilerin gelişimini takip etmenize ve doğru hedeflere yönelmenize yardımcı olur.
-        </p>
-
-        <div class="hero-buttons">
-          <a href="#" class="btn-primary btn-lg">🚀 EduPusula'yı Keşfet</a>
-          <a href="#how-works" class="btn-secondary btn-lg">▶ Nasıl Çalışır?</a>
-        </div>
-
-        <div class="hero-stats">
-          <div>
-            <div class="hero-stat-value">LGS · TYT · AYT</div>
-            <div class="hero-stat-label">Tüm sınav türleri</div>
-          </div>
-          <div>
-            <div class="hero-stat-value">4 Rol</div>
-            <div class="hero-stat-label">Admin, Öğretmen, Veli, Öğrenci</div>
-          </div>
-          <div>
-            <div class="hero-stat-value">Anlık</div>
-            <div class="hero-stat-label">Gerçek zamanlı senkronizasyon</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Sağ Taraf - Dashboard Preview -->
-      <div class="hero-preview">
-        <div class="dashboard-card">
-          <div class="dashboard-header">
-            <div class="dashboard-title">📊 Genel Gelişim</div>
-            <div class="dashboard-value">+4.2 Net</div>
-          </div>
-
-          <div class="dashboard-chart">
-            <div class="chart-bar" style="height: 40%;"></div>
-            <div class="chart-bar" style="height: 55%;"></div>
-            <div class="chart-bar" style="height: 72%;"></div>
-            <div class="chart-bar" style="height: 85%;"></div>
-          </div>
-
-          <div class="dashboard-subjects">
-            <div class="subject-item">
-              <span class="subject-name">Matematik</span>
-              <div class="subject-bar">
-                <div class="subject-progress" style="width: 85%;"></div>
-              </div>
-            </div>
-            <div class="subject-item">
-              <span class="subject-name">Türkçe</span>
-              <div class="subject-bar">
-                <div class="subject-progress" style="width: 72%;"></div>
-              </div>
-            </div>
-            <div class="subject-item">
-              <span class="subject-name">Fen Bilimleri</span>
-              <div class="subject-bar">
-                <div class="subject-progress" style="width: 68%;"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="dashboard-compass">
-            <div class="compass-label">🧭 Bugünün Pusulası</div>
-            <div class="compass-content">
-              <div class="compass-item">
-                <span class="compass-icon">📈</span>
-                <span>En çok gelişen: Matematik</span>
-              </div>
-              <div class="compass-item">
-                <span class="compass-icon">🎯</span>
-                <span>Odak noktası: Problemler</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== ÖĞRENCİ YOLCULUĞU ========== -->
-  <section class="student-journey" id="student-journey">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">🚀 Öğrenci Yolculuğu</h2>
-        <p class="section-subtitle">Öğrencinin gelişimini anlatan güçlü bir görünüm</p>
-      </div>
-
-      <div class="journey-container">
-        <!-- Greeting Card -->
-        <div class="journey-greeting">
-          <div class="greeting-wave">👋</div>
-          <h3 class="greeting-text">Merhaba <span class="greeting-name">Ahmet</span>!</h3>
-          <p class="greeting-subtext">Senin bu haftaki gelişimin görmek için heyecanlıyız</p>
-        </div>
-
-        <!-- Weekly Performance Section -->
-        <div class="journey-week-performance">
-          <div class="performance-header">
-            <h4 class="performance-title">🎯 Bu Haftaki Durumun</h4>
-          </div>
-
-          <!-- Overall Progress -->
-          <div class="performance-card overall-card">
-            <div class="card-icon">🟢</div>
-            <div class="card-content">
-              <div class="card-label">Genel Gelişim</div>
-              <div class="card-value">+12%</div>
-              <div class="card-status">Harika İlerleme!</div>
-            </div>
-          </div>
-
-          <!-- Subjects Grid -->
-          <div class="subjects-grid">
-            <!-- Matematik -->
-            <div class="subject-status-card rising">
-              <div class="status-icon">📈</div>
-              <div class="status-subject">Matematik</div>
-              <div class="status-trend">Yükseliyor</div>
-              <div class="status-indicator">
-                <div class="indicator-dot"></div>
-              </div>
-            </div>
-
-            <!-- Türkçe -->
-            <div class="subject-status-card stable">
-              <div class="status-icon">➡️</div>
-              <div class="status-subject">Türkçe</div>
-              <div class="status-trend">Stabil</div>
-              <div class="status-indicator">
-                <div class="indicator-dot"></div>
-              </div>
-            </div>
-
-            <!-- Fen Bilimleri -->
-            <div class="subject-status-card warning">
-              <div class="status-icon">🔴</div>
-              <div class="status-subject">Fen Bilimleri</div>
-              <div class="status-trend">Dikkat Gerekiyor</div>
-              <div class="status-indicator">
-                <div class="indicator-dot"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Action Button -->
-        <div class="journey-action">
-          <a href="#" class="btn-primary btn-lg">📊 Detaylı Analizi Gör</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== KİMLER İÇİN? ========== -->
-  <section class="audience" id="audience">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Kimler İçin?</h2>
-        <p class="section-subtitle">Öğretmen, öğrenci ve veliler için özel deneyim</p>
-      </div>
-
-      <div class="audience-grid">
-        <!-- Öğretmenler -->
-        <div class="audience-card">
-          <div class="audience-icon">🎓</div>
-          <h3 class="audience-title">Öğretmenler İçin</h3>
-          <p class="audience-description">
-            Öğrencilerinizin gelişimini tek ekrandan takip edin, güçlü yönlerini ve gelişim alanlarını keşfedin.
-          </p>
-          <ul class="audience-features">
-            <li>✓ Sınıf Analizi</li>
-            <li>✓ Öğrenci Takibi</li>
-            <li>✓ Gelişim Raporları</li>
-          </ul>
-        </div>
-
-        <!-- Veliler -->
-        <div class="audience-card">
-          <div class="audience-icon">👨‍👩‍👧</div>
-          <h3 class="audience-title">Veliler İçin</h3>
-          <p class="audience-description">
-            Çocuğunuzun akademik gelişimini sade ve anlaşılır şekilde takip edin.
-          </p>
-          <ul class="audience-features">
-            <li>✓ Gelişim Takibi</li>
-            <li>✓ Deneme Sonuçları</li>
-            <li>✓ Anlaşılır Raporlar</li>
-          </ul>
-        </div>
-
-        <!-- Öğrenciler -->
-        <div class="audience-card">
-          <div class="audience-icon">🎓</div>
-          <h3 class="audience-title">Öğrenciler İçin</h3>
-          <p class="audience-description">
-            Gelişimini keşfet, güçlü yönlerini gör ve hedeflerine doğru ilerle.
-          </p>
-          <ul class="audience-features">
-            <li>✓ Kişisel Analiz</li>
-            <li>✓ Gelişim Grafikleri</li>
-            <li>✓ Hedef Takibi</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== NASIL ÇALIŞIR? ========== -->
-  <section class="how-works" id="how-works">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Nasıl Çalışır?</h2>
-        <p class="section-subtitle">4 basit adımda başarı pusulanızı oluşturun</p>
-      </div>
-
-      <div class="stepper-container">
-        <!-- Adım 1 -->
-        <div class="stepper-item">
-          <div class="stepper-number">①</div>
-          <h3 class="stepper-title">Deneme Verilerini Ekle</h3>
-          <p class="stepper-description">📄</p>
-          <p class="stepper-text">Optik form veya deneme verilerini sisteme aktar.</p>
-        </div>
-
-        <div class="stepper-arrow">↓</div>
-
-        <!-- Adım 2 -->
-        <div class="stepper-item">
-          <div class="stepper-number">②</div>
-          <h3 class="stepper-title">EduPusula Analiz Etsin</h3>
-          <p class="stepper-description">📊</p>
-          <p class="stepper-text">Sonuçları ders, öğrenci ve gelişim açısından analiz et.</p>
-        </div>
-
-        <div class="stepper-arrow">↓</div>
-
-        <!-- Adım 3 -->
-        <div class="stepper-item">
-          <div class="stepper-number">③</div>
-          <h3 class="stepper-title">Başarı Pusulanı Gör</h3>
-          <p class="stepper-description">🧭</p>
-          <p class="stepper-text">Güçlü ve gelişmesi gereken alanlarını keşfet.</p>
-        </div>
-
-        <div class="stepper-arrow">↓</div>
-
-        <!-- Adım 4 -->
-        <div class="stepper-item">
-          <div class="stepper-number">④</div>
-          <h3 class="stepper-title">Doğru Yöne İlerle</h3>
-          <p class="stepper-description">🚀</p>
-          <p class="stepper-text">Verilere göre hedeflerine daha bilinçli ilerle.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== BAŞARI PUSULASI ========== -->
-  <section class="compass-section">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">🧭 Başarı Pusulası</h2>
-        <p class="section-subtitle">Her öğrencinin başarı yolculuğu farklıdır</p>
-      </div>
-
-      <!-- Başarı Pusulası -->
-      <div class="success-compass-container">
-        <div class="compass-visualization-large">
-          <svg class="compass-svg-large" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-            <!-- Dış daire -->
-            <circle cx="200" cy="200" r="190" fill="none" stroke="rgba(37, 99, 235, 0.1)" stroke-width="2"/>
-            <circle cx="200" cy="200" r="170" fill="none" stroke="rgba(37, 99, 235, 0.15)" stroke-width="1"/>
-            <circle cx="200" cy="200" r="150" fill="none" stroke="rgba(37, 99, 235, 0.2)" stroke-width="1"/>
-            
-            <!-- Sektör 1: Akademik Başarı (Kuzey) - Mavi -->
-            <path d="M 200 200 L 200 40 A 160 160 0 0 1 313.1 86.9 Z" fill="rgba(59, 130, 246, 0.2)" stroke="rgb(59, 130, 246)" stroke-width="2"/>
-            <circle cx="200" cy="90" r="6" fill="rgb(59, 130, 246)"/>
-            <text x="200" y="60" text-anchor="middle" class="compass-section-emoji" font-size="28">📚</text>
-            <text x="200" y="140" text-anchor="middle" class="compass-label">Akademik</text>
-            <text x="200" y="160" text-anchor="middle" class="compass-value">85%</text>
-            
-            <!-- Sektör 2: Çalışma Disiplini (Doğu) - Kırmızı -->
-            <path d="M 200 200 L 313.1 86.9 A 160 160 0 0 1 360 200 Z" fill="rgba(239, 68, 68, 0.2)" stroke="rgb(239, 68, 68)" stroke-width="2"/>
-            <circle cx="310" cy="120" r="6" fill="rgb(239, 68, 68)"/>
-            <text x="330" y="140" class="compass-section-emoji" font-size="28">🔥</text>
-            <text x="320" y="210" text-anchor="middle" class="compass-label">Disiplin</text>
-            <text x="320" y="230" text-anchor="middle" class="compass-value">72%</text>
-            
-            <!-- Sektör 3: Gelişim Hızı (Güney) - Yeşil -->
-            <path d="M 200 200 L 360 200 A 160 160 0 0 1 86.9 313.1 Z" fill="rgba(34, 197, 94, 0.2)" stroke="rgb(34, 197, 94)" stroke-width="2"/>
-            <circle cx="310" cy="280" r="6" fill="rgb(34, 197, 94)"/>
-            <text x="200" y="340" text-anchor="middle" class="compass-section-emoji" font-size="28">📈</text>
-            <text x="200" y="280" text-anchor="middle" class="compass-label">Gelişim</text>
-            <text x="200" y="300" text-anchor="middle" class="compass-value">92%</text>
-            
-            <!-- Sektör 4: Hedef Yakınlığı (Batı) - Amber -->
-            <path d="M 200 200 L 86.9 313.1 A 160 160 0 0 1 40 200 Z" fill="rgba(245, 158, 11, 0.2)" stroke="rgb(245, 158, 11)" stroke-width="2"/>
-            <circle cx="90" cy="280" r="6" fill="rgb(245, 158, 11)"/>
-            <text x="70" y="140" class="compass-section-emoji" font-size="28">🎯</text>
-            <text x="80" y="210" text-anchor="middle" class="compass-label">Hedef</text>
-            <text x="80" y="230" text-anchor="middle" class="compass-value">78%</text>
-            
-            <!-- İç daireler -->
-            <circle cx="200" cy="200" r="80" fill="none" stroke="rgba(37, 99, 235, 0.3)" stroke-width="1" stroke-dasharray="5,5"/>
-            <circle cx="200" cy="200" r="40" fill="none" stroke="rgba(37, 99, 235, 0.2)" stroke-width="1" stroke-dasharray="5,5"/>
-            
-            <!-- Merkez -->
-            <circle cx="200" cy="200" r="35" fill="rgba(37, 99, 235, 0.1)" stroke="rgb(37, 99, 235)" stroke-width="2"/>
-            <text x="200" y="195" text-anchor="middle" class="compass-center-emoji" font-size="32">🧭</text>
-            <text x="200" y="215" text-anchor="middle" class="compass-center-text">EduPusula</text>
-          </svg>
-        </div>
-
-        <!-- Açıklamalar -->
-        <div class="compass-info-grid">
-          <div class="compass-info-card academic">
-            <div class="info-icon">📚</div>
-            <h4 class="info-title">Akademik Başarı</h4>
-            <p class="info-description">Ders başarısı ve bilgi birikimi</p>
-            <div class="info-value">85%</div>
-          </div>
-
-          <div class="compass-info-card discipline">
-            <div class="info-icon">🔥</div>
-            <h4 class="info-title">Çalışma Disiplini</h4>
-            <p class="info-description">Düzenli çalışma ve sorumluluğu</p>
-            <div class="info-value">72%</div>
-          </div>
-
-          <div class="compass-info-card progress">
-            <div class="info-icon">📈</div>
-            <h4 class="info-title">Gelişim Hızı</h4>
-            <p class="info-description">Son dönemdeki ilerleme hızı</p>
-            <div class="info-value">92%</div>
-          </div>
-
-          <div class="compass-info-card target">
-            <div class="info-icon">🎯</div>
-            <h4 class="info-title">Hedef Yakınlığı</h4>
-            <p class="info-description">Belirlenen hedefe ne kadar yakın</p>
-            <div class="info-value">78%</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== ÖĞRENCİ SAĞLIK RAPORU ========== -->
-  <section class="health-report-section" id="health-report">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">🧠 Öğrenci Sağlık Raporu</h2>
-        <p class="section-subtitle">Klasik notlar yerine kapsamlı bir eğitim sağlık analizi</p>
-      </div>
-
-      <div class="health-report-container">
-        <!-- Rapor Başlığı -->
-        <div class="report-header">
-          <div class="report-student-info">
-            <div class="student-avatar">A</div>
-            <div class="student-details">
-              <h3 class="student-name">Ahmet Yılmaz</h3>
-              <p class="student-meta">LGS 2024 | Hazırlık Dönemi</p>
-            </div>
-          </div>
-          <div class="report-date">
-            <span class="date-label">Rapor Tarihi</span>
-            <span class="date-value">31 Ağustos 2024</span>
-          </div>
-        </div>
-
-        <!-- Status Grid -->
-        <div class="status-grid">
-          <!-- Alan 1: Akademik Performans -->
-          <div class="status-item">
-            <div class="status-icon">📚</div>
-            <div class="status-content">
-              <div class="status-label">Akademik Performans</div>
-              <div class="status-badge good">🟢 İyi</div>
-            </div>
-          </div>
-
-          <!-- Alan 2: Gelişim -->
-          <div class="status-item">
-            <div class="status-icon">📈</div>
-            <div class="status-content">
-              <div class="status-label">Gelişim</div>
-              <div class="status-badge good">🟢 Yükseliyor</div>
-            </div>
-          </div>
-
-          <!-- Alan 3: Düzenlilik -->
-          <div class="status-item">
-            <div class="status-icon">🔁</div>
-            <div class="status-content">
-              <div class="status-label">Düzenlilik</div>
-              <div class="status-badge medium">🟡 Orta</div>
-            </div>
-          </div>
-
-          <!-- Alan 4: Riskli Dersler -->
-          <div class="status-item">
-            <div class="status-icon">⚠️</div>
-            <div class="status-content">
-              <div class="status-label">Riskli Dersler</div>
-              <div class="status-badge danger">🔴 Matematik</div>
-            </div>
-          </div>
-
-          <!-- Alan 5: Hedef Yakınlığı -->
-          <div class="status-item">
-            <div class="status-icon">🎯</div>
-            <div class="status-content">
-              <div class="status-label">Hedef Yakınlığı</div>
-              <div class="status-badge good">🟢 %78</div>
-            </div>
-          </div>
-
-          <!-- Alan 6: Dikkati Gereken Konu -->
-          <div class="status-item">
-            <div class="status-icon">💡</div>
-            <div class="status-content">
-              <div class="status-label">Odaklanması Gereken</div>
-              <div class="status-badge warning">⚡ Problem Çözüm</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- AI Insight -->
-        <div class="ai-insight">
-          <div class="insight-header">
-            <span class="insight-icon">✨</span>
-            <span class="insight-title">Yapay Zekâ Analizi</span>
-          </div>
-          <div class="insight-content">
-            <p>
-              <strong>Ahmet</strong> son 4 denemede istikrarlı bir yükseliş gösteriyor. Matematikte işlem hataları azalırken problem sorularında zaman kaybı devam ediyor. Son denemenin essay sorularında daha başarılı olması, okuma ve anlama becerilerinin kuvvetli olduğunu gösteriyor.
-            </p>
-            <p>
-              <strong>Öneriler:</strong>
-            </p>
-            <ul class="insight-recommendations">
-              <li>Bu hafta <strong>problem çözme çalışmalarına öncelik</strong> verilmesi tavsiye edilir</li>
-              <li>Matematik konuları için <strong>hız antrenmanlarına</strong> yoğunlaşılması gerekir</li>
-              <li>Türkçe başarısı devam etse de, <strong>paragraf sorularında üretim metni</strong> pratiği yapılmalı</li>
-              <li>Genel olarak disiplin artarsa <strong>hedef %85'e çıkacak</strong> gibi görünüyor</li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="report-actions">
-          <a href="#" class="btn-primary">📥 Raporu İndir (PDF)</a>
-          <a href="#" class="btn-secondary">💬 Rehberle Konuş</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== PUSULA ASISTANI ========== -->
-  <section class="assistant-section">
-    <div class="container">
-      <div class="assistant-container">
-        <!-- Sol Taraf - Chat -->
-        <div class="assistant-chat">
-          <div class="chat-header">
-            🧭 Pusula Asistanı
-          </div>
-          <div class="chat-messages">
-            <div class="chat-message ai">
-              <div class="chat-bubble">
-                Son denemelerinde Matematik performansında düzenli bir gelişim görülüyor.
-              </div>
-            </div>
-            <div class="chat-message ai">
-              <div class="chat-bubble">
-                Problemler konusunda biraz daha odaklanmak faydalı olabilir.
-              </div>
-            </div>
-            <div class="chat-message user">
-              <div class="chat-bubble">
-                Peki Türkçe'de ne yapmalıyım?
-              </div>
-            </div>
-            <div class="chat-message ai">
-              <div class="chat-bubble">
-                Türkçe'de anlama sorularında iyiysiniz, ancak yazı hayatı metinlerde çalışmak önemli olacak.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Sağ Taraf - Mesaj -->
-        <div class="assistant-message">
-          <h3 class="assistant-title">Veriyi Anla.</h3>
-          <h3 class="assistant-title">Gelişimini Gör.</h3>
-          <h3 class="assistant-title">Doğru Yöne İlerle.</h3>
-          <p class="assistant-description">
-            Pusula Asistanı, yapay zekâ destekli analiz ve geri bildirim sağlayarak öğrencilerin gerçek potansiyellerini ortaya çıkarır.
-          </p>
-          <a href="#" class="btn-primary">Asistanı Keşfet</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== ÖZELLİKLER ========== -->
-  <section class="features" id="features">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Platform Özellikleri</h2>
-        <p class="section-subtitle">Güçlü araçlar, anlaşılır sonuçlar</p>
-      </div>
-
-      <div class="features-grid">
-        <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <h3 class="feature-title">Akıllı Deneme Analizi</h3>
-          <p class="feature-description">Deneme sonuçlarını detaylı olarak incele ve anlama dönüştür.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">📈</div>
-          <h3 class="feature-title">Gelişim Takibi</h3>
-          <p class="feature-description">Öğrencinin zaman içerisindeki gelişimini grafik ve raporlarla gör.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">🧭</div>
-          <h3 class="feature-title">Başarı Pusulası</h3>
-          <p class="feature-description">Güçlü ve gelişmesi gereken alanları keşfet ve odaklan.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">👥</div>
-          <h3 class="feature-title">Çoklu Kullanıcı Sistemi</h3>
-          <p class="feature-description">Öğretmen, öğrenci ve veli için özel ve güvenli deneyim.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">🤖</div>
-          <h3 class="feature-title">Pusula Asistanı</h3>
-          <p class="feature-description">Yapay zekâ destekli analiz ve kişiselleştirilmiş geri bildirim.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">🔐</div>
-          <h3 class="feature-title">Güvenli Veri Sistemi</h3>
-          <p class="feature-description">Şifrelenmiş veri, role-based erişim, gizlilik garantili.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ========== BÜYÜK CTA ========== -->
-  <section class="cta-section">
-    <div class="cta-container">
-      <h2 class="cta-title">🧭 Başarının Yönünü Keşfetmeye Hazır mısın?</h2>
-      <p class="cta-subtitle">
-        Öğrencilerin gelişimini sadece takip etmeyin. Anlayın.
-      </p>
-      <a href="#" class="btn-primary btn-lg">🚀 EduPusula'yı Keşfet</a>
-    </div>
-  </section>
-
-  <!-- ========== FOOTER ========== -->
-  <footer class="footer">
-    <div class="footer-container">
-      <div class="footer-section">
-        <div class="footer-logo">
-          <div class="footer-logo-icon">🧭</div>
-          <div class="footer-logo-text">
-            <h4>EduPusula</h4>
-            <p>Veriyi Anla. Gelişimi Gör. Doğru Yönü Keşfet.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="footer-section">
-        <h4 class="footer-title">PLATFORM</h4>
-        <ul class="footer-links">
-          <li><a href="#">Özellikler</a></li>
-          <li><a href="#">Nasıl Çalışır?</a></li>
-          <li><a href="#">Kimler İçin?</a></li>
-          <li><a href="#login" data-login-trigger>Giriş Yap</a></li>
-        </ul>
-      </div>
-
-      <div class="footer-section">
-        <h4 class="footer-title">KULLANICILAR</h4>
-        <ul class="footer-links">
-          <li><a href="#">Öğretmenler</a></li>
-          <li><a href="#">Öğrenciler</a></li>
-          <li><a href="#">Veliler</a></li>
-        </ul>
-      </div>
-
-      <div class="footer-section">
-        <h4 class="footer-title">DESTEK</h4>
-        <ul class="footer-links">
-          <li><a href="#">Yardım Merkezi</a></li>
-          <li><a href="#">İletişim</a></li>
-          <li><a href="#">Gizlilik</a></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="footer-bottom">
-      <p>&copy; 2024 EduPusula. Tüm hakları saklıdır.</p>
-    </div>
-  </footer>
+<div class="lp-root"><div style="width:100%;background:#FFFFFF;overflow:hidden"><div style="position:relative;background:radial-gradient(120% 90% at 75% 20%, #16264A 0%, #0B1530 55%, #081022 100%);padding-bottom:120px"><header style="position:relative;z-index:3"><div class="lp-wrap" style="display:flex;align-items:center;justify-content:space-between;gap:24px;height:88px"><a href="#ust" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:#FFFFFF"><svg width="42" height="42" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="#FFFFFF" stroke-width="1.8"></circle><g stroke="#FFFFFF" stroke-width="1.4"><path d="M17 2v3"></path><path d="M17 29v3"></path><path d="M2 17h3"></path><path d="M29 17h3"></path></g><g transform="rotate(40 17 17)"><path d="M17 6 L20.5 17 L13.5 17 Z" fill="#F7A21B"></path><path d="M17 28 L20.5 17 L13.5 17 Z" fill="#3B82F6"></path></g><circle cx="17" cy="17" r="1.8" fill="#FFFFFF"></circle></svg><span style="font-weight:800;font-size:24px;letter-spacing:-0.02em">EduPusula</span></a><nav class="lp-navlinks" aria-label="Ana menü" style="display:flex;gap:34px;font-size:15px;font-weight:600"><a href="#roller" style="display:flex;align-items:center;gap:6px">Neler Sunuyoruz<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></a><a href="#optik" style="display:flex;align-items:center;gap:6px">Çözümler<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></a><a href="#ozellikler" style="display:flex;align-items:center;gap:6px">Kaynaklar<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></a><a href="#alt" style="display:flex;align-items:center;gap:6px">Hakkımızda<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></a></nav><div class="lp-navbtns" style="display:flex;align-items:center;gap:12px"><a class="lp-btn" href="#login" data-login-trigger style="color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:11px 22px;border-radius:999px;border:1.5px solid rgba(255,255,255,0.55)">Giriş Yap</a><a class="lp-btn lp-hideSm" href="#login" data-login-trigger style="background:#F7A21B;color:#0B1530;text-decoration:none;font-size:15px;font-weight:800;padding:12px 22px;border-radius:999px">Hemen Başlayın</a></div></div></header><section id="ust" style="position:relative;padding-top:40px"><div class="lp-wrap" style="position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:48px"><div style="flex:1 1 480px;min-width:0;display:flex;flex-direction:column;gap:28px;position:relative;z-index:2"><h1 class="lp-hero-in lp-d1" style="color:#FFFFFF;font-weight:800;font-size:clamp(40px, 4.8vw, 64px);line-height:1.06;letter-spacing:-0.035em">Her öğrencinin gelişimini görün.<br/><span style="color:#F7A21B">Başarıya giden yolu birlikte belirleyin.</span></h1><p class="lp-hero-in lp-d2" style="color:#E2E8F0;font-size:clamp(17px, 1.45vw, 20px);line-height:1.6;max-width:560px">EduPusula; sınav analizlerini, optik okumayı, öğrenci gelişimini ve kişiselleştirilmiş öğrenme önerilerini tek platformda buluşturur.</p><div class="lp-hero-in lp-d3" style="display:flex;flex-wrap:wrap;gap:14px 0"><div style="display:flex;align-items:center;gap:12px;padding-right:22px;margin-right:22px;border-right:1px solid rgba(226,232,240,0.25)"><svg width="34" height="34" viewBox="0 0 24 24" fill="#F7A21B" aria-hidden="true"><circle cx="9" cy="7" r="3.6"></circle><path d="M2 21c0-4.2 3.1-7.2 7-7.2s7 3 7 7.2Z"></path><rect x="15" y="4" width="7.5" height="5.5" rx="0.8" fill="none" stroke="#F7A21B" stroke-width="1.5"></rect></svg><span style="color:#FFFFFF;font-size:15px;font-weight:600;line-height:1.35">Öğretmen için<br/>Güçlü Analizler</span></div><div style="display:flex;align-items:center;gap:12px;padding-right:22px;margin-right:22px;border-right:1px solid rgba(226,232,240,0.25)"><svg width="36" height="36" viewBox="0 0 24 24" fill="#F7A21B" aria-hidden="true"><path d="M12 3 1 8.5 12 14l9-4.5V16h1.6V8.5Z"></path><path d="M5.5 12.2v4.3c0 1.9 2.9 3.5 6.5 3.5s6.5-1.6 6.5-3.5v-4.3L12 15.5Z"></path></svg><span style="color:#FFFFFF;font-size:15px;font-weight:600;line-height:1.35">Öğrenci için<br/>Kişisel Gelişim</span></div><div style="display:flex;align-items:center;gap:12px"><svg width="38" height="34" viewBox="0 0 28 24" fill="#F7A21B" aria-hidden="true"><circle cx="9" cy="6.5" r="3.6"></circle><circle cx="19.5" cy="7.5" r="3.1"></circle><path d="M1.5 21c0-4.3 3.3-7.4 7.5-7.4s7.5 3.1 7.5 7.4Z"></path><path d="M17.5 21c0-2.4-.8-4.5-2.2-6.1.9-.5 2-.8 3.2-.8 3.7 0 6.5 2.8 6.5 6.9Z"></path></svg><span style="color:#FFFFFF;font-size:15px;font-weight:600;line-height:1.35">Veli için<br/>Şeffaf Takip</span></div></div><div class="lp-hero-in lp-d4" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:6px"><a class="lp-btn" href="#login" data-login-trigger style="background:#F7A21B;color:#0B1530;text-decoration:none;font-size:17px;font-weight:800;padding:17px 30px;border-radius:999px;box-shadow:0 12px 30px rgba(247,162,27,0.3);display:flex;align-items:center;gap:10px">Hemen Başlayın<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a><a class="lp-btn" href="#roller" style="color:#FFFFFF;text-decoration:none;font-size:17px;font-weight:700;padding:17px 28px;border-radius:999px;border:1.5px solid rgba(255,255,255,0.6);display:flex;align-items:center;gap:10px">Ürünleri Keşfet<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg></a></div></div><div class="lp-hero-vis" style="flex:1 1 560px;min-width:0"><div class="lp-vis lp-parallax" style="position:relative;width:100%;max-width:660px;aspect-ratio:620 / 520;margin:0 auto"><svg aria-hidden="true" viewBox="0 0 620 520" style="position:absolute;inset:-6% -10% -6% -14%;width:124%;height:112%;overflow:visible"><g stroke="rgba(203,213,225,0.35)" fill="none" stroke-width="1"><circle cx="400" cy="70" r="70"></circle><circle cx="400" cy="70" r="56" stroke-dasharray="2 5"></circle><path d="M400 -20 V160 M310 70 H490"></path></g><g class="lp-needle" transform="rotate(25 400 70)"><path d="M400 12 L411 70 L389 70 Z" fill="rgba(203,213,225,0.55)"></path><path d="M400 128 L411 70 L389 70 Z" fill="rgba(100,116,139,0.5)"></path></g><circle cx="400" cy="70" r="7" fill="#F7A21B"></circle><ellipse class="lp-glow" cx="330" cy="300" rx="330" ry="150" transform="rotate(-14 330 300)" fill="none" stroke="#F7A21B" stroke-width="10" opacity="0.18"></ellipse><ellipse cx="330" cy="300" rx="330" ry="150" transform="rotate(-14 330 300)" fill="none" stroke="#F7A21B" stroke-width="2.5" opacity="0.9"></ellipse><ellipse class="lp-comet" cx="330" cy="300" rx="330" ry="150" transform="rotate(-14 330 300)" fill="none" stroke="#FFE7B3" stroke-width="5" stroke-linecap="round" pathLength="100" stroke-dasharray="5 95"></ellipse></svg><div class="lp-float-a" style="position:absolute;left:0;top:7%;width:74%;transform:perspective(1400px) rotateY(-10deg) rotateZ(-2deg);transform-origin:left center;display:flex;background:#FFFFFF;border-radius:2.4cqw;overflow:hidden;box-shadow:0 40px 80px rgba(0,0,0,0.45);border:0.6cqw solid #1E2B4A"><div style="width:24%;flex:none;background:#0F1B33;padding:2.4cqw 1.8cqw;display:flex;flex-direction:column;gap:1.6cqw"><div style="display:flex;align-items:center;gap:0.8cqw;color:#FFFFFF;font-size:1.9cqw;font-weight:800;margin-bottom:1cqw"><svg viewBox="0 0 34 34" style="width:2.6cqw;height:2.6cqw" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="#FFFFFF" stroke-width="2.5"></circle><g transform="rotate(40 17 17)"><path d="M17 6 L20.5 17 L13.5 17 Z" fill="#F7A21B"></path><path d="M17 28 L20.5 17 L13.5 17 Z" fill="#3B82F6"></path></g></svg>EduPusula</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;background:rgba(255,255,255,0.10);color:#FFFFFF"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Ana Sayfa</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;color:#94A3B8"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Sınavlar</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;color:#94A3B8"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Raporlar</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;color:#94A3B8"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Soru Havuzu</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;color:#94A3B8"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Ödevler</div><div style="display:flex;align-items:center;gap:0.9cqw;font-size:1.45cqw;font-weight:600;padding:0.9cqw 1cqw;border-radius:0.8cqw;color:#94A3B8"><span style="width:1.3cqw;height:1.3cqw;border-radius:0.3cqw;border:1.5px solid currentColor;box-sizing:border-box"></span>Ayarlar</div></div><div style="flex:1;min-width:0;background:#F4F7FC;padding:2.4cqw;display:flex;flex-direction:column;gap:1.8cqw"><span style="color:#0F172A;font-size:2.4cqw;font-weight:800">Sınıf Analizi</span><div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:1.2cqw"><div style="background:#FFFFFF;border-radius:1.2cqw;padding:1.4cqw;display:flex;flex-direction:column;gap:0.4cqw;box-shadow:0 2px 6px rgba(15,23,42,0.06)"><span style="color:#64748B;font-size:1.25cqw;font-weight:600">Sınıf Ortalaması</span><span style="color:#1D4ED8;font-size:2.8cqw;font-weight:800">72.5</span></div><div style="background:#FFFFFF;border-radius:1.2cqw;padding:1.4cqw;display:flex;flex-direction:column;gap:0.4cqw;box-shadow:0 2px 6px rgba(15,23,42,0.06)"><span style="color:#64748B;font-size:1.25cqw;font-weight:600">Başarı Oranı</span><span style="color:#0F172A;font-size:2.8cqw;font-weight:800">%78</span></div><div style="background:#FFFFFF;border-radius:1.2cqw;padding:1.4cqw;display:flex;flex-direction:column;gap:0.4cqw;box-shadow:0 2px 6px rgba(15,23,42,0.06)"><span style="color:#64748B;font-size:1.25cqw;font-weight:600">Katılım</span><span style="color:#059669;font-size:2.8cqw;font-weight:800">%96</span></div></div><div style="background:#FFFFFF;border-radius:1.2cqw;padding:1.6cqw;box-shadow:0 2px 6px rgba(15,23,42,0.06);display:flex;align-items:flex-end;gap:1.8cqw;height:16cqw;box-sizing:border-box"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:70%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:55%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">Tür</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:52%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:64%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">Mat</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:78%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:60%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">Fen</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:60%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:72%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">Sos</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:85%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:58%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">İng</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.6cqw;height:100%;justify-content:flex-end"><div style="display:flex;align-items:flex-end;gap:0.4cqw;height:100%"><span class="lp-bar" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#2563EB;height:66%"></span><span class="lp-bar lp-bar2" style="width:1.5cqw;border-radius:0.4cqw 0.4cqw 0 0;background:#F7A21B;height:80%"></span></div><span style="color:#94A3B8;font-size:1.1cqw;font-weight:600">Din</span></div></div><div style="height:6cqw"></div></div></div><div class="lp-float-b" style="position:absolute;left:38%;top:40%;width:29%;background:#FFFFFF;border-radius:2cqw;padding:2.2cqw;box-sizing:border-box;box-shadow:0 30px 60px rgba(0,0,0,0.4);display:flex;flex-direction:column;gap:1.4cqw"><span style="color:#0F172A;font-size:2.1cqw;font-weight:800">Başarı Pusulası</span><svg viewBox="0 0 42 42" style="align-self:center;width:15cqw;height:15cqw" role="img" aria-label="Başarı pusulası yüzde 82"><circle cx="21" cy="21" r="15.9" fill="none" stroke="#E2E8F0" stroke-width="4"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#2563EB" stroke-width="4" stroke-dasharray="30 70" stroke-dashoffset="25"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#10B981" stroke-width="4" stroke-dasharray="20 80" stroke-dashoffset="-5"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#F7A21B" stroke-width="4" stroke-dasharray="18 82" stroke-dashoffset="-25"></circle><circle cx="21" cy="21" r="15.9" fill="none" stroke="#38BDF8" stroke-width="4" stroke-dasharray="14 86" stroke-dashoffset="-43"></circle><text x="21" y="24.5" text-anchor="middle" font-size="9.5" font-weight="800" fill="#0F172A">%82</text></svg><div style="display:flex;flex-direction:column;gap:0.5cqw"><span style="color:#0F172A;font-size:1.45cqw;font-weight:800">Güçlü Yönler</span><span style="color:#059669;font-size:1.35cqw;font-weight:600">✓ Sayılar</span><span style="color:#059669;font-size:1.35cqw;font-weight:600">✓ Geometri</span></div><div style="display:flex;flex-direction:column;gap:0.5cqw"><span style="color:#0F172A;font-size:1.45cqw;font-weight:800">Geliştirilmesi Gerekenler</span><span style="color:#B45309;font-size:1.35cqw;font-weight:600">• Problemler</span></div></div><div class="lp-float-c" style="position:absolute;right:0;top:13%;width:31%;background:#0B1530;border:1cqw solid #1E2B4A;border-radius:5cqw;box-shadow:0 30px 70px rgba(0,0,0,0.5);overflow:hidden"><div style="background:#FFFFFF;padding:2.4cqw 2.2cqw 2.6cqw;display:flex;flex-direction:column;gap:1.6cqw"><div style="display:flex;align-items:center;gap:0.9cqw;padding-bottom:1.2cqw;border-bottom:1px solid #E2E8F0"><svg viewBox="0 0 34 34" style="width:2.6cqw;height:2.6cqw" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="#0F172A" stroke-width="2.5"></circle><g transform="rotate(40 17 17)"><path d="M17 6 L20.5 17 L13.5 17 Z" fill="#F7A21B"></path><path d="M17 28 L20.5 17 L13.5 17 Z" fill="#3B82F6"></path></g></svg><span style="color:#0F172A;font-size:1.75cqw;font-weight:800">Pusula Asistanı</span></div><svg viewBox="0 0 48 48" style="align-self:center;width:7.5cqw;height:7.5cqw" aria-hidden="true"><circle cx="24" cy="26" r="21" fill="#E0EBFF"></circle><path d="M24 6v6" stroke="#1E3A8A" stroke-width="2.5" stroke-linecap="round"></path><circle cx="24" cy="5.5" r="2.5" fill="#F7A21B"></circle><rect x="10" y="13" width="28" height="22" rx="8" fill="#1E3A8A"></rect><rect x="14" y="17" width="20" height="13" rx="5" fill="#0B1530"></rect><circle cx="19.5" cy="23.5" r="2.6" fill="#7DD3FC"></circle><circle cx="28.5" cy="23.5" r="2.6" fill="#7DD3FC"></circle><rect x="6" y="20" width="4" height="9" rx="2" fill="#3B82F6"></rect><rect x="38" y="20" width="4" height="9" rx="2" fill="#3B82F6"></rect></svg><div style="background:#EEF4FF;border-radius:1.4cqw;padding:1.3cqw 1.4cqw;color:#1E293B;font-size:1.4cqw;font-weight:600;line-height:1.45;text-align:center">Matematikte özellikle problemler konusunda desteğe ihtiyacın var.</div><span style="color:#0F172A;font-size:1.5cqw;font-weight:800">Önerilerim:</span><div style="display:flex;align-items:center;gap:0.9cqw;border:1px solid #E2E8F0;border-radius:1cqw;padding:0.9cqw 1cqw"><span style="flex:none;width:1.9cqw;height:1.9cqw;border-radius:50%;background:#2563EB;color:#FFFFFF;font-size:1.2cqw;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span><span style="color:#334155;font-size:1.3cqw;font-weight:600">Haftalık 3 konu tekrarı</span></div><div style="display:flex;align-items:center;gap:0.9cqw;border:1px solid #E2E8F0;border-radius:1cqw;padding:0.9cqw 1cqw"><span style="flex:none;width:1.9cqw;height:1.9cqw;border-radius:50%;background:#2563EB;color:#FFFFFF;font-size:1.2cqw;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span><span style="color:#334155;font-size:1.3cqw;font-weight:600">5 adet örnek soru</span></div><div style="display:flex;align-items:center;gap:0.9cqw;border:1px solid #E2E8F0;border-radius:1cqw;padding:0.9cqw 1cqw"><span style="flex:none;width:1.9cqw;height:1.9cqw;border-radius:50%;background:#2563EB;color:#FFFFFF;font-size:1.2cqw;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span><span style="color:#334155;font-size:1.3cqw;font-weight:600">Kısa konu özeti</span></div><span style="background:#0B1530;color:#FFFFFF;text-align:center;font-size:1.4cqw;font-weight:700;padding:1.3cqw;border-radius:1.2cqw">Planımı Görüntüle</span></div></div></div></div></div></section></div><section id="roller" style="position:relative;z-index:2;margin-top:-56px;background:#FFFFFF;border-radius:48px 48px 0 0;padding:64px 0 40px"><div class="lp-wrap" style="display:flex;flex-direction:column;gap:40px"><div class="lp-reveal" style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px"><span style="display:flex;align-items:center;gap:10px;color:#C2410C;font-size:15px;font-weight:700"><span style="width:22px;height:2px;background:#F7A21B"></span>EduPusula ile<span style="width:22px;height:2px;background:#F7A21B"></span></span><h2 style="font-size:clamp(30px, 3.4vw, 44px);font-weight:800;letter-spacing:-0.03em;color:#0F172A">Farklı Roller, Tek Platform</h2><p style="color:#475569;font-size:17px;line-height:1.6;max-width:640px">Öğretmen, öğrenci ve veliler için özel olarak tasarlanmış çözümlerle eğitim sürecini daha verimli hale getirin.</p></div><div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(330px, 1fr));gap:20px"><div class="lp-reveal lp-card" style="position:relative;background:#FEF0E7;border-radius:24px;min-height:250px;overflow:hidden;display:flex"><div style="position:relative;z-index:1;flex:1 1 60%;padding:30px 0 30px 30px;display:flex;flex-direction:column;gap:12px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="6" r="2.6"></circle><path d="M2.5 19v-2.5A4.5 4.5 0 0 1 7 12h1.5l4-3"></path><rect x="11" y="3" width="11" height="8" rx="1"></rect><path d="M14 8l2-2 2 1.5 2-2.5"></path><path d="M2.5 21h9"></path></svg><h3 style="font-size:22px;font-weight:800;color:#0F172A">Öğretmenler İçin</h3><p style="color:#334155;font-size:15px;line-height:1.55">Sınav analizleri, soru havuzu, ödevlendirme ve detaylı raporlarla sınıf yönetimini kolaylaştırın.</p><a href="#optik" style="margin-top:auto;color:#C2410C;font-size:15px;font-weight:700;text-decoration:none">Daha Fazla Bilgi →</a></div><img src="img/landing/ogretmen.webp" alt="Elinde tablet tutan gülümseyen öğretmen" style="flex:none;align-self:flex-end;width:42%;max-width:190px;height:auto;display:block;-webkit-mask-image:linear-gradient(to right, transparent 0%, #000 22%);mask-image:linear-gradient(to right, transparent 0%, #000 22%)"/></div><div class="lp-reveal lp-s2 lp-card" style="position:relative;background:#E4EFFD;border-radius:24px;min-height:250px;overflow:hidden;display:flex"><div style="position:relative;z-index:1;flex:1 1 60%;padding:30px 0 30px 30px;display:flex;flex-direction:column;gap:12px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#1D4ED8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 9l10 5 10-5Z"></path><path d="M6 11v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"></path><path d="M22 9v6"></path></svg><h3 style="font-size:22px;font-weight:800;color:#0F172A">Öğrenciler İçin</h3><p style="color:#334155;font-size:15px;line-height:1.55">Kişisel gelişim takibi ve öğrenme önerileriyle başarını artır.</p><a href="#ozellikler" style="margin-top:auto;color:#1D4ED8;font-size:15px;font-weight:700;text-decoration:none">Daha Fazla Bilgi →</a></div><img src="img/landing/ogrenci.webp" alt="Sırt çantalı gülümseyen öğrenci" style="flex:none;align-self:flex-end;width:42%;max-width:196px;height:auto;display:block;-webkit-mask-image:linear-gradient(to right, transparent 0%, #000 22%);mask-image:linear-gradient(to right, transparent 0%, #000 22%)"/></div><div class="lp-reveal lp-s3 lp-card" style="position:relative;background:#E7F9F6;border-radius:24px;min-height:250px;overflow:hidden;display:flex"><div style="position:relative;z-index:1;flex:1 1 55%;padding:30px 0 30px 30px;display:flex;flex-direction:column;gap:12px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#047857" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="7" r="3"></circle><circle cx="16.5" cy="8" r="2.5"></circle><path d="M2 20v-1.5A5 5 0 0 1 7 13.5h2a5 5 0 0 1 5 5V20"></path><path d="M15 13.6a4 4 0 0 1 1.5-.3A4.5 4.5 0 0 1 21 17.8V20"></path></svg><h3 style="font-size:22px;font-weight:800;color:#0F172A">Veliler İçin</h3><p style="color:#334155;font-size:15px;line-height:1.55">Çocuğunuzun gelişimini anlık olarak takip edin, her adımda yanında olun.</p><a href="#ozellikler" style="margin-top:auto;color:#047857;font-size:15px;font-weight:700;text-decoration:none">Daha Fazla Bilgi →</a></div><img src="img/landing/veli.webp" alt="Kızlarıyla birlikte gülümseyen anne ve baba" style="flex:none;align-self:flex-end;width:46%;max-width:230px;height:auto;display:block;-webkit-mask-image:linear-gradient(to right, transparent 0%, #000 22%);mask-image:linear-gradient(to right, transparent 0%, #000 22%)"/></div></div></div></section><section id="optik" style="background:#FFFFFF;padding:40px 0"><div class="lp-wrap" style="display:flex;flex-wrap:wrap;gap:40px;align-items:center"><div class="lp-reveal-l" style="flex:1 1 620px;min-width:0;position:relative;background:radial-gradient(90% 120% at 80% 50%, #1A2B52 0%, #0B1530 60%);border-radius:28px;padding:clamp(28px, 3.5vw, 44px);display:flex;flex-wrap:wrap;align-items:center;gap:28px;overflow:hidden"><div style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:18px"><span style="align-self:flex-start;background:#F7A21B;color:#0B1530;font-size:13px;font-weight:800;padding:7px 14px;border-radius:999px">Optik Okuma &amp; Analiz</span><h2 style="color:#FFFFFF;font-size:clamp(26px, 2.5vw, 34px);font-weight:800;letter-spacing:-0.025em;line-height:1.15">Sınavlarınızı Kolayca Okutun, Sonuçları Anında Alın</h2><p style="color:#CBD5E1;font-size:15px;line-height:1.6">Optik form okuyucu ile sınavlarınızı hızlıca değerlendirin, öğrencilerinizin ve sınıfınızın performansını detaylı analizlerle inceleyin.</p><div style="display:flex;flex-direction:column;gap:10px"><span style="display:flex;align-items:center;gap:10px;color:#FFFFFF;font-size:15px;font-weight:600"><span style="flex:none;width:20px;height:20px;border-radius:50%;background:#F7A21B;color:#0B1530;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span>Tek tıkla optik okuma</span><span style="display:flex;align-items:center;gap:10px;color:#FFFFFF;font-size:15px;font-weight:600"><span style="flex:none;width:20px;height:20px;border-radius:50%;background:#F7A21B;color:#0B1530;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span>Detaylı analiz raporları</span><span style="display:flex;align-items:center;gap:10px;color:#FFFFFF;font-size:15px;font-weight:600"><span style="flex:none;width:20px;height:20px;border-radius:50%;background:#F7A21B;color:#0B1530;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center">✓</span>Eksik kazanım tespiti</span></div><a class="lp-btn" href="#adimlar" style="align-self:flex-start;margin-top:6px;background:#F7A21B;color:#0B1530;text-decoration:none;font-size:15px;font-weight:800;padding:13px 22px;border-radius:999px;display:flex;align-items:center;gap:8px">Nasıl Çalışır?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 3l15 9-15 9z"></path></svg></a></div><div style="flex:0 0 auto;margin:0 auto;position:relative;width:270px;height:300px"><span style="position:absolute;left:0;top:0;width:34px;height:34px;border-left:4px solid #F7A21B;border-top:4px solid #F7A21B;border-radius:10px 0 0 0"></span><span style="position:absolute;right:0;top:0;width:34px;height:34px;border-right:4px solid #F7A21B;border-top:4px solid #F7A21B;border-radius:0 10px 0 0"></span><span style="position:absolute;left:0;bottom:0;width:34px;height:34px;border-left:4px solid #F7A21B;border-bottom:4px solid #F7A21B;border-radius:0 0 0 10px"></span><span style="position:absolute;right:0;bottom:0;width:34px;height:34px;border-right:4px solid #F7A21B;border-bottom:4px solid #F7A21B;border-radius:0 0 10px 0"></span><div style="position:absolute;left:22px;top:20px;width:226px;background:#FFFFFF;border-radius:10px;padding:14px 14px 16px;box-sizing:border-box;transform:rotate(-6deg);box-shadow:0 20px 40px rgba(0,0,0,0.45);display:flex;flex-direction:column;gap:9px"><span class="lp-scan" aria-hidden="true" style="position:absolute;left:6px;right:6px;top:4%;height:3px;border-radius:2px;background:#F7A21B;box-shadow:0 0 14px 4px rgba(247,162,27,0.55);z-index:1"></span><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;font-weight:800;color:#0F172A">EduPusula · Cevap Kâğıdı</span><svg width="22" height="22" viewBox="0 0 7 7" aria-hidden="true" shape-rendering="crispEdges"><rect width="7" height="7" fill="#FFFFFF"></rect><path d="M0 0h3v3H0z M4 0h3v3H4z M0 4h3v3H0z" fill="#0F172A"></path><path d="M1 1h1v1H1z M5 1h1v1H5z M1 5h1v1H1z" fill="#FFFFFF"></path><path d="M4 4h1v1H4z M6 4h1v1H6z M5 5h1v1H5z M4 6h1v1H4z M6 6h1v1H6z" fill="#0F172A"></path></svg></div><div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:0 12px"><div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">1</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">2</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">3</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">4</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">5</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">6</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">7</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">8</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">9</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">10</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div></div><div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">11</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">12</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">13</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">14</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">15</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">16</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">17</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">18</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">19</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div><div style="display:flex;align-items:center;gap:4px"><span style="width:12px;font-size:7px;font-weight:700;color:#64748B;text-align:right">20</span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#0F172A;border:1.5px solid #0F172A"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span><span style="width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#FFFFFF;border:1.5px solid #94A3B8"></span></div></div></div></div><span class="lp-pulse" style="position:absolute;right:-6px;bottom:14px;width:74px;height:74px;border-radius:50%;background:#0F1F45;border:4px solid #2563EB;box-shadow:0 0 0 6px rgba(37,99,235,0.25), 0 12px 30px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#F7A21B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span></div></div><div id="adimlar" class="lp-reveal-r" style="flex:1 1 340px;min-width:0;display:flex;flex-direction:column;gap:22px"><span style="width:40px;height:3px;border-radius:2px;background:#F7A21B"></span><div style="display:flex;flex-direction:column;gap:8px"><h2 style="font-size:clamp(26px, 2.4vw, 32px);font-weight:800;letter-spacing:-0.025em;color:#0F172A">5 Adımda Analiz</h2><p style="color:#334155;font-size:18px;line-height:1.5">Sınavdan rapora, sadece birkaç adımda.</p></div><div style="display:flex;flex-direction:column;gap:14px"><div class="lp-reveal" style="display:flex;align-items:center;gap:16px"><span style="flex:none;width:38px;height:38px;border-radius:50%;background:#E4EFFD;color:#0F172A;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center">1</span><span style="color:#0F172A;font-size:17px;font-weight:600">Sınavı Uygulayın</span></div><div class="lp-reveal" style="display:flex;align-items:center;gap:16px"><span style="flex:none;width:38px;height:38px;border-radius:50%;background:#E4EFFD;color:#0F172A;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center">2</span><span style="color:#0F172A;font-size:17px;font-weight:600">Optik Formu Okutun</span></div><div class="lp-reveal" style="display:flex;align-items:center;gap:16px"><span style="flex:none;width:38px;height:38px;border-radius:50%;background:#E4EFFD;color:#0F172A;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center">3</span><span style="color:#0F172A;font-size:17px;font-weight:600">Sonuçları İnceleyin</span></div><div class="lp-reveal" style="display:flex;align-items:center;gap:16px"><span style="flex:none;width:38px;height:38px;border-radius:50%;background:#E4EFFD;color:#0F172A;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center">4</span><span style="color:#0F172A;font-size:17px;font-weight:600">Eksik Kazanımları Belirleyin</span></div><div class="lp-reveal" style="display:flex;align-items:center;gap:16px"><span style="flex:none;width:38px;height:38px;border-radius:50%;background:#E4EFFD;color:#0F172A;font-size:16px;font-weight:800;display:flex;align-items:center;justify-content:center">5</span><span style="color:#0F172A;font-size:17px;font-weight:600">Hedefe Yönelik Plan Yapın</span></div></div></div></div></section><section id="ozellikler" style="background:#FFFFFF;padding:32px 0 40px"><div class="lp-wrap" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(330px, 1fr));gap:20px"><div class="lp-reveal lp-card" style="background:#F3F7FE;border:1px solid #E2EAF7;border-radius:22px;padding:26px;display:flex;gap:18px;align-items:flex-start"><svg width="52" height="52" viewBox="0 0 48 48" aria-hidden="true" style="flex:none"><circle cx="24" cy="24" r="21" fill="#DBEAFE" stroke="#2563EB" stroke-width="2.5"></circle><g transform="rotate(40 24 24)"><path d="M24 8 L29 24 L19 24 Z" fill="#F7A21B"></path><path d="M24 40 L29 24 L19 24 Z" fill="#2563EB"></path></g><circle cx="24" cy="24" r="2.5" fill="#FFFFFF"></circle></svg><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px"><h3 style="font-size:19px;font-weight:800;color:#0F172A">Başarı Pusulası</h3><p style="color:#475569;font-size:14px;line-height:1.55">Öğrencinin güçlü ve zayıf yönlerini keşfedin, gelişim yolculuğunu izleyin.</p><svg viewBox="0 0 160 56" style="width:100%;max-width:200px;height:auto;margin-top:4px" role="img" aria-label="Yükselen gelişim grafiği"><rect x="0" y="0" width="160" height="56" rx="10" fill="#FFFFFF"></rect><polyline points="14,44 44,36 70,40 98,26 124,22 148,10" fill="none" stroke="#2563EB" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline><g fill="#FFFFFF" stroke="#2563EB" stroke-width="2"><circle cx="14" cy="44" r="3"></circle><circle cx="44" cy="36" r="3"></circle><circle cx="70" cy="40" r="3"></circle><circle cx="98" cy="26" r="3"></circle><circle cx="124" cy="22" r="3"></circle></g><circle cx="148" cy="10" r="4" fill="#F7A21B"></circle></svg><a href="#demo" style="color:#1D4ED8;font-size:14px;font-weight:700;text-decoration:none">Detayları İncele →</a></div></div><div class="lp-reveal lp-s2 lp-card" style="background:#F3F7FE;border:1px solid #E2EAF7;border-radius:22px;padding:26px;display:flex;gap:18px;align-items:flex-start"><svg width="52" height="52" viewBox="0 0 48 48" aria-hidden="true" style="flex:none"><path d="M24 6v6" stroke="#1E3A8A" stroke-width="2.5" stroke-linecap="round"></path><circle cx="24" cy="5.5" r="2.5" fill="#F7A21B"></circle><rect x="8" y="13" width="32" height="25" rx="9" fill="#1E3A8A"></rect><rect x="12" y="17" width="24" height="15" rx="6" fill="#0B1530"></rect><circle cx="19" cy="24.5" r="3" fill="#7DD3FC"></circle><circle cx="29" cy="24.5" r="3" fill="#7DD3FC"></circle><rect x="3" y="21" width="5" height="10" rx="2.5" fill="#3B82F6"></rect><rect x="40" y="21" width="5" height="10" rx="2.5" fill="#3B82F6"></rect></svg><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px"><h3 style="font-size:19px;font-weight:800;color:#0F172A">Pusula Asistanı</h3><p style="color:#475569;font-size:14px;line-height:1.55">Yapay zekâ destekli asistanla kişiselleştirilmiş öneriler alın.</p><div style="display:flex;flex-direction:column;gap:6px;max-width:200px;margin-top:4px" aria-hidden="true"><div style="align-self:flex-end;width:60%;height:18px;border-radius:9px 9px 2px 9px;background:#DBEAFE"></div><div style="width:85%;background:#FFFFFF;border-radius:9px 9px 9px 2px;padding:8px;display:flex;flex-direction:column;gap:5px;box-sizing:border-box"><span style="height:5px;width:90%;border-radius:3px;background:#CBD5E1"></span><span style="height:5px;width:70%;border-radius:3px;background:#CBD5E1"></span></div></div><a href="#demo" style="color:#1D4ED8;font-size:14px;font-weight:700;text-decoration:none">Detayları İncele →</a></div></div><div class="lp-reveal lp-s3 lp-card" style="background:#F3F7FE;border:1px solid #E2EAF7;border-radius:22px;padding:26px;display:flex;gap:18px;align-items:flex-start"><svg width="52" height="52" viewBox="0 0 48 48" aria-hidden="true" style="flex:none"><path d="M24 6 4 15l20 9 20-9Z" fill="#60A5FA"></path><path d="M4 24l20 9 20-9" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round"></path><path d="M4 32l20 9 20-9" fill="none" stroke="#1E3A8A" stroke-width="3" stroke-linejoin="round"></path></svg><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px"><h3 style="font-size:19px;font-weight:800;color:#0F172A">Soru Havuzu &amp; Ödev</h3><p style="color:#475569;font-size:14px;line-height:1.55">Binlerce kazanıma uygun soruyla kolayca ödev oluşturun.</p><div style="max-width:200px;background:#FFFFFF;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px;margin-top:4px;box-sizing:border-box" aria-hidden="true"><div style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;border:1.5px solid #2563EB"></span><span style="height:5px;width:75%;border-radius:3px;background:#CBD5E1"></span></div><div style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;background:#2563EB"></span><span style="height:5px;width:60%;border-radius:3px;background:#CBD5E1"></span></div><div style="display:flex;align-items:center;gap:7px"><span style="width:9px;height:9px;border-radius:3px;border:1.5px solid #2563EB"></span><span style="height:5px;width:82%;border-radius:3px;background:#CBD5E1"></span></div></div><a href="#demo" style="color:#1D4ED8;font-size:14px;font-weight:700;text-decoration:none">Detayları İncele →</a></div></div></div></section><section id="demo" style="background:#FFFFFF;padding:24px 0 72px"><div class="lp-wrap"><div class="lp-reveal-scale" style="position:relative;border-radius:32px;overflow:hidden;background:linear-gradient(100deg, #0B1530 0%, #12224A 55%, #1B2D5C 100%);min-height:300px;display:flex;align-items:center"><svg aria-hidden="true" viewBox="0 0 640 300" preserveAspectRatio="xMaxYMax slice" style="position:absolute;right:0;bottom:0;width:62%;height:100%"><circle cx="440" cy="250" r="190" fill="none" stroke="#F7A21B" stroke-width="10" opacity="0.15"></circle><circle cx="440" cy="250" r="190" fill="none" stroke="#F7A21B" stroke-width="2" opacity="0.9"></circle><circle class="lp-sun" cx="440" cy="250" r="120" fill="#F7A21B" opacity="0.10"></circle><path d="M0 300 L90 220 L150 250 L240 160 L320 230 L380 190 L460 120 L540 210 L600 180 L640 220 L640 300 Z" fill="#22355F"></path><path d="M0 300 L120 250 L200 270 L300 210 L400 260 L480 230 L560 270 L640 245 L640 300 Z" fill="#17274A"></path><path d="M460 120 L476 134 L470 132 L462 140 L452 132 L446 134 Z" fill="#E2E8F0" opacity="0.8"></path><g fill="#0B1530"><rect x="456" y="96" width="2.5" height="28"></rect><path d="M458.5 96 L484 103 L458.5 110 Z" fill="#0B1530"></path><circle cx="452" cy="101" r="3.6"></circle><path d="M447 106 h10 l2 12 -3 10 h-3 l-1-8 -2 8 h-3 l-1-10 Z"></path></g></svg><div style="position:relative;z-index:1;padding:clamp(32px, 4vw, 56px);display:flex;flex-direction:column;gap:16px;max-width:640px"><h2 style="font-size:clamp(28px, 3vw, 40px);line-height:1.15;font-weight:800;letter-spacing:-0.03em;color:#FFFFFF">Eğitimde doğru yönü bulun.<br/><span style="color:#F7A21B">EduPusula ile geleceğe emin adımlarla ilerleyin.</span></h2><p style="color:#E2E8F0;font-size:17px;line-height:1.55">Hemen başlayın, öğrencilerinizin gelişimine yön verin.</p><div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px"><a class="lp-btn" href="#login" data-login-trigger style="background:#F7A21B;color:#0B1530;text-decoration:none;font-size:16px;font-weight:800;padding:15px 26px;border-radius:999px;display:flex;align-items:center;gap:10px">Giriş Yap<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg></a></div></div></div></div></section><footer id="alt" style="background:#0B1530;padding:40px 0"><div class="lp-wrap" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:28px"><div style="display:flex;align-items:center;gap:12px"><svg width="42" height="42" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="17" r="15" fill="none" stroke="#FFFFFF" stroke-width="1.8"></circle><g transform="rotate(40 17 17)"><path d="M17 6 L20.5 17 L13.5 17 Z" fill="#F7A21B"></path><path d="M17 28 L20.5 17 L13.5 17 Z" fill="#3B82F6"></path></g></svg><div style="display:flex;flex-direction:column;gap:2px"><span style="color:#FFFFFF;font-weight:800;font-size:21px">EduPusula</span><span style="color:#94A3B8;font-size:13px">Eğitimde Yeni Nesil Rehberiniz</span></div></div><nav aria-label="Alt menü" style="display:flex;flex-wrap:wrap;gap:40px"><a href="#roller" style="color:#E2E8F0;font-size:15px;font-weight:600;text-decoration:none">Ürünlerimiz</a><a href="#ozellikler" style="color:#E2E8F0;font-size:15px;font-weight:600;text-decoration:none">Kaynaklar</a><a href="#alt" style="color:#E2E8F0;font-size:15px;font-weight:600;text-decoration:none">Hakkımızda</a><a href="#demo" style="color:#E2E8F0;font-size:15px;font-weight:600;text-decoration:none">İletişim</a></nav><div style="display:flex;flex-direction:column;align-items:flex-end;gap:12px"><div style="display:flex;gap:8px"></div><span style="color:#94A3B8;font-size:13px">© 2026 EduPusula. Tüm hakları saklıdır.</span></div></div></footer></div></div>
 
   <!-- ========== GİRİŞ MODALI ========== -->
   <div class="login-modal-overlay" id="login-modal-overlay">
@@ -710,7 +363,8 @@
     </div>
   </div>
 
-  <!-- Landing JS -->
+
+  <!-- Landing JS (giris penceresi, kaydirma) -->
   <script src="js/landing.js"></script>
 </body>
 </html>
