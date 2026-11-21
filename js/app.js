@@ -195,6 +195,9 @@ const App = {
       }
     }
 
+    // Okul Admini: panelin menusu/gorunumu Okul Geneli ile ayni (ortak kabuk).
+    // setupNavigation'dan ONCE kurulur ki yeni menu ogeleri tiklama olayini alsin.
+    if (this._okulGeneliAnasayfa()) this._okulKabuguKur();
     this.setupNavigation();
     this.setupSidebar();
 
@@ -1068,6 +1071,48 @@ const App = {
   // itibarıyla iki rol arasında UI seviyesinde bir ayrım yok (bkz. bu
   // oturumdaki daha önceki bulgu: DATA_ADMIN henüz frontend'de
   // kısıtlanmıyor) - bu yüzden tüm okul-seviyesi hesaplara aynı, tam set gösterilir.
+  // Okul Admini kabugu: sol menu, logo ve alt kisim js/okulMenu.js'teki ORTAK
+  // tanimdan kurulur (Okul Geneli sayfasiyla birebir ayni basliklar/sira).
+  // Panel sayfalari (data-page) eskisi gibi sayfa yenilemeden acilir; Okul
+  // Geneli/Subeler/Veri Durumu okul-kokpiti.html'e gider. Gorunum
+  // css/kokpit/panel-kabuk.css'te (body.okul-kabuk altinda).
+  _okulKabuguKur() {
+    if (!window.OkulMenu) return;
+    document.body.classList.add('okul-kabuk');
+    // Okul Geneli yalnizca aydinlik; secimi kalici degistirmeden aydinlik goster
+    document.documentElement.setAttribute('data-theme', 'light');
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const okulId = this.currentUser.organizationId;
+    const nav = document.querySelector('.sidebar-nav');
+    if (nav) {
+      nav.innerHTML = OkulMenu.ogeler({ okulId }).map((o) => {
+        if (o.baslik) return `<div class="nav-section-title">${esc(o.baslik)}</div>`;
+        if (o.spa) return `<div class="nav-item" data-page="${o.spa}" role="link" tabindex="0"><span>${esc(o.ad)}</span></div>`;
+        return `<a class="nav-item${o.dis ? ' okul-kabuk-dis' : ''}" href="${esc(o.url)}"><span>${esc(o.ad)}</span></a>`;
+      }).join('');
+      // klavye: data-page ogeleri Enter ile de acilsin
+      nav.querySelectorAll('.nav-item[data-page]').forEach((el) => el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); el.click(); }
+      }));
+    }
+    const head = document.querySelector('.sidebar-header');
+    if (head) {
+      head.innerHTML = `<a class="okul-kabuk-marka" href="/okul-kokpiti.html?okul=${encodeURIComponent(okulId)}#">
+        <span class="okul-kabuk-isaret" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z"/></svg></span>
+        <span>EduPusula</span></a>`;
+    }
+    const foot = document.querySelector('.sidebar-footer');
+    if (foot) {
+      foot.innerHTML = `<div class="okul-kabuk-alt"><strong>Okul Admini</strong><span id="okul-kabuk-okul"></span>
+        <button type="button" class="okul-kabuk-cikis" onclick="AdminUsers.logout()">Çıkış yap</button></div>`;
+      fetch('/api/kokpit/okullar', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+        const o = d && d.okullar && d.okullar.find((x) => x.id === okulId);
+        const el = document.getElementById('okul-kabuk-okul');
+        if (o && el) el.textContent = o.ad;
+      }).catch(() => {});
+    }
+  },
+
   // Kendi okulu olan, platform/veri giris/delege OLMAYAN okul admini mi?
   // (server: kokpit.varsayilan_acilis ile ayni kural)
   _okulGeneliAnasayfa() {
