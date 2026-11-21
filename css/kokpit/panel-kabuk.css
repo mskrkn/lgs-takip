@@ -1,0 +1,123 @@
+/* ============================================================
+   Okul Admini kabuğu - yönetim paneli (index.html) Okul Geneli
+   (okul-kokpiti.html) ile aynı görünsün: lacivert sabit menü, aynı
+   başlıklar/sıra (js/okulMenu.js), aynı renk, kart ve yazı. Yalnızca
+   body.okul-kabuk altında etkili (js/app.js App._okulKabuguKur);
+   platform hesabı ve Veri Giriş Admini'nin paneli değişmez.
+   Renkler css/kokpit/kokpit.css ile aynı.
+   ============================================================ */
+html body.okul-kabuk {
+  --ok-navy: #0B1530;
+  --ok-orange: #F7A21B;
+  --ok-bg: #F1F5F9;
+  --ok-text: #1E293B;
+  --ok-muted: #64748B;
+  --ok-menu-w: 232px;
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+html body.okul-kabuk::before, html body.okul-kabuk::after { display: none; }
+
+/* ---------------- sol menü ---------------- */
+html body.okul-kabuk .sidebar {
+  width: var(--ok-menu-w);
+  background: var(--ok-navy);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-right: 0;
+  box-shadow: none;
+  padding: 20px 14px 0;
+  color: #E2E8F0;
+}
+html body.okul-kabuk .sidebar-header { padding: 0 8px 18px; border: 0; }
+html body.okul-kabuk .sidebar-header::after { display: none; }
+html body.okul-kabuk .okul-kabuk-marka { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 800; font-size: 18px; text-decoration: none; }
+html body.okul-kabuk .okul-kabuk-isaret { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--ok-orange); color: var(--ok-navy); }
+html body.okul-kabuk .sidebar-nav { padding: 0; display: flex; flex-direction: column; gap: 2px; }
+html body.okul-kabuk .nav-section-title { margin: 12px 12px 2px; padding: 0; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #94A3B8; }
+html body.okul-kabuk .nav-item {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0;
+  padding: 10px 12px; border-radius: 10px; color: #CBD5E1; background: none;
+  font-size: 14px; font-weight: 600; text-decoration: none; box-shadow: none; transform: none;
+}
+html body.okul-kabuk .nav-item::before { display: none; }
+html body.okul-kabuk .nav-item:hover { background: rgba(255, 255, 255, .07); color: #fff; transform: none; }
+html body.okul-kabuk .nav-item.active { background: rgba(247, 162, 27, .16); color: #fff; box-shadow: inset 3px 0 0 var(--ok-orange); }
+html body.okul-kabuk .nav-item:focus-visible { outline: 3px solid #93C5FD; outline-offset: 2px; }
+html body.okul-kabuk .okul-kabuk-dis::after { content: "↗"; margin-left: auto; font-size: 12px; opacity: .6; }
+html body.okul-kabuk .sidebar-footer { margin-top: auto; border: 0; padding: 16px 8px calc(16px + env(safe-area-inset-bottom, 0)); }
+html body.okul-kabuk .okul-kabuk-alt { font-size: 13px; color: #94A3B8; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+html body.okul-kabuk .okul-kabuk-alt strong { color: #fff; font-size: 14px; }
+html body.okul-kabuk .okul-kabuk-cikis { margin-top: 8px; min-height: 36px; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(248, 113, 113, .45); background: rgba(248, 113, 113, .12); color: #FCA5A5; font-weight: 700; cursor: pointer; font-family: inherit; }
+html body.okul-kabuk .okul-kabuk-cikis:hover { background: rgba(248, 113, 113, .22); }
+
+/* ---------------- üst çubuk ve içerik ---------------- */
+html body.okul-kabuk .header {
+  background: var(--ok-bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 0;
+  box-shadow: none;
+}
+html body.okul-kabuk .page-title { color: var(--ok-text); font-size: 24px; font-weight: 800; letter-spacing: -.01em; }
+html body.okul-kabuk .page-title span { color: var(--ok-muted); font-weight: 600; }
+/* "yakında" arama kutusu, iki kez tekrarlanan Edu AI düğmesi, tema düğmesi
+   (Okul Geneli yalnızca aydınlık) ve rol rozeti (menünün altında yazıyor) */
+html body.okul-kabuk .header-search,
+html body.okul-kabuk .header-right > button.menu-toggle[title="Edu AI"],
+html body.okul-kabuk [data-theme-toggle],
+html body.okul-kabuk #role-badge { display: none !important; }
+html body.okul-kabuk .page-content { background: transparent; }
+html body.okul-kabuk .card,
+html body.okul-kabuk .stat-card {
+  background: #fff;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 4px 16px rgba(15, 23, 42, .04);
+}
+
+/* masaüstünde menü Okul Geneli'ndeki gibi hep açık */
+@media (min-width: 901px) {
+  html body.okul-kabuk .sidebar { transform: none; }
+  html body.okul-kabuk .main-content { margin-left: var(--ok-menu-w); }
+  html body.okul-kabuk #menu-toggle,
+  html body.okul-kabuk .sidebar-overlay { display: none !important; }
+}
+/* telefonda çekmece olarak kalır; mobil alt çubuk da lacivert tonda */
+@media (max-width: 900px) {
+  html body.okul-kabuk .mobile-bottom-nav { background: #fff; border-top: 1px solid #E2E8F0; }
+  html body.okul-kabuk .mobile-nav-item.active { color: var(--ok-navy); }
+}
+
+/* ---------------- ilk boyama (sunucu <body class="okul-kabuk"> ile gönderir) ----------------
+   Menü js/okulMenu.js'ten kurulana kadar panelin ESKİ menüsü, logosu ve
+   "Anasayfa" başlığı görünmesin; Okul Geneli'ndeki gibi lacivert menü boş
+   başlar, içerik yerine aynı iskelet/yükleniyor gösterilir. */
+html.okul-kabuk-html { background: #F1F5F9; }
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-nav,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-header,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .sidebar-footer,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .header,
+html body.okul-kabuk:not(.okul-kabuk-hazir) .mobile-bottom-nav { visibility: hidden; }
+html body.okul-kabuk .loading-spinner { border-color: #E2E8F0; border-top-color: var(--ok-navy); }
+html body.okul-kabuk #page-dashboard .text-muted { color: var(--ok-muted); }
+/* kaydırma çubuğu: panelin turkuaz çubuğu yerine Okul Geneli'ndeki sade çubuk */
+html body.okul-kabuk .sidebar { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+html body.okul-kabuk ::-webkit-scrollbar-thumb { background: #CBD5E1; border: 0; }
+html body.okul-kabuk .sidebar::-webkit-scrollbar-thumb { background: #334155; }
+html body.okul-kabuk ::-webkit-scrollbar-track { background: transparent; }
+/* ilk yükleme iskeleti (kokpit.okul_kabugu_index ekler) - Okul Geneli ile aynı */
+html body.okul-kabuk .okul-iskelet { display: grid; gap: 16px; padding: 28px 8px; }
+html body.okul-kabuk .okul-iskelet div {
+  border-radius: 16px;
+  background: linear-gradient(90deg, #E2E8F0 25%, #F1F5F9 50%, #E2E8F0 75%);
+  background-size: 200% 100%;
+  animation: okul-iskelet 1.3s infinite;
+}
+html body.okul-kabuk .okul-iskelet div:nth-child(1) { height: 72px; }
+html body.okul-kabuk .okul-iskelet div:nth-child(2) { height: 180px; }
+html body.okul-kabuk .okul-iskelet div:nth-child(3), html body.okul-kabuk .okul-iskelet div:nth-child(4) { height: 140px; }
+@keyframes okul-iskelet { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { html body.okul-kabuk .okul-iskelet div { animation: none; } }
+html body.okul-kabuk .kp-sr { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

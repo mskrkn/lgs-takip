@@ -9,7 +9,8 @@
   if (!K) return;
   const { esc, fmt, isaretli, yuzde, trTarih, kisaTarih, api, okulYolu, filtreQS, ST } = K;
   const $ = (s, r) => (r || document).querySelector(s);
-  const geri = (ad) => `<p class="kp-crumb"><a href="${filtreQS({ okul: ST.okulId })}#">Okul Kokpiti</a> / ${esc(ad)}</p>`;
+  // Okul Geneli / N. sınıflar / <ekran>
+  const geri = (ad) => K.kademeCrumb({ seviye: K.params().get('seviye') || (ST.veri && ST.veri.seviye) }, ad);
 
   // ---------------------------------------------------------- Ayarlar
   const AYAR_ETIKET = [

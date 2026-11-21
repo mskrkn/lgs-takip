@@ -30,7 +30,7 @@ import uuid
 import zipfile
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify, redirect, request, send_file, session
+from flask import Blueprint, Response, jsonify, redirect, request, send_file, session
 
 import kokpit_hesap as K
 
@@ -123,6 +123,56 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_kokpit_students_del AFTER DELETE ON students BEGIN
     INSERT OR IGNORE INTO kokpit_kirli(exam_id)
         SELECT DISTINCT exam_id FROM results WHERE student_id = OLD.id AND exam_id IS NOT NULL;
+END;
+
+-- Panel hizlandirma: okulun ogrenci/deneme/sonuc verisi her degistiginde
+-- artan sayac. /api/admin/snapshot?surum=N ayni sayacta 'degismedi' doner,
+-- panel her acilista tum veriyi yeniden indirmez.
+CREATE TABLE IF NOT EXISTS veri_surumu (organization_id INTEGER PRIMARY KEY, surum INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_ins AFTER INSERT ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_upd AFTER UPDATE ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_del AFTER DELETE ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_ins AFTER INSERT ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_upd AFTER UPDATE ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_del AFTER DELETE ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_ins AFTER INSERT ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_upd AFTER UPDATE ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_del AFTER DELETE ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
 END;
 """
 
@@ -536,6 +586,39 @@ def api_ayarlar(db, okul_id, kapsam):
     S.log_audit(db, "KOKPIT_AYAR_GUNCELLE", resource_type="organization", resource_id=okul_id)
     ayar, kayitli = _ayarlar(db, okul_id)
     return jsonify({"ok": True, "ayarlar": ayar, "degistirilen": list(kayitli)})
+
+
+def veri_surumu(db, org_id):
+    """Okulun ogrenci/deneme/sonuc verisinin surum sayaci (tetikleyicilerle artar)."""
+    r = db.execute("SELECT surum FROM veri_surumu WHERE organization_id = ?", (org_id,)).fetchone()
+    return int(r[0]) if r else 0
+
+
+def okul_kabugu_index(db):
+    """Okul Admini icin index.html'i ILK BOYAMADAN once kabuklu dondurur:
+    <html class="okul-kabuk-html" data-theme="light"> + <body class="okul-kabuk">.
+    Boylece panelin turkuaz ambiyans zemini, eski menu ve "Anasayfa" basligi
+    hic gorunmez (eskiden sinif /api/me cevabindan sonra JS ile ekleniyordu).
+    Uygun degilse None (cagiran normal statik dosyayi verir)."""
+    if not varsayilan_acilis(db):
+        return None
+    yol = os.path.join(S.BASE_DIR, "index.html")
+    try:
+        with open(yol, encoding="utf-8") as f:
+            html = f.read()
+    except OSError:
+        return None
+    html = html.replace('<html lang="tr">', '<html lang="tr" class="okul-kabuk-html" data-theme="light">', 1)
+    html = html.replace("<body>", '<body class="okul-kabuk">', 1)
+    # Yukleniyor: Okul Geneli'ndeki gibi iskelet kartlar (donen gosterge yerine)
+    iskelet = ('<section class="page-section active" id="page-dashboard">'
+               '<div class="okul-iskelet" aria-busy="true"><div></div><div></div><div></div><div></div>'
+               '<span class="kp-sr">Yükleniyor…</span></div></section>')
+    html = re.sub(r'<section class="page-section active" id="page-dashboard">.*?</section>',
+                  lambda _m: iskelet, html, count=1, flags=re.S)
+    resp = Response(html, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 def varsayilan_acilis(db):
@@ -1383,3 +1466,122 @@ def api_rapor_indir(token):
     resp = send_file(yol, mimetype=mime, as_attachment=True, download_name=ad)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# ================================================================ Okul Geneli (tum kademeler)
+# Yonetim panelinin acilis sayfasi: okul geneli gostergeler + her sinif
+# kademesi icin ozet kart + tum kademelerden en onemli uyarilar + veri kalitesi.
+# Kademe karti tiklaninca o kademenin ayrintili kokpiti (acilis_verisi) acilir.
+def veri_kalitesi(db, org_id):
+    """Kayit tarafi veri sorunlari (Edesis Kayit Kokpiti'ndeki uyarilarin
+    karsiligi): subesiz ogrenci, veli hesabi bagli olmayan ogrenci."""
+    ogr = db.execute("SELECT id, class_name FROM students WHERE organization_id = ?", (org_id,)).fetchall()
+    subesiz = sum(1 for s in ogr if not _grade(s["class_name"]))
+    velili = {r[0] for r in db.execute(
+        "SELECT DISTINCT ps.student_id FROM parent_students ps JOIN students s ON s.id = ps.student_id "
+        "JOIN users u ON u.id = ps.parent_user_id WHERE s.organization_id = ? AND u.active = 1", (org_id,)).fetchall()}
+    return {"ogrenci": len(ogr), "subesiz": subesiz, "velisiz": sum(1 for s in ogr if s["id"] not in velili)}
+
+
+def okul_geneli(db, org_id, kapsam, args=None):
+    t0 = time.perf_counter()
+    args = args or {}
+    taban = _okul_verisi(db, org_id, None)
+    kademeler, uyarilar = [], []
+    son_genel = None
+    for sev in taban["seviyeler"]:
+        v = acilis_verisi(db, org_id, kapsam, sev, args={"donem": args.get("donem") or "tum"})
+        if v["seviye"] != sev:
+            continue
+        kart = {"seviye": sev, "kayitli": v["kayitli"], "degerlendirilen": v["degerlendirilen"],
+                "sonDeneme": v["sonDeneme"], "veriDurumu": {
+                    "yuklenmemis": len(v["veriDurumu"]["yuklenmemis"]),
+                    "eksikSonuc": (v["veriDurumu"].get("uyari") or {}).get("eksikKarne", 0)}}
+        if v["sonDeneme"] and (son_genel is None or v["sonDeneme"]["tarih"] > son_genel["tarih"]):
+            son_genel = dict(v["sonDeneme"], seviye=sev)
+        if kapsam != "veri":
+            k = v["kartlar"]
+            satir = [s for s in v["subeler"]["satirlar"] if s["n"]]
+            en_iyi = max(satir, key=lambda s: s["toplamNet"]) if satir else None
+            en_zayif = min(satir, key=lambda s: s["toplamNet"]) if len(satir) > 1 else None
+            kart.update({
+                "subeSayisi": len(v["subeler"]["satirlar"]),
+                "toplamNet": k["toplamNet"]["deger"], "soru": k["toplamNet"]["soru"], "oran": k["toplamNet"]["oran"],
+                "puan": k["puan"]["deger"], "puanFark": k["puan"]["fark"], "lgs": k["puan"]["lgs"],
+                "onceEtiket": k["puan"]["onceEtiket"], "sonraEtiket": k["puan"]["sonraEtiket"],
+                "katilim": k["katilim"]["deger"], "katilan": k["katilim"]["katilan"],
+                "kaldirac": {"ders": k["kaldirac"]["ders"], "ad": k["kaldirac"]["ad"], "oran": k["kaldirac"]["oran"]}
+                if k["kaldirac"] else None,
+                "enIyiSube": {"sube": en_iyi["sube"], "toplamNet": en_iyi["toplamNet"]} if en_iyi else None,
+                "enZayifSube": {"sube": en_zayif["sube"], "toplamNet": en_zayif["toplamNet"]} if en_zayif else None,
+                "uyariSayisi": len(v["uyarilar"]),
+                "dersler": [{"ders": d["ders"], "kisa": d["kisa"], "oran": d["oran"], "esikAlti": d["esikAlti"]}
+                            for d in v["dersler"]["liste"]],
+            })
+            for u in v["uyarilar"]:
+                uyarilar.append(dict(u, seviye=sev,
+                                     gecmis=(v.get("aksiyonGecmisi") or {}).get(u["anahtar"])))
+        kademeler.append(kart)
+    sira = {k: i for i, k in enumerate(K.UYARI_ONEM)}
+    uyarilar.sort(key=lambda u: (sira[u["kod"]], -u["etki"]))
+    ayar, _ = _ayarlar(db, org_id)
+    donem = K.donem_coz(args.get("donem") or "tum", [d["tarih"] for d in taban["denemeler"] if d["katilanSeviye"]])
+    out = {
+        "okul": {"id": org_id, "ad": _okul_adi(db, org_id)}, "kapsam": kapsam,
+        "yetki": {"analiz": kapsam != "veri", "aksiyon": kapsam in ("platform", "okul")},
+        "egitimYili": donem["egitimYili"], "sonDeneme": son_genel,
+        "toplam": {"ogrenci": sum(taban["seviyeSayilari"].values()), "kademe": len(kademeler),
+                   "sube": len({s["class_name"] for s in db.execute(
+                       "SELECT DISTINCT class_name FROM students WHERE organization_id = ?", (org_id,)).fetchall()
+                       if _grade(s["class_name"])}),
+                   "degerlendirilen": sum(k["degerlendirilen"] for k in kademeler)},
+        "kademeler": kademeler, "uyarilar": uyarilar, "veriKalitesi": veri_kalitesi(db, org_id),
+        "ayarlar": ayar if kapsam != "veri" else None,
+    }
+    out["sureMs"] = round((time.perf_counter() - t0) * 1000, 1)
+    return out
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/genel")
+@_korumali(analiz=False)
+def api_genel(db, okul_id, kapsam):
+    return jsonify(okul_geneli(db, okul_id, kapsam, request.args))
+
+
+_TR_KUCUK = str.maketrans("IİŞÇĞÖÜ", "ıişçğöü")
+
+
+def _kucuk(s):
+    return (s or "").translate(_TR_KUCUK).lower().strip()
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/ogrenci-ara")
+@_korumali()
+def api_ogrenci_ara(db, okul_id, kapsam):
+    """Okul Geneli > Ogrenci Bul: ad/soyad ya da okul numarasiyla en fazla 20
+    ogrenci; her birinin subesi ve bu egitim yilindaki deneme ozeti."""
+    q = _kucuk(request.args.get("q"))
+    if len(q) < 2:
+        return jsonify({"ogrenciler": []})
+    parcalar = q.split()
+    bulunan = []
+    for s in db.execute("SELECT id, first_name, last_name, school_number, class_name FROM students "
+                        "WHERE organization_id = ?", (okul_id,)).fetchall():
+        ad = _kucuk(f"{s['first_name'] or ''} {s['last_name'] or ''}")
+        no = (s["school_number"] or "").strip()
+        if (q.isdigit() and no.lstrip("0").startswith(q.lstrip("0") or "0")) or all(p in ad for p in parcalar):
+            bulunan.append(s)
+        if len(bulunan) >= 20:
+            break
+    out = []
+    for s in bulunan:
+        rows = db.execute(
+            "SELECT o.toplam_net, o.puan, d.tarih, d.ad FROM kokpit_ogrenci o JOIN kokpit_deneme d ON d.exam_id = o.exam_id "
+            "WHERE o.student_id = ? ORDER BY d.tarih DESC, d.exam_id DESC", (s["id"],)).fetchall()
+        out.append({
+            "id": s["id"], "ad": _ogr_ad(s), "numara": s["school_number"], "sube": s["class_name"],
+            "seviye": _grade(s["class_name"]), "denemeSayisi": len(rows),
+            "sonNet": rows[0]["toplam_net"] if rows else None, "sonDeneme": rows[0]["ad"] if rows else None,
+            "ortNet": sum(r["toplam_net"] or 0 for r in rows) / len(rows) if rows else None,
+        })
+    return jsonify({"ogrenciler": out})

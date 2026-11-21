@@ -195,6 +195,10 @@ const App = {
       }
     }
 
+    // Okul Admini: panelin menusu/gorunumu Okul Geneli ile ayni (ortak kabuk).
+    // setupNavigation'dan ONCE kurulur ki yeni menu ogeleri tiklama olayini alsin.
+    if (this._okulGeneliAnasayfa()) this._okulKabuguKur();
+    else document.body.classList.remove('okul-kabuk');  // sunucu kabuklu gonderdiyse ama rol degistiyse
     this.setupNavigation();
     this.setupSidebar();
 
@@ -219,6 +223,17 @@ const App = {
     // Okul Kokpiti yalnizca admin/super_admin'e acik (yetki devredilmis ogretmen goremez)
     const kokpitNav = document.getElementById('nav-okul-kokpiti');
     if (kokpitNav && this.currentUser?.isDelegateAdmin) kokpitNav.style.display = 'none';
+    // Kendi okulunun Okul Admini: "Anasayfa" artik Okul Geneli (okul-kokpiti.html).
+    // Masaustu menu ve mobil alt cubuk AYRI yapilar - ikisi de degistirilir.
+    if (this._okulGeneliAnasayfa()) {
+      if (kokpitNav) kokpitNav.style.display = 'none';
+      document.querySelectorAll('.nav-item[data-page="dashboard"], .mobile-nav-item[data-page="dashboard"]').forEach((el) => {
+        const ikon = el.querySelector('.nav-icon, .mobile-nav-icon');
+        const ad = el.querySelector('span:not(.nav-icon):not(.mobile-nav-icon)');
+        if (ikon) ikon.textContent = '🧭';
+        if (ad) ad.textContent = el.classList.contains('mobile-nav-item') ? 'Okul' : 'Okul Geneli';
+      });
+    }
     if (isPurePlatformAccount) {
       const visiblePages = ['dashboard', 'schools', 'system-logs', 'users', 'students', 'exams', 'import', 'question-bank', 'reports'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
@@ -278,9 +293,15 @@ const App = {
 
     // Derin baglanti (Okul Kokpiti menusu): /index.html?page=exams - yalnizca
     // bu hesapta GORUNUR bir menu sayfasi ise; degilse eskisi gibi Anasayfa.
-    const deepPage = new URLSearchParams(window.location.search).get('page');
+    const deepParams = new URLSearchParams(window.location.search);
+    const deepPage = deepParams.get('page');
     const deepNav = deepPage && document.querySelector(`.nav-item[data-page="${CSS.escape(deepPage)}"]`);
-    await this.navigateTo(deepNav && deepNav.style.display !== 'none' ? deepPage : 'dashboard');
+    const deepOk = deepNav && deepNav.style.display !== 'none';
+    await this.navigateTo(deepOk ? deepPage : 'dashboard');
+    // Okul Geneli > Hızlı işlemler: ilgili pencereyi doğrudan aç
+    const islem = deepOk ? deepParams.get('islem') : null;
+    if (islem === 'ogrenci-ekle' && deepPage === 'students') this.showAddStudentModal();
+    if (islem === 'deneme-ekle' && deepPage === 'exams') this.showAddExamModal();
   },
 
   // Hesap turu rozeti: "Platform Sahibi" (bu okulun normal admini + baska
@@ -497,10 +518,29 @@ const App = {
         const st = (typeof AdminUsers !== 'undefined' && AdminUsers.syncToServer) ? await AdminUsers.syncToServer(true) : 'error';
         if (st !== 'ok') return; // çevrimdışı / onay bekleyen toplu silme - yerel değişiklikler korunur
       }
-      const res = await fetch('/api/admin/snapshot');
+      // Hizlandirma: son eslemedeki surum + yerel kayit sayilari saklanir. Yerel
+      // veri o haliyle duruyorsa surum gonderilir; sunucuda degisiklik yoksa tum
+      // veri yeniden indirilip IndexedDB'ye baştan yazilmaz.
+      const orgId = this.currentUser?.organizationId;
+      const surumKey = orgId ? `edupusula_snapshot_surum_org${orgId}` : null;
+      const sayim = async () => ({ s: await db.getStudentCount(), e: await db.getExamCount(), r: await db.getResultCount() });
+      let onceki = null;
+      try { onceki = surumKey ? JSON.parse(localStorage.getItem(surumKey) || 'null') : null; } catch (e) { onceki = null; }
+      let q = '';
+      if (onceki && onceki.surum != null) {
+        const simdi = await sayim();
+        if (simdi.s === onceki.s && simdi.e === onceki.e && simdi.r === onceki.r && (simdi.s + simdi.e + simdi.r) > 0) {
+          q = `?surum=${encodeURIComponent(onceki.surum)}`;
+        }
+      }
+      const res = await fetch('/api/admin/snapshot' + q);
       if (!res.ok) return;
       const snap = await res.json();
+      if (snap.degismedi) return;  // yerel veri guncel
       const r = await db.replaceOwnDataFromServer(snap);
+      if (surumKey && snap.surum != null) {
+        try { localStorage.setItem(surumKey, JSON.stringify(Object.assign({ surum: snap.surum }, await sayim()))); } catch (e) { /* yoksay */ }
+      }
       if (r && (r.before.students !== r.after.students || r.before.exams !== r.after.exams || r.before.results !== r.after.results)) {
         console.info('Yerel veri sunucuyla eşlendi:', r);
         if (r.before.students + r.before.exams + r.before.results > 0) {
@@ -594,6 +634,10 @@ const App = {
           // Bölüm 2: Veri Giriş Admini operasyon odaklı kendi Anasayfa'sını
           // görür (öğrenci/sınıf karşılaştırma detayları DEĞİL).
           await this.renderDataAdminDashboard();
+        } else if (this._okulGeneliAnasayfa()) {
+          // Okul Admini'nin Anasayfa'si Okul Geneli (sunucu verisiyle, kademe kartlari)
+          window.location.href = '/okul-kokpiti.html';
+          return;
         } else {
           await this.renderDashboard();
         }
@@ -1047,6 +1091,56 @@ const App = {
   // itibarıyla iki rol arasında UI seviyesinde bir ayrım yok (bkz. bu
   // oturumdaki daha önceki bulgu: DATA_ADMIN henüz frontend'de
   // kısıtlanmıyor) - bu yüzden tüm okul-seviyesi hesaplara aynı, tam set gösterilir.
+  // Okul Admini kabugu: sol menu, logo ve alt kisim js/okulMenu.js'teki ORTAK
+  // tanimdan kurulur (Okul Geneli sayfasiyla birebir ayni basliklar/sira).
+  // Panel sayfalari (data-page) eskisi gibi sayfa yenilemeden acilir; Okul
+  // Geneli/Subeler/Veri Durumu okul-kokpiti.html'e gider. Gorunum
+  // css/kokpit/panel-kabuk.css'te (body.okul-kabuk altinda).
+  _okulKabuguKur() {
+    if (!window.OkulMenu) { document.body.classList.remove('okul-kabuk'); return; }
+    document.body.classList.add('okul-kabuk');
+    // Okul Geneli yalnizca aydinlik; secimi kalici degistirmeden aydinlik goster
+    document.documentElement.setAttribute('data-theme', 'light');
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const okulId = this.currentUser.organizationId;
+    const nav = document.querySelector('.sidebar-nav');
+    if (nav) {
+      nav.innerHTML = OkulMenu.ogeler({ okulId }).map((o) => {
+        if (o.baslik) return `<div class="nav-section-title">${esc(o.baslik)}</div>`;
+        if (o.spa) return `<div class="nav-item" data-page="${o.spa}" role="link" tabindex="0"><span>${esc(o.ad)}</span></div>`;
+        return `<a class="nav-item${o.dis ? ' okul-kabuk-dis' : ''}" href="${esc(o.url)}"><span>${esc(o.ad)}</span></a>`;
+      }).join('');
+      // klavye: data-page ogeleri Enter ile de acilsin
+      nav.querySelectorAll('.nav-item[data-page]').forEach((el) => el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); el.click(); }
+      }));
+    }
+    const head = document.querySelector('.sidebar-header');
+    if (head) {
+      head.innerHTML = `<a class="okul-kabuk-marka" href="/okul-kokpiti.html?okul=${encodeURIComponent(okulId)}#">
+        <span class="okul-kabuk-isaret" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z"/></svg></span>
+        <span>EduPusula</span></a>`;
+    }
+    const foot = document.querySelector('.sidebar-footer');
+    if (foot) {
+      foot.innerHTML = `<div class="okul-kabuk-alt"><strong>Okul Admini</strong><span id="okul-kabuk-okul"></span>
+        <button type="button" class="okul-kabuk-cikis" onclick="AdminUsers.logout()">Çıkış yap</button></div>`;
+      fetch('/api/kokpit/okullar', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+        const o = d && d.okullar && d.okullar.find((x) => x.id === okulId);
+        const el = document.getElementById('okul-kabuk-okul');
+        if (o && el) el.textContent = o.ad;
+      }).catch(() => {});
+    }
+    document.body.classList.add('okul-kabuk-hazir');
+  },
+
+  // Kendi okulu olan, platform/veri giris/delege OLMAYAN okul admini mi?
+  // (server: kokpit.varsayilan_acilis ile ayni kural)
+  _okulGeneliAnasayfa() {
+    const u = this.currentUser || {};
+    return u.role === 'admin' && !!u.organizationId && !u.canManageSchools && !u.dataEntryOnly && !u.isDelegateAdmin;
+  },
+
   _renderQuickActions() {
     return `
       <div class="card mt-2">

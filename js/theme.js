@@ -28,7 +28,9 @@
     if (m) m.setAttribute('content', theme === 'dark' ? '#070913' : '#f4f6fb');
   }
 
-  document.documentElement.setAttribute('data-theme', stored() || 'light');
+  // Okul Admini kabugu (Okul Geneli ile ayni gorunum) yalnizca aydinlik
+  var kabuk = document.documentElement.classList.contains('okul-kabuk-html');
+  document.documentElement.setAttribute('data-theme', kabuk ? 'light' : (stored() || 'light'));
 
   // ---- Grafik renk eslemesi (koyu tema sabiti -> aydinlik karsiligi) ----
   var COLOR_MAP = {

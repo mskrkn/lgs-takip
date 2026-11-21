@@ -1,5 +1,5 @@
 // ============================================================
-// Okul Kokpiti - okul yöneticisi ekranı (okul-kokpiti.html)
+// Okul Geneli / kademe kokpiti - okul yöneticisi ekranı (okul-kokpiti.html)
 // ------------------------------------------------------------
 // Tüm hesaplar sunucuda (kokpit_hesap.py); bu dosya yalnızca çizer.
 // Filtreler URL'de tutulur (?okul=2&seviye=8&donem=2026-11), ekran
@@ -109,19 +109,15 @@
     const qs = filtreQS({ okul: ST.okulId });
     const ic = (ad, href, aktif, dis) => `<a href="${href}" class="${dis ? 'kp-ext' : ''}"${aktif ? ' aria-current="page"' : ''}>${esc(ad)}</a>`;
     const items = veriYalniz ? [
-      ic('Okul Kokpiti', `${qs}#`, r === 'ana'),
+      ic('Okul Geneli', `?okul=${ST.okulId}#`, r === 'ana'),
       ic('Veri Durumu', `${qs}#veri`, r === 'veri'),
       ic('Veri Girişi', '/index.html?page=import', false, true),
-    ] : [
-      ic('Okul Kokpiti', `${qs}#`, r === 'ana' || r === 'uyarilar'),
-      ic('Denemeler', '/index.html?page=exams', false, true),
-      ic('Şubeler', `${qs}#subeler`, r === 'subeler' || r === 'sube'),
-      ic('Öğrenciler', '/index.html?page=students', false, true),
-      ic('Ödevler', '/ogretmen.html?page=assignments', false, true),
-      ic('Raporlar', '/index.html?page=reports', false, true),
-      ic('Veri Durumu', `${qs}#veri`, r === 'veri'),
-      ic('Ayarlar', `${qs}#ayarlar`, r === 'ayarlar'),
-    ];
+    ] : (window.OkulMenu ? OkulMenu.ogeler({ okulId: ST.okulId, kokpitQs: qs, seviye: params().get('seviye') }) : []).map((o) => {
+      // Ortak menü (js/okulMenu.js) - yönetim panelindeki Okul Admini menüsüyle birebir aynı
+      if (o.baslik) return `<span class="kp-nav-baslik">${esc(o.baslik)}</span>`;
+      const aktif = { genel: ['ana'], kademe: ['kademe', 'uyarilar'], subeler: ['subeler', 'sube'], veri: ['veri'], 'kokpit-ayarlar': ['ayarlar'] }[o.anahtar];
+      return ic(o.ad, o.url, !!(aktif && aktif.includes(r)), o.dis);
+    });
     $('#kp-nav').innerHTML = items.join('');
     const okul = ST.okullar.find((o) => o.id === ST.okulId);
     const rol = { platform: 'Platform yöneticisi', okul: 'Okul Admini', veri: 'Veri Giriş Admini' }[ST.kapsam] || '';
@@ -131,8 +127,14 @@
     } else if (okul) {
       foot += `<span>${esc(okul.ad)}</span>`;
     }
-    foot += ` <a href="/index.html" style="color:#93C5FD;font-size:12px">Yönetim paneli</a>`;
+    // Platform hesabının panel Anasayfa'sı Okullar listesi; Okul Admini'ninki zaten burası
+    if (ST.kapsam === 'platform') foot += ` <a href="/index.html" style="color:#93C5FD;font-size:12px">Okullar</a>`;
+    foot += ` <button type="button" class="kp-cikis" id="kp-cikis">Çıkış yap</button>`;
     $('#kp-side-foot').innerHTML = foot;
+    $('#kp-cikis').addEventListener('click', async () => {
+      try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* yine de çık */ }
+      location.href = '/login.html';
+    });
     const sec = $('#kp-okul-sec');
     if (sec) sec.addEventListener('change', () => {
       ST.okulId = Number(sec.value);
@@ -162,6 +164,14 @@
   }
 
   // ---------------------------------------------------------- başlık + filtreler
+  // Okul Geneli > N. sınıflar > (alt ekran) gezinti satırı
+  function kademeCrumb(d, ad) {
+    const genel = `<a href="?okul=${ST.okulId}#">Okul Geneli</a>`;
+    if (!ad) return `<p class="kp-crumb">${genel}</p>`;
+    if (!d.seviye) return `<p class="kp-crumb">${genel} / ${esc(ad)}</p>`;
+    return `<p class="kp-crumb">${genel} / <a href="${filtreQS({ okul: ST.okulId })}#kademe">${esc(d.seviye || '')}. sınıflar</a> / ${esc(ad)}</p>`;
+  }
+
   function baslikCiz(d, baslik, altBaslik, opts = {}) {
     const p = params();
     const seviyeSec = d.seviyeler.length > 1 ? `<label class="kp-field">Sınıf seviyesi
@@ -174,14 +184,15 @@
         <button type="button" class="kp-btn" id="kp-ozel-uygula">Uygula</button>` : '';
     const raporlar = opts.rapor && d.yetki.analiz ? `<button type="button" class="kp-btn" id="kp-excel">Excel indir</button>
         <button type="button" class="kp-btn kp-btn-primary" id="kp-pdf">Dönem raporu (PDF)</button>` : '';
+    const hizli = window.Kokpit && window.Kokpit.hizliIslemler ? window.Kokpit.hizliIslemler() : '';
     return `<header class="kp-head">
       <div>
-        ${opts.crumb || ''}
+        ${opts.crumb || kademeCrumb(d, opts.crumbAd)}
         <p class="kp-eyebrow">${esc(d.okul.ad)} · ${esc(d.donem.egitimYili)} · ${d.seviye ? `${esc(d.seviye)}. sınıflar (${d.kayitli} öğrenci)` : 'seviye yok'}</p>
         <h1>${esc(baslik)}</h1>
         <p class="kp-sub">${altBaslik}</p>
       </div>
-      <div class="kp-filters">${seviyeSec}${donemSec}${ozel}${raporlar}</div>
+      <div class="kp-filters">${seviyeSec}${donemSec}${ozel}${raporlar}${opts.rapor ? hizli : ''}</div>
     </header>`;
   }
   function filtreBagla() {
@@ -387,24 +398,24 @@
   function anaCiz(d, hepsi) {
     if (!d.yetki.analiz) {
       // Veri Giriş Admini: yalnız Veri Durumu kartı
-      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, 'Okul Kokpiti', sonDenemeMetni(d))}${veriKartiCiz(d)}</div>`;
+      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, `${d.seviye || ''}. sınıflar`, sonDenemeMetni(d))}${veriKartiCiz(d)}</div>`;
       filtreBagla();
       return;
     }
     if (!d.sonDeneme && !d.veriDurumu.toplam) {
-      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, 'Okul Kokpiti', '')}
+      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, `${d.seviye || ''}. sınıflar`, '')}
         <div class="kp-card kp-state"><h2>Bu dönemde değerlendirilmiş deneme yok</h2><p>Deneme sonuçları yüklendiğinde kokpit kendiliğinden dolar.</p>
         <a class="kp-btn kp-btn-primary" href="${filtreQS({ okul: ST.okulId })}#veri">Veri Durumu</a></div></div>`;
       filtreBagla();
       return;
     }
     if (hepsi) {
-      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, 'Dikkat gerektirenler', sonDenemeMetni(d), { crumb: `<p class="kp-crumb"><a href="${filtreQS({ okul: ST.okulId })}#">Okul Kokpiti</a> / Tüm uyarılar</p>` })}
+      $('#kp-view').innerHTML = `<div class="kp-container">${baslikCiz(d, 'Dikkat gerektirenler', sonDenemeMetni(d), { crumbAd: 'Tüm uyarılar' })}
         ${uyarilarCiz(d, true)}</div>`;
       filtreBagla(); bagla(); return;
     }
     $('#kp-view').innerHTML = `<div class="kp-container">
-      ${baslikCiz(d, 'Okul Kokpiti', sonDenemeMetni(d), { rapor: true })}
+      ${baslikCiz(d, `${d.seviye}. sınıflar`, sonDenemeMetni(d), { rapor: true })}
       ${kpiCiz(d)}
       <div class="kp-grid-2">${uyarilarCiz(d)}${veriKartiCiz(d)}</div>
       <div class="kp-grid-eq">${dersCiz(d)}${degisimCiz(d)}</div>
@@ -475,8 +486,9 @@
   async function ciz() {
     menuCiz();
     const r = rota();
-    if (ST.kapsam === 'veri' && !['ana', 'veri'].includes(r.ad)) { location.hash = 'veri'; return; }
+    if (ST.kapsam === 'veri' && !['ana', 'veri', 'kademe'].includes(r.ad)) { location.hash = 'veri'; return; }
     if (EKRANLAR[r.ad]) {
+      if (r.ad === 'ana') { await EKRANLAR.ana(); return; }  // Okul Geneli kendi verisini yükler
       // Detay ekranı doğrudan açıldıysa (paylaşılan bağlantı) uyarı/yetki verisini de yükle
       const anahtar = `${ST.okulId}${filtreQS()}`;
       if (!ST.veri || ST.veriAnahtar !== anahtar) {
@@ -497,7 +509,7 @@
       } else {
         anaCiz(d, r.ad === 'uyarilar');
       }
-      document.title = `Okul Kokpiti · ${d.okul.ad}`;
+      document.title = `${d.seviye ? d.seviye + '. sınıflar' : 'Kademe'} · ${d.okul.ad}`;
     } catch (e) {
       hataCiz(e);
     }
@@ -535,7 +547,7 @@
   window.Kokpit = {
     ST, api, okulYolu, filtreQS, esc, fmt, isaretli, yuzde, trTarih, kisaTarih, dersAd, kisaAd, DERS_AD, DERS_KISA,
     toast, modalAc, modalKapat, baslikCiz, filtreBagla, sonDenemeMetni, iskelet, hataCiz, ciz, EKRANLAR, setParams, params,
-    bagla, menuCiz, turAd,
+    bagla, menuCiz, turAd, kademeCrumb,
   };
   document.addEventListener('DOMContentLoaded', basla);
   if (document.readyState !== 'loading') basla();

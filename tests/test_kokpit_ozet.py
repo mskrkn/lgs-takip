@@ -119,6 +119,27 @@ class OzetTablosuTestleri(unittest.TestCase):
         self.db.commit()
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM kokpit_kirli").fetchone()[0], 0)
 
+    def test_veri_surumu_sayaci(self):
+        """Panel hizlandirma: ogrenci/deneme/sonuc her degisiminde okulun
+        sayaci artar; baska okul ve okulsuz satir etkilenmez."""
+        sur = lambda o: kokpit.veri_surumu(self.db, o)  # noqa: E731
+        a1, b1 = sur(1), sur(2)
+        self.assertGreater(a1, 0)  # setUp'taki eklemeler saydi
+        self.db.execute("UPDATE students SET first_name='X' WHERE id=1")
+        self.db.commit()
+        self.assertEqual(sur(1), a1 + 1)
+        self.assertEqual(sur(2), b1)
+        self.db.execute("DELETE FROM results WHERE id=1")
+        self.db.execute("INSERT INTO exams VALUES (9,'B okulu','2026-11-01','LGS','{}',2)")
+        self.db.commit()
+        self.assertEqual(sur(1), a1 + 2)
+        self.assertEqual(sur(2), b1 + 1)
+        n = self.db.execute("SELECT COUNT(*) FROM veri_surumu").fetchone()[0]
+        self.db.execute("INSERT INTO students VALUES (500,'1','Okulsuz','Kayit','8-A',NULL)")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM veri_surumu").fetchone()[0], n)
+        self.assertEqual(sur(99), 0)
+
     def test_eksik_karne(self):
         self.db.execute("INSERT INTO results VALUES (70,4,1,?,1)",
                         (json.dumps({"subjects": {"turkce": {"correct": 10, "wrong": 0}}}),))
