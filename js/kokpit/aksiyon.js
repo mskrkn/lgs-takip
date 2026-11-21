@@ -10,7 +10,9 @@
   const { esc, api, okulYolu, ST, trTarih } = K;
   ST.aksiyonAktif = true;
 
-  function filtreler() {
+  // u.seviye: Okul Geneli'ndeki uyarılar kendi kademesini taşır (tüm yıl)
+  function filtreler(u) {
+    if (u && u.seviye) return { seviye: u.seviye };
     const p = K.params();
     const f = {};
     ['seviye', 'donem', 'bas', 'bit'].forEach((k) => { if (p.get(k)) f[k] = p.get(k); });
@@ -21,7 +23,7 @@
   async function onizle(u, ek) {
     return api(okulYolu('/aksiyonlar?onizleme=1'), {
       method: 'POST',
-      body: JSON.stringify(Object.assign({ tur: u.aksiyon.tur, uyariAnahtari: u.anahtar, hedef: u.hedef, filtreler: filtreler() }, ek || {})),
+      body: JSON.stringify(Object.assign({ tur: u.aksiyon.tur, uyariAnahtari: u.anahtar, hedef: u.hedef, filtreler: filtreler(u) }, ek || {})),
     });
   }
 
@@ -73,7 +75,7 @@
           const r = await api(okulYolu('/aksiyonlar'), {
             method: 'POST',
             body: JSON.stringify(Object.assign({
-              tur: o.tur, uyariAnahtari: o.uyariAnahtari, hedef: u.hedef, filtreler: filtreler(),
+              tur: o.tur, uyariAnahtari: o.uyariAnahtari, hedef: u.hedef, filtreler: filtreler(u),
               metin: b.querySelector('#kp-ak-metin').value, onay: true, onayKodu: o.onayKodu,
             }, ek || {})),
           });

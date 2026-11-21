@@ -219,6 +219,17 @@ const App = {
     // Okul Kokpiti yalnizca admin/super_admin'e acik (yetki devredilmis ogretmen goremez)
     const kokpitNav = document.getElementById('nav-okul-kokpiti');
     if (kokpitNav && this.currentUser?.isDelegateAdmin) kokpitNav.style.display = 'none';
+    // Kendi okulunun Okul Admini: "Anasayfa" artik Okul Geneli (okul-kokpiti.html).
+    // Masaustu menu ve mobil alt cubuk AYRI yapilar - ikisi de degistirilir.
+    if (this._okulGeneliAnasayfa()) {
+      if (kokpitNav) kokpitNav.style.display = 'none';
+      document.querySelectorAll('.nav-item[data-page="dashboard"], .mobile-nav-item[data-page="dashboard"]').forEach((el) => {
+        const ikon = el.querySelector('.nav-icon, .mobile-nav-icon');
+        const ad = el.querySelector('span:not(.nav-icon):not(.mobile-nav-icon)');
+        if (ikon) ikon.textContent = '🧭';
+        if (ad) ad.textContent = el.classList.contains('mobile-nav-item') ? 'Okul' : 'Okul Geneli';
+      });
+    }
     if (isPurePlatformAccount) {
       const visiblePages = ['dashboard', 'schools', 'system-logs', 'users', 'students', 'exams', 'import', 'question-bank', 'reports'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
@@ -278,9 +289,15 @@ const App = {
 
     // Derin baglanti (Okul Kokpiti menusu): /index.html?page=exams - yalnizca
     // bu hesapta GORUNUR bir menu sayfasi ise; degilse eskisi gibi Anasayfa.
-    const deepPage = new URLSearchParams(window.location.search).get('page');
+    const deepParams = new URLSearchParams(window.location.search);
+    const deepPage = deepParams.get('page');
     const deepNav = deepPage && document.querySelector(`.nav-item[data-page="${CSS.escape(deepPage)}"]`);
-    await this.navigateTo(deepNav && deepNav.style.display !== 'none' ? deepPage : 'dashboard');
+    const deepOk = deepNav && deepNav.style.display !== 'none';
+    await this.navigateTo(deepOk ? deepPage : 'dashboard');
+    // Okul Geneli > Hızlı işlemler: ilgili pencereyi doğrudan aç
+    const islem = deepOk ? deepParams.get('islem') : null;
+    if (islem === 'ogrenci-ekle' && deepPage === 'students') this.showAddStudentModal();
+    if (islem === 'deneme-ekle' && deepPage === 'exams') this.showAddExamModal();
   },
 
   // Hesap turu rozeti: "Platform Sahibi" (bu okulun normal admini + baska
@@ -594,6 +611,10 @@ const App = {
           // Bölüm 2: Veri Giriş Admini operasyon odaklı kendi Anasayfa'sını
           // görür (öğrenci/sınıf karşılaştırma detayları DEĞİL).
           await this.renderDataAdminDashboard();
+        } else if (this._okulGeneliAnasayfa()) {
+          // Okul Admini'nin Anasayfa'si Okul Geneli (sunucu verisiyle, kademe kartlari)
+          window.location.href = '/okul-kokpiti.html';
+          return;
         } else {
           await this.renderDashboard();
         }
@@ -1047,6 +1068,13 @@ const App = {
   // itibarıyla iki rol arasında UI seviyesinde bir ayrım yok (bkz. bu
   // oturumdaki daha önceki bulgu: DATA_ADMIN henüz frontend'de
   // kısıtlanmıyor) - bu yüzden tüm okul-seviyesi hesaplara aynı, tam set gösterilir.
+  // Kendi okulu olan, platform/veri giris/delege OLMAYAN okul admini mi?
+  // (server: kokpit.varsayilan_acilis ile ayni kural)
+  _okulGeneliAnasayfa() {
+    const u = this.currentUser || {};
+    return u.role === 'admin' && !!u.organizationId && !u.canManageSchools && !u.dataEntryOnly && !u.isDelegateAdmin;
+  },
+
   _renderQuickActions() {
     return `
       <div class="card mt-2">
