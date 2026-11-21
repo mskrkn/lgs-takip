@@ -19,6 +19,7 @@ deneme_sonuclari.csv
 !deneme_sihirbazi.py
 !kokpit.py
 !kokpit_hesap.py
+!kokpit_rapor.py
 !tests/test_kokpit*.py
 yedekler/
 __pycache__/

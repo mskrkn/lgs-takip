@@ -1201,3 +1201,169 @@ def api_taslak_durum(tid):
                (durum, odev_id, datetime.now().isoformat(timespec="seconds"), tid))
     db.commit()
     return jsonify({"ok": True})
+
+
+# ================================================================ raporlar (sartname 7)
+# Dosyalar herkese acik bir yolda DEGIL: BASE_DIR/.kokpit_raporlar (nokta ile
+# baslayan yol statik sunumda engelli, .gitignore'da). Indirme yalnizca
+# /api/kokpit/indir/<token> ile: token isi baslatan kullaniciya bagli, imzali
+# ve RAPOR_LINK_OMRU saniyede gecersiz; ayrica oturum zorunlu.
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer  # noqa: E402
+
+RAPOR_BEKLEME = 4.5  # bu surede biterse dogrudan baglanti doner, yoksa arka plan isi
+
+
+def _rapor_dir():
+    d = os.path.join(S.BASE_DIR, RAPOR_DIR_ADI)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _imzaci():
+    return URLSafeTimedSerializer(S.app.secret_key, salt="kokpit-rapor-indir")
+
+
+def _indir_linki(is_id, user_id):
+    return "/api/kokpit/indir/" + _imzaci().dumps({"is": is_id, "u": user_id})
+
+
+def ogrenci_net_listesi(db, org_id, seviye, exam_ids):
+    if not exam_ids:
+        return []
+    ph = ",".join("?" * len(exam_ids))
+    ogr = {s["id"]: s for s in db.execute(
+        "SELECT id, first_name, last_name, school_number FROM students WHERE organization_id = ?", (org_id,)).fetchall()}
+    den = {r["exam_id"]: r for r in db.execute(f"SELECT exam_id, ad, tarih FROM kokpit_deneme WHERE exam_id IN ({ph})",
+                                               list(exam_ids)).fetchall()}
+    out = []
+    for r in db.execute(f"SELECT * FROM kokpit_ogrenci WHERE organization_id = ? AND grade IS ? AND exam_id IN ({ph}) "
+                        f"ORDER BY class_name, student_id", (org_id, seviye, *exam_ids)).fetchall():
+        s = ogr.get(r["student_id"])
+        dersler = {k: v[3] for k, v in json.loads(r["ders_json"] or "{}").items()}
+        out.append({"numara": s["school_number"] if s else None, "ad": _ogr_ad(s) if s else f"#{r['student_id']}",
+                    "sube": r["class_name"], "deneme": den[r["exam_id"]]["ad"] if r["exam_id"] in den else r["exam_id"],
+                    "tarih": den[r["exam_id"]]["tarih"] if r["exam_id"] in den else None, "dersler": dersler,
+                    "toplamNet": r["toplam_net"], "d": r["d"], "y": r["y"], "puan": r["puan"]})
+    out.sort(key=lambda o: (S._class_sort_key(o["sube"]), o["ad"], o["tarih"] or ""))
+    return out
+
+
+def _rapor_uret(is_id, okul_id, kapsam, fmt_, filtre, user_id):
+    """Arka plan is parcacigi: kendi DB baglantisiyla calisir (Flask g yok)."""
+    import kokpit_rapor
+    conn = sqlite3.connect(S.DB_PATH, timeout=20)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=20000")
+    try:
+        v = acilis_verisi(conn, okul_id, kapsam, filtre.get("seviye"), args=filtre)
+        veri = _okul_verisi(conn, okul_id, v["seviye"])
+        ids = _ids(veri["denemeler"], v["donem"]["secili"])
+        if fmt_ == "pdf":
+            icerik = kokpit_rapor.pdf(v)
+        else:
+            icerik = kokpit_rapor.excel(v, ogrenci_net_listesi(conn, okul_id, v["seviye"], ids))
+        yol = os.path.join(_rapor_dir(), f"{is_id}.{fmt_}")
+        with open(yol, "wb") as f:
+            f.write(icerik)
+        conn.execute("UPDATE kokpit_rapor_isleri SET durum = 'hazir', dosya = ?, finished_at = ? WHERE id = ?",
+                     (os.path.basename(yol), datetime.now().isoformat(timespec="seconds"), is_id))
+        conn.commit()
+    except Exception as e:  # rapor hatasi kokpiti dusurmesin, is satirinda gorunsun
+        conn.execute("UPDATE kokpit_rapor_isleri SET durum = 'hata', hata = ?, finished_at = ? WHERE id = ?",
+                     (str(e)[:500], datetime.now().isoformat(timespec="seconds"), is_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _eski_raporlari_sil():
+    sinir = time.time() - 24 * 3600
+    try:
+        for ad in os.listdir(_rapor_dir()):
+            yol = os.path.join(_rapor_dir(), ad)
+            if os.path.getmtime(yol) < sinir:
+                os.remove(yol)
+    except OSError:
+        pass
+
+
+def _is_yaniti(db, okul_id, is_id):
+    r = db.execute("SELECT * FROM kokpit_rapor_isleri WHERE id = ? AND organization_id = ? AND user_id = ?",
+                   (is_id, okul_id, session["user_id"])).fetchone()
+    if not r:
+        return None
+    out = {"isId": r["id"], "durum": r["durum"], "format": r["format"]}
+    if r["durum"] == "hazir":
+        out["indir"] = _indir_linki(r["id"], session["user_id"])
+        out["gecerlilikSn"] = RAPOR_LINK_OMRU
+    elif r["durum"] == "hata":
+        out["hata"] = r["hata"]
+    return out
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/rapor", methods=["POST"])
+@_korumali()
+def api_rapor(db, okul_id, kapsam):
+    g = request.get_json(silent=True) or {}
+    fmt_ = g.get("format")
+    if fmt_ not in ("pdf", "xlsx"):
+        return jsonify({"error": "Geçersiz format (pdf ya da xlsx)."}), 400
+    filtre = {k: str(v)[:20] for k, v in (g.get("filtreler") or {}).items() if k in ("seviye", "donem", "bas", "bit") and v}
+    _eski_raporlari_sil()
+    is_id = uuid.uuid4().hex
+    db.execute("INSERT INTO kokpit_rapor_isleri (id, organization_id, user_id, format, filtre_json, durum, created_at) "
+               "VALUES (?,?,?,?,?, 'calisiyor', ?)", (is_id, okul_id, session["user_id"], fmt_, json.dumps(filtre),
+                                                       datetime.now().isoformat(timespec="seconds")))
+    db.commit()
+    th = threading.Thread(target=_rapor_uret, args=(is_id, okul_id, kapsam, fmt_, filtre, session["user_id"]), daemon=True)
+    th.start()
+    th.join(RAPOR_BEKLEME)
+    if th.is_alive():
+        # 5 sn'den uzun suren rapor arka planda biter; istemci durum ucunu yoklar
+        # ve hazir olunca kullaniciya bildirim gosterir.
+        return jsonify({"isId": is_id, "durum": "calisiyor"}), 202
+    S.log_audit(db, f"KOKPIT_RAPOR_{fmt_.upper()}", resource_type="organization", resource_id=okul_id)
+    return jsonify(_is_yaniti(db, okul_id, is_id))
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/rapor/<is_id>")
+@_korumali()
+def api_rapor_durum(db, okul_id, kapsam, is_id):
+    out = _is_yaniti(db, okul_id, is_id)
+    if not out:
+        return jsonify({"error": "Rapor işi bulunamadı."}), 404
+    return jsonify(out)
+
+
+@bp.route("/api/kokpit/indir/<token>")
+def api_rapor_indir(token):
+    if "user_id" not in session:
+        return jsonify({"error": "Raporu indirmek için giriş yapmanız gerekiyor."}), 401
+    try:
+        veri = _imzaci().loads(token, max_age=RAPOR_LINK_OMRU)
+    except SignatureExpired:
+        return jsonify({"error": "İndirme bağlantısının süresi doldu. Raporu yeniden oluşturun."}), 410
+    except BadSignature:
+        return jsonify({"error": "Geçersiz indirme bağlantısı."}), 403
+    if veri.get("u") != session["user_id"]:
+        return jsonify({"error": "Bu bağlantı başka bir kullanıcıya ait."}), 403
+    db = S.get_db()
+    r = db.execute("SELECT * FROM kokpit_rapor_isleri WHERE id = ? AND user_id = ?", (veri.get("is"), session["user_id"])).fetchone()
+    if not r or r["durum"] != "hazir" or not r["dosya"]:
+        return jsonify({"error": "Rapor bulunamadı."}), 404
+    # okul yetkisi indirme aninda da kontrol edilir (yetki bu arada kalkmis olabilir)
+    try:
+        _yetki(db, r["organization_id"])
+    except _Red as e:
+        return jsonify({"error": e.mesaj}), e.kod
+    yol = os.path.join(_rapor_dir(), os.path.basename(r["dosya"]))
+    if not os.path.isfile(yol):
+        return jsonify({"error": "Rapor dosyası artık yok. Raporu yeniden oluşturun."}), 410
+    okul = re.sub(r"[^A-Za-z0-9]+", "-", _okul_adi(db, r["organization_id"]).translate(
+        str.maketrans("ıİşŞçÇğĞöÖüÜ", "iIsScCgGoOuU"))).strip("-") or "okul"
+    ad = f"okul-kokpiti-{okul}-{datetime.now():%Y%m%d}.{r['format']}"
+    mime = "application/pdf" if r["format"] == "pdf" else \
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    resp = send_file(yol, mimetype=mime, as_attachment=True, download_name=ad)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
