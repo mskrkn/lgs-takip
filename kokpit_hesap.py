@@ -18,6 +18,9 @@ import math
 from datetime import date, timedelta
 
 # ---------------------------------------------------------------- sabitler
+# Ozet tablodaki satirlari etkileyen bir hesap kurali (net, puan, eksik
+# karne) degisince artirilir: kokpit.init_schema tum denemeleri yeniden kurar.
+HESAP_SURUMU = "2"
 DERS_SIRASI = ["turkce", "inkilap", "din", "ingilizce", "matematik", "fen"]
 DERS_AD = {
     "turkce": "Türkçe", "inkilap": "İnkılap Tarihi", "din": "Din Kültürü",

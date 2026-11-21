@@ -42,6 +42,7 @@ RAPOR_LINK_OMRU = 600                # imzali indirme baglantisi (sn)
 ONAY_OMRU = 1800                     # onizleme -> gonderim arasi en fazla (sn)
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS kokpit_meta (anahtar TEXT PRIMARY KEY, deger TEXT);
 CREATE TABLE IF NOT EXISTS kokpit_kirli (
     exam_id INTEGER PRIMARY KEY
 );
@@ -138,6 +139,11 @@ def init_schema(db_path):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE notifications ADD COLUMN {col} {'INTEGER' if col == 'organization_id' else 'TEXT'}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read)")
+        r = conn.execute("SELECT deger FROM kokpit_meta WHERE anahtar = 'hesap_surumu'").fetchone()
+        if not r or r[0] != K.HESAP_SURUMU:
+            # hesap kurali degisti: tum ozet satirlari bir sonraki okumada yeniden kurulur
+            conn.execute("INSERT OR IGNORE INTO kokpit_kirli(exam_id) SELECT id FROM exams")
+            conn.execute("INSERT OR REPLACE INTO kokpit_meta VALUES ('hesap_surumu', ?)", (K.HESAP_SURUMU,))
         conn.commit()
     finally:
         conn.close()
@@ -524,3 +530,17 @@ def api_ayarlar(db, okul_id, kapsam):
     S.log_audit(db, "KOKPIT_AYAR_GUNCELLE", resource_type="organization", resource_id=okul_id)
     ayar, kayitli = _ayarlar(db, okul_id)
     return jsonify({"ok": True, "ayarlar": ayar, "degistirilen": list(kayitli)})
+
+
+def varsayilan_acilis(db):
+    """Girişte kokpit mi acilsin? Yalnizca kendi okulu olan Okul Admini
+    (platform hesabi ya da Veri Giris Admini degil)."""
+    if session.get("role") != "admin" or "user_id" not in session:
+        return False
+    uid = session["user_id"]
+    own = db.execute("SELECT organization_id FROM users WHERE id = ?", (uid,)).fetchone()
+    if not own or not own["organization_id"]:
+        return False
+    if S.has_permission(db, uid, "organization.manage"):
+        return False
+    return S._admin_subrole(db, uid, "admin") != "DATA_ADMIN"

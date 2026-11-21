@@ -3192,6 +3192,11 @@ def _safe_send(filename):
 def root():
     role = session.get("role")
     if role in ("admin", "super_admin"):
+        # Okul Kokpiti (okul yoneticisi bolumu): kendi okulu olan Okul Admini
+        # girince kokpit acilir. Veri Giris Admini ve platform hesaplari eskisi
+        # gibi yonetim paneline duser; panel her zaman /index.html'de.
+        if kokpit.varsayilan_acilis(get_db()):
+            return redirect("/okul-kokpiti.html")
         return _safe_send("index.html")
     if role == "teacher":
         # Yetki devredilmis (delege) bir ogretmense hesap ekleme/listeleme
