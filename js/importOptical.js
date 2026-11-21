@@ -706,6 +706,7 @@ const ImportOptical = {
     const infoEl = document.getElementById('optical-answer-key-excel-info');
     const setInfo = (html, isError) => { if (infoEl) infoEl.innerHTML = `<span style="color:${isError ? '#ef4444' : '#10b981'}">${html}</span>`; };
 
+    await Kutuphane.yukle('xlsx').catch(() => {});  // ihtiyac aninda; olmazsa asagidaki uyari
     if (typeof XLSX === 'undefined') {
       UI.toast('Excel kütüphanesi yüklenemedi', 'danger');
       return;
@@ -1467,7 +1468,8 @@ const ImportOptical = {
   },
 
   // Download evaluated data as Excel (.xlsx)
-  downloadOpticalAsExcel() {
+  async downloadOpticalAsExcel() {
+    await Kutuphane.yukle('xlsx').catch(() => {});  // ihtiyac aninda; olmazsa CSV uyarisi
     if (!this.opticalResults || this.opticalResults.length === 0) {
       UI.toast('Dışa aktarılacak veri bulunamadı', 'warning');
       return;

@@ -15,6 +15,7 @@ const ExportModule = {
     const alerts = await db.getStudentAlerts(studentId);
 
     // Create PDF
+    if (!(await Kutuphane.dene('jspdf'))) return;
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('p', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -166,6 +167,7 @@ const ExportModule = {
     const rankings = await db.getExamRankings(examId);
     const averages = await db.getExamAverages(examId);
 
+    if (!(await Kutuphane.dene('jspdf'))) return;
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
     const pageWidth = doc.internal.pageSize.getWidth();

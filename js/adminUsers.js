@@ -916,6 +916,7 @@ const AdminUsers = {
         line => line.split(/[,;]/).map(c => c.trim().replace(/^"|"$/g, ''))
       );
     } else {
+      if (!(await Kutuphane.dene('xlsx'))) return;
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];

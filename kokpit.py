@@ -124,6 +124,56 @@ CREATE TRIGGER IF NOT EXISTS trg_kokpit_students_del AFTER DELETE ON students BE
     INSERT OR IGNORE INTO kokpit_kirli(exam_id)
         SELECT DISTINCT exam_id FROM results WHERE student_id = OLD.id AND exam_id IS NOT NULL;
 END;
+
+-- Panel hizlandirma: okulun ogrenci/deneme/sonuc verisi her degistiginde
+-- artan sayac. /api/admin/snapshot?surum=N ayni sayacta 'degismedi' doner,
+-- panel her acilista tum veriyi yeniden indirmez.
+CREATE TABLE IF NOT EXISTS veri_surumu (organization_id INTEGER PRIMARY KEY, surum INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_ins AFTER INSERT ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_upd AFTER UPDATE ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_students_del AFTER DELETE ON students BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_ins AFTER INSERT ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_upd AFTER UPDATE ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_exams_del AFTER DELETE ON exams BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_ins AFTER INSERT ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_upd AFTER UPDATE ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT NEW.organization_id, 1 WHERE NEW.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        AND OLD.organization_id IS NOT NEW.organization_id
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_surum_results_del AFTER DELETE ON results BEGIN
+    INSERT INTO veri_surumu(organization_id, surum) SELECT OLD.organization_id, 1 WHERE OLD.organization_id IS NOT NULL
+        ON CONFLICT(organization_id) DO UPDATE SET surum = surum + 1;
+END;
 """
 
 
@@ -536,6 +586,12 @@ def api_ayarlar(db, okul_id, kapsam):
     S.log_audit(db, "KOKPIT_AYAR_GUNCELLE", resource_type="organization", resource_id=okul_id)
     ayar, kayitli = _ayarlar(db, okul_id)
     return jsonify({"ok": True, "ayarlar": ayar, "degistirilen": list(kayitli)})
+
+
+def veri_surumu(db, org_id):
+    """Okulun ogrenci/deneme/sonuc verisinin surum sayaci (tetikleyicilerle artar)."""
+    r = db.execute("SELECT surum FROM veri_surumu WHERE organization_id = ?", (org_id,)).fetchone()
+    return int(r[0]) if r else 0
 
 
 def okul_kabugu_index(db):

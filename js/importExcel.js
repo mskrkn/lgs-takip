@@ -102,6 +102,7 @@ const ImportExcel = {
         const text = await file.text();
         data = this.parseCSV(text);
       } else {
+        if (!(await Kutuphane.dene('xlsx'))) return;
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];

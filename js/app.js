@@ -518,10 +518,29 @@ const App = {
         const st = (typeof AdminUsers !== 'undefined' && AdminUsers.syncToServer) ? await AdminUsers.syncToServer(true) : 'error';
         if (st !== 'ok') return; // çevrimdışı / onay bekleyen toplu silme - yerel değişiklikler korunur
       }
-      const res = await fetch('/api/admin/snapshot');
+      // Hizlandirma: son eslemedeki surum + yerel kayit sayilari saklanir. Yerel
+      // veri o haliyle duruyorsa surum gonderilir; sunucuda degisiklik yoksa tum
+      // veri yeniden indirilip IndexedDB'ye baştan yazilmaz.
+      const orgId = this.currentUser?.organizationId;
+      const surumKey = orgId ? `edupusula_snapshot_surum_org${orgId}` : null;
+      const sayim = async () => ({ s: await db.getStudentCount(), e: await db.getExamCount(), r: await db.getResultCount() });
+      let onceki = null;
+      try { onceki = surumKey ? JSON.parse(localStorage.getItem(surumKey) || 'null') : null; } catch (e) { onceki = null; }
+      let q = '';
+      if (onceki && onceki.surum != null) {
+        const simdi = await sayim();
+        if (simdi.s === onceki.s && simdi.e === onceki.e && simdi.r === onceki.r && (simdi.s + simdi.e + simdi.r) > 0) {
+          q = `?surum=${encodeURIComponent(onceki.surum)}`;
+        }
+      }
+      const res = await fetch('/api/admin/snapshot' + q);
       if (!res.ok) return;
       const snap = await res.json();
+      if (snap.degismedi) return;  // yerel veri guncel
       const r = await db.replaceOwnDataFromServer(snap);
+      if (surumKey && snap.surum != null) {
+        try { localStorage.setItem(surumKey, JSON.stringify(Object.assign({ surum: snap.surum }, await sayim()))); } catch (e) { /* yoksay */ }
+      }
       if (r && (r.before.students !== r.after.students || r.before.exams !== r.after.exams || r.before.results !== r.after.results)) {
         console.info('Yerel veri sunucuyla eşlendi:', r);
         if (r.before.students + r.before.exams + r.before.results > 0) {
