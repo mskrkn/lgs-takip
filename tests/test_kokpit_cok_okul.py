@@ -245,6 +245,37 @@ class CokOkulTesti(unittest.TestCase):
         s, _ = self.get(PLATFORM, "/api/okullar/404/kokpit", rol="super_admin")
         self.assertEqual(s, 404)
 
+    def test_okul_geneli_kademe_kartlari(self):
+        s, d = self.get(22, "/api/okullar/2/kokpit/genel")
+        self.assertEqual(s, 200)
+        self.assertEqual([k["seviye"] for k in d["kademeler"]], ["6", "7"])
+        self.assertEqual(d["toplam"]["ogrenci"], 16)
+        self.assertEqual(d["toplam"]["sube"], 3)
+        k6, k7 = d["kademeler"]
+        self.assertEqual((k6["kayitli"], k6["subeSayisi"], k6["degerlendirilen"]), (12, 2, 2))
+        self.assertTrue(k6["lgs"])
+        self.assertFalse(k7["lgs"])
+        self.assertIsNone(k7["puan"])
+        self.assertTrue(all("seviye" in u for u in d["uyarilar"]))
+        self.assertEqual(d["veriKalitesi"], {"ogrenci": 16, "subesiz": 0, "velisiz": 16})
+        self.assertEqual(self.get(11, "/api/okullar/2/kokpit/genel")[0], 403)
+
+    def test_ogrenci_arama_okulla_sinirli(self):
+        s, d = self.get(22, "/api/okullar/2/kokpit/ogrenci-ara?q=soyad")
+        self.assertEqual(s, 200)
+        b_ids = {x for v in self.B.values() for x in v}
+        self.assertTrue(d["ogrenciler"])
+        self.assertTrue({o["id"] for o in d["ogrenciler"]} <= b_ids)
+        hedef = self.B["6/1"][0]
+        s, d = self.get(22, f"/api/okullar/2/kokpit/ogrenci-ara?q={hedef}")
+        self.assertIn(hedef, [o["id"] for o in d["ogrenciler"]])
+        o = next(o for o in d["ogrenciler"] if o["id"] == hedef)
+        self.assertEqual((o["sube"], o["denemeSayisi"]), ("6/1", 2))
+        a_ogr = self.A_8["8-A"][0]
+        s, d = self.get(22, f"/api/okullar/2/kokpit/ogrenci-ara?q=Soyad{a_ogr}")
+        self.assertNotIn(a_ogr, [o["id"] for o in d["ogrenciler"]])
+        self.assertEqual(self.get(11, "/api/okullar/2/kokpit/ogrenci-ara?q=soyad")[0], 403)
+
     def test_ogretmen_ve_oturumsuz(self):
         s, _ = self.get(11, "/api/okullar/1/kokpit", rol="teacher")
         self.assertEqual(s, 403)

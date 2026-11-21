@@ -254,3 +254,47 @@ button, input, select { font: inherit; color: inherit; }
   .kp-layout { display: block; }
   body { background: #fff; }
 }
+
+/* ---------------- Okul Geneli (açılış) ---------------- */
+.kp-kademeler { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+a.kp-kademe { display: flex; flex-direction: column; gap: 10px; color: inherit; text-decoration: none; border: 1px solid transparent; transition: border-color .15s, transform .15s; }
+a.kp-kademe:hover { border-color: #BFDBFE; transform: translateY(-1px); color: inherit; }
+.kp-kademe .kp-card-sub { margin: 0; }
+.kp-kademe-ust { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kp-kademe-ust h3 { margin: 0; font-size: 20px; }
+.kp-tag-uyari { background: #FEF3C7; color: #78350F; }
+.kp-kademe-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.kp-kademe-kpi div { background: var(--kp-surface-2); border-radius: 10px; padding: 8px 10px; min-width: 0; }
+.kp-kademe-kpi small { display: block; font-size: 11px; color: var(--kp-muted-strong); font-weight: 600; }
+.kp-kademe-kpi b { display: block; font-size: 19px; line-height: 1.2; }
+.kp-kademe-kpi b small { display: inline; font-size: 12px; }
+.kp-mini-liste { display: grid; gap: 4px; }
+.kp-mini { display: grid; grid-template-columns: 82px minmax(0, 1fr) 38px; gap: 6px; align-items: center; font-size: 12px; }
+.kp-mini-ad { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kp-muted-strong); font-weight: 600; }
+.kp-mini-bar { height: 7px; background: var(--kp-bg); border-radius: 4px; overflow: hidden; }
+.kp-mini-bar span { display: block; height: 100%; background: var(--kp-blue); border-radius: 4px; }
+.kp-mini-bar span.kp-low { background: var(--kp-orange); }
+.kp-mini-v { text-align: right; font-variant-numeric: tabular-nums; color: var(--kp-muted-strong); }
+.kp-kademe-satir { margin: 0; font-size: 13px; color: var(--kp-muted-strong); }
+.kp-kademe-git { margin-top: auto; font-size: 13px; font-weight: 700; color: var(--kp-blue-text); }
+.kp-hizli { position: relative; }
+.kp-hizli summary { list-style: none; }
+.kp-hizli summary::-webkit-details-marker { display: none; }
+.kp-hizli summary::after { content: "▾"; margin-left: 2px; font-size: 12px; }
+.kp-hizli ul { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 200px; margin: 0; padding: 6px; list-style: none; background: #fff; border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, .16); border: 1px solid var(--kp-line); }
+.kp-hizli li a { display: flex; align-items: center; min-height: 40px; padding: 8px 12px; border-radius: 8px; color: var(--kp-text); text-decoration: none; font-weight: 600; font-size: 14px; }
+.kp-hizli li a:hover { background: var(--kp-surface-2); }
+.kp-ara { width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid #CBD5E1; border-radius: 12px; font-size: 15px; background: #fff; }
+.kp-ara-liste { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.kp-ara-liste li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--kp-line); border-radius: 12px; }
+.kp-ara-liste strong { display: block; }
+.kp-ara-liste span, .kp-ara-net { font-size: 13px; color: var(--kp-muted-strong); }
+@media (max-width: 640px) {
+  .kp-hizli ul { right: auto; left: 0; }
+  .kp-ara-liste li { grid-template-columns: minmax(0, 1fr) auto; }
+  .kp-ara-net { grid-column: 1 / -1; grid-row: 2; }
+}
+.kp-nav-baslik { display: block; margin: 12px 12px 2px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #94A3B8; }
+.kp-cikis { margin-top: 8px; display: inline-flex; align-items: center; min-height: 36px; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(248, 113, 113, .45); background: rgba(248, 113, 113, .12); color: #FCA5A5; font-weight: 700; cursor: pointer; }
+.kp-cikis:hover { background: rgba(248, 113, 113, .22); }
+@media (max-width: 900px) { .kp-nav-baslik { display: none; } .kp-cikis { margin-top: 0; } }
