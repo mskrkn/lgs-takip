@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Bildirimler · EduPusula</title>
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/kokpit/kokpit.css">
+</head>
+<body>
+  <main class="kp-main" id="kp-main" style="max-width:860px;margin:0 auto">
+    <div class="kp-container">
+      <header class="kp-head"><div>
+        <p class="kp-eyebrow"><a href="/" id="bd-geri">← Panele dön</a></p>
+        <h1>Bildirimler</h1>
+        <p class="kp-sub">Okul yönetiminden gelen bildirimler ve taslak ödev önerileri</p>
+      </div></header>
+      <section id="bd-taslak" aria-live="polite"></section>
+      <section class="kp-card"><h2>Gelen bildirimler</h2><div id="bd-liste" style="margin-top:12px"><p>Yükleniyor…</p></div></section>
+      <section class="kp-card" id="bd-taslaklar" hidden><h2>Taslak ödevlerim</h2><div id="bd-taslak-liste" style="margin-top:12px"></div></section>
+    </div>
+  </main>
+  <div class="kp-toast" id="kp-toast" role="status" aria-live="polite" hidden></div>
+  <script src="js/kokpit/bildirimler.js"></script>
+</body>
+</html>

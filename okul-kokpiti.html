@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Okul Kokpiti · EduPusula</title>
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/kokpit/kokpit.css">
+</head>
+<body>
+  <a class="kp-skip" href="#kp-main">İçeriğe geç</a>
+  <div class="kp-layout">
+    <aside class="kp-side" aria-label="Okul yöneticisi menüsü">
+      <div class="kp-brand">
+        <span class="kp-brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z"/></svg>
+        </span>
+        <span>EduPusula</span>
+      </div>
+      <nav class="kp-nav" id="kp-nav"></nav>
+      <div class="kp-side-foot" id="kp-side-foot"></div>
+    </aside>
+    <main class="kp-main" id="kp-main" tabindex="-1">
+      <div id="kp-view" aria-live="polite"></div>
+    </main>
+  </div>
+  <div class="kp-modal" id="kp-modal" hidden>
+    <div class="kp-modal-box" role="dialog" aria-modal="true" aria-labelledby="kp-modal-title">
+      <div class="kp-modal-head">
+        <h2 id="kp-modal-title"></h2>
+        <button type="button" class="kp-icon-btn" id="kp-modal-close" aria-label="Kapat">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="kp-modal-body" id="kp-modal-body"></div>
+    </div>
+  </div>
+  <div class="kp-toast" id="kp-toast" role="status" aria-live="polite" hidden></div>
+  <script src="js/kokpit/kokpit.js"></script>
+  <script src="js/kokpit/ekranlar.js"></script>
+  <script src="js/kokpit/aksiyon.js"></script>
+  <script src="js/kokpit/rapor.js"></script>
+</body>
+</html>

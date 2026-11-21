@@ -216,6 +216,9 @@ const App = {
     // delege hesaplar için anlamsız/yetkisiz, gizlenir.
     const kazanimNav = document.getElementById('nav-kazanim-testleri');
     if (kazanimNav && (isPurePlatformAccount || this.currentUser?.isDelegateAdmin)) kazanimNav.style.display = 'none';
+    // Okul Kokpiti yalnizca admin/super_admin'e acik (yetki devredilmis ogretmen goremez)
+    const kokpitNav = document.getElementById('nav-okul-kokpiti');
+    if (kokpitNav && this.currentUser?.isDelegateAdmin) kokpitNav.style.display = 'none';
     if (isPurePlatformAccount) {
       const visiblePages = ['dashboard', 'schools', 'system-logs', 'users', 'students', 'exams', 'import', 'question-bank', 'reports'];
       if (this.currentUser?.canManageAdmins) visiblePages.push('admins');
@@ -273,7 +276,11 @@ const App = {
       demoNav.style.display = 'none';
     }
 
-    await this.navigateTo('dashboard');
+    // Derin baglanti (Okul Kokpiti menusu): /index.html?page=exams - yalnizca
+    // bu hesapta GORUNUR bir menu sayfasi ise; degilse eskisi gibi Anasayfa.
+    const deepPage = new URLSearchParams(window.location.search).get('page');
+    const deepNav = deepPage && document.querySelector(`.nav-item[data-page="${CSS.escape(deepPage)}"]`);
+    await this.navigateTo(deepNav && deepNav.style.display !== 'none' ? deepPage : 'dashboard');
   },
 
   // Hesap turu rozeti: "Platform Sahibi" (bu okulun normal admini + baska
