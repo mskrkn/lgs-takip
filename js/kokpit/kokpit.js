@@ -112,22 +112,12 @@
       ic('Okul Geneli', `?okul=${ST.okulId}#`, r === 'ana'),
       ic('Veri Durumu', `${qs}#veri`, r === 'veri'),
       ic('Veri Girişi', '/index.html?page=import', false, true),
-    ] : [
-      ic('Okul Geneli', `?okul=${ST.okulId}#`, r === 'ana'),
-      ic(params().get('seviye') ? `${params().get('seviye')}. sınıflar` : 'Kademe ayrıntısı', `${qs}#kademe`, r === 'kademe' || r === 'uyarilar'),
-      ic('Denemeler', '/index.html?page=exams', false, true),
-      ic('Şubeler', `${qs}#subeler`, r === 'subeler' || r === 'sube'),
-      ic('Öğrenciler', '/index.html?page=students', false, true),
-      ic('Ödevler', '/ogretmen.html?page=assignments', false, true),
-      ic('Raporlar', '/index.html?page=reports', false, true),
-      ic('Veri Durumu', `${qs}#veri`, r === 'veri'),
-      ic('Kokpit ayarları', `${qs}#ayarlar`, r === 'ayarlar'),
-      '<span class="kp-nav-baslik">Yönetim</span>',
-      ic('Kullanıcılar', '/index.html?page=users', false, true),
-      ic('Veri Girişi', '/index.html?page=import', false, true),
-      ic('Soru Girişi', '/index.html?page=question-bank', false, true),
-      ic('Panel ayarları', '/index.html?page=settings', false, true),
-    ];
+    ] : (window.OkulMenu ? OkulMenu.ogeler({ okulId: ST.okulId, kokpitQs: qs, seviye: params().get('seviye') }) : []).map((o) => {
+      // Ortak menü (js/okulMenu.js) - yönetim panelindeki Okul Admini menüsüyle birebir aynı
+      if (o.baslik) return `<span class="kp-nav-baslik">${esc(o.baslik)}</span>`;
+      const aktif = { genel: ['ana'], kademe: ['kademe', 'uyarilar'], subeler: ['subeler', 'sube'], veri: ['veri'], 'kokpit-ayarlar': ['ayarlar'] }[o.anahtar];
+      return ic(o.ad, o.url, !!(aktif && aktif.includes(r)), o.dis);
+    });
     $('#kp-nav').innerHTML = items.join('');
     const okul = ST.okullar.find((o) => o.id === ST.okulId);
     const rol = { platform: 'Platform yöneticisi', okul: 'Okul Admini', veri: 'Veri Giriş Admini' }[ST.kapsam] || '';
