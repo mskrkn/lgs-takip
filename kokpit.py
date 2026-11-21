@@ -544,3 +544,213 @@ def varsayilan_acilis(db):
     if S.has_permission(db, uid, "organization.manage"):
         return False
     return S._admin_subrole(db, uid, "admin") != "DATA_ADMIN"
+
+
+# ================================================================ detay ekranlari
+def _ogr_ad(s):
+    return f"{s['first_name'] or ''} {s['last_name'] or ''}".strip() or f"Öğrenci #{s['id']}"
+
+
+def _ogrenci_ortalamalari(db, org_id, seviye, ids, sube=None):
+    """{student_id: {"net","puan","y","n"}} - verilen denemelerdeki ortalamalar."""
+    if not ids:
+        return {}
+    ph = ",".join("?" * len(ids))
+    q = (f"SELECT student_id, AVG(toplam_net) net, AVG(puan) puan, AVG(y) y, COUNT(*) n FROM kokpit_ogrenci "
+         f"WHERE organization_id = ? AND grade IS ? AND exam_id IN ({ph})")
+    args = [org_id, seviye, *ids]
+    if sube is not None:
+        q += " AND class_name = ?"
+        args.append(sube)
+    q += " GROUP BY student_id"
+    return {r["student_id"]: dict(r) for r in db.execute(q, args).fetchall()}
+
+
+def _donem_istatistikleri(veri, donem):
+    d = veri["denemeler"]
+    cur_ids = _ids(d, donem["secili"])
+    once_ids = _ids(d, donem["once"]) if donem["once"] else set()
+    sonra_ids = _ids(d, donem["sonra"]) if donem["sonra"] else set()
+
+    def ist(ids):
+        return K.istatistik(veri["ozet"], veri["katilim"], ids) if ids else None
+    return (cur_ids, once_ids, sonra_ids), (ist(cur_ids), ist(once_ids), ist(sonra_ids))
+
+
+def _ortak(db, okul_id, veri, donem, kapsam):
+    return {"okul": {"id": okul_id, "ad": _okul_adi(db, okul_id)}, "seviye": veri["seviye"],
+            "seviyeler": veri["seviyeler"], "kayitli": len(veri["kayitli"]), "donem": donem,
+            "donemSecenekleri": _donem_secenekleri(veri, donem),
+            "yetki": {"analiz": kapsam != "veri", "aksiyon": kapsam in ("platform", "okul")}}
+
+
+def sube_detayi(db, okul_id, veri, donem, sube, ayar):
+    (cur_ids, once_ids, sonra_ids), (cur, once, sonra) = _donem_istatistikleri(veri, donem)
+    sc = cur["subeler"].get(sube) if cur else None
+    so = once["subeler"].get(sube) if once else None
+    ss = sonra["subeler"].get(sube) if sonra else None
+    kartlar = {k: {"sube": sc.get(k) if sc else None, "okul": cur.get(k) if cur else None}
+               for k in ("toplamNet", "puan", "yanlis", "dogru")}
+    kartlar["ogrenci"] = {"sube": sc.get("ogrenci") if sc else 0,
+                          "kayitli": sum(1 for s in veri["kayitli"] if s["class_name"] == sube)}
+    kartlar["puanDegisim"] = (ss["puan"] - so["puan"]) if so and ss and so.get("puan") is not None \
+        and ss.get("puan") is not None else None
+    trend = []
+    for dn in sorted((x for x in veri["denemeler"] if x["exam_id"] in cur_ids), key=lambda x: (x["tarih"], x["exam_id"])):
+        e = K.istatistik(veri["ozet"], None, {dn["exam_id"]})
+        es = e["subeler"].get(sube)
+        trend.append({"id": dn["exam_id"], "ad": dn["ad"], "tarih": dn["tarih"],
+                      "subeNet": es["toplamNet"] if es else None, "subePuan": es["puan"] if es else None,
+                      "okulNet": e["toplamNet"], "okulPuan": e["puan"], "katilan": es["n"] if es else 0})
+    dersler = []
+    for k, dd in ((sc or {}).get("dersler") or {}).items():
+        okul_d = cur["dersler"].get(k)
+        a = ((so or {}).get("dersler") or {}).get(k)
+        b = ((ss or {}).get("dersler") or {}).get(k)
+        dersler.append({"ders": k, "ad": K.DERS_AD.get(k, k), "net": dd["net"], "soru": dd["soru"], "oran": dd["oran"],
+                        "okulOran": okul_d["oran"] if okul_d else None, "okulNet": okul_d["net"] if okul_d else None,
+                        "degisim": (b["net"] - a["net"]) if a and b else None})
+    cur_o = _ogrenci_ortalamalari(db, okul_id, veri["seviye"], cur_ids, sube)
+    once_o = _ogrenci_ortalamalari(db, okul_id, veri["seviye"], once_ids)
+    sonra_o = _ogrenci_ortalamalari(db, okul_id, veri["seviye"], sonra_ids)
+    ogrenciler = []
+    for s in veri["kayitli"]:
+        if s["class_name"] != sube:
+            continue
+        c, a, b = cur_o.get(s["id"]), once_o.get(s["id"]), sonra_o.get(s["id"])
+        ogrenciler.append({
+            "id": s["id"], "ad": _ogr_ad(s), "numara": s["school_number"],
+            "net": c["net"] if c else None, "puan": c["puan"] if c else None, "yanlis": c["y"] if c else None,
+            "deneme": c["n"] if c else 0, "degisim": (b["net"] - a["net"]) if a and b else None,
+        })
+    risk = K.risk_listesi([o for o in ogrenciler if o["net"] is not None], ayar)
+    return {"sube": sube, "kartlar": kartlar, "trend": trend, "dersler": dersler, "ogrenciler": ogrenciler,
+            "risk": risk, "denemeSayisi": len(cur_ids)}
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/subeler/<path:sube>")
+@_korumali()
+def api_sube(db, okul_id, kapsam, sube):
+    veri = _okul_verisi(db, okul_id, request.args.get("seviye"))
+    subeler = {s["class_name"] for s in veri["kayitli"]} | {r["class_name"] for r in veri["ozet"]}
+    if sube not in subeler:
+        return jsonify({"error": "Şube bulunamadı."}), 404
+    donem = _donem(veri)
+    ayar, _ = _ayarlar(db, okul_id)
+    out = _ortak(db, okul_id, veri, donem, kapsam)
+    out.update(sube_detayi(db, okul_id, veri, donem, sube, ayar))
+    out["ayarlar"] = ayar
+    return jsonify(out)
+
+
+def kazanim_kirilimi(db, org_id, seviye, ders, exam_ids, sube=None):
+    """Ders detayi: secili denemelerdeki kazanimlar icin dogru yuzdesi (A
+    kitapcigi sirasindaki topicMap etiketi + sonuctaki answers D/Y/B).
+    Etiketi olmayan sorular 'Etiketsiz' grubunda; en zayif 5 kazanim isaretli."""
+    if not exam_ids:
+        return []
+    ids = list(exam_ids)
+    ph = ",".join("?" * len(ids))
+    sinif = {r["id"]: r["class_name"] for r in db.execute(
+        "SELECT id, class_name FROM students WHERE organization_id = ?", (org_id,)).fetchall()}
+    tmap = {}
+    for e in db.execute(f"SELECT id, data_json FROM exams WHERE id IN ({ph})", ids).fetchall():
+        data = json.loads(e["data_json"]) if e["data_json"] else {}
+        tmap[e["id"]] = (data.get("topicMap") or {}).get(ders) or []
+    acc = {}
+    for r in db.execute(f"SELECT exam_id, student_id, data_json FROM results WHERE exam_id IN ({ph})", ids).fetchall():
+        cls = sinif.get(r["student_id"])
+        if cls is None or _grade(cls) != seviye or (sube is not None and cls != sube):
+            continue
+        veri = json.loads(r["data_json"]) if r["data_json"] else {}
+        ans = (((veri.get("subjects") or {}).get(ders)) or {}).get("answers")
+        if not ans:
+            continue
+        entries = tmap.get(r["exam_id"], [])
+        for i, a in enumerate(ans):
+            if a not in ("D", "Y", "B"):
+                continue
+            label = ((entries[i] if i < len(entries) else None) or {}).get("kazanim") or "Etiketsiz"
+            x = acc.setdefault(label, {"d": 0, "y": 0, "b": 0, "sorular": set(), "subeler": {}})
+            x["d"] += a == "D"
+            x["y"] += a == "Y"
+            x["b"] += a == "B"
+            x["sorular"].add((r["exam_id"], i))
+            sb = x["subeler"].setdefault(cls, [0, 0])
+            sb[0] += a == "D"
+            sb[1] += 1
+    out = []
+    for label, x in acc.items():
+        t = x["d"] + x["y"] + x["b"]
+        out.append({"kazanim": label, "soruSayisi": len(x["sorular"]), "cevap": t,
+                    "dogruYuzde": x["d"] / t * 100, "yanlisYuzde": x["y"] / t * 100, "bosYuzde": x["b"] / t * 100,
+                    "subeler": {c: v[0] / v[1] * 100 for c, v in x["subeler"].items() if v[1]},
+                    "etiketsiz": label == "Etiketsiz", "zayif": False})
+    out.sort(key=lambda r: r["dogruYuzde"])
+    for r in [r for r in out if not r["etiketsiz"]][:5]:
+        r["zayif"] = True
+    return out
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/dersler/<ders>")
+@_korumali()
+def api_ders(db, okul_id, kapsam, ders):
+    veri = _okul_verisi(db, okul_id, request.args.get("seviye"))
+    donem = _donem(veri)
+    (cur_ids, _, _), (cur, once, sonra) = _donem_istatistikleri(veri, donem)
+    if not cur or ders not in cur["dersler"]:
+        return jsonify({"error": "Bu dönemde bu dersin verisi yok."}), 404
+    subeler = []
+    for cls in K._sube_sirala(cur["subeler"]):
+        x = cur["subeler"][cls]["dersler"].get(ders)
+        if not x:
+            continue
+        a = (((once or {}).get("subeler") or {}).get(cls) or {}).get("dersler", {}).get(ders)
+        b = (((sonra or {}).get("subeler") or {}).get(cls) or {}).get("dersler", {}).get(ders)
+        subeler.append({"sube": cls, "net": x["net"], "oran": x["oran"], "yanlis": x["yanlis"],
+                        "degisim": (b["net"] - a["net"]) if a and b else None})
+    o = cur["dersler"][ders]
+    sube = request.args.get("sube") or None
+    out = _ortak(db, okul_id, veri, donem, kapsam)
+    out.update({
+        "ders": ders, "ad": K.DERS_AD.get(ders, ders), "katsayi": K.KATSAYI.get(ders, 1),
+        "ozet": {"net": o["net"], "soru": o["soru"], "oran": o["oran"], "yanlis": o["yanlis"],
+                 "degisim": (sonra["dersler"][ders]["net"] - once["dersler"][ders]["net"])
+                 if once and sonra and ders in once["dersler"] and ders in sonra["dersler"] else None},
+        "subeler": subeler, "sube": sube, "denemeSayisi": len(cur_ids),
+        "kazanimlar": kazanim_kirilimi(db, okul_id, veri["seviye"], ders, cur_ids, sube),
+    })
+    return jsonify(out)
+
+
+def veri_durumu_detayi(db, veri, donem):
+    kayitli = len(veri["kayitli"])
+    ad = {s["id"]: _ogr_ad(s) for s in veri["kayitli"]}
+    satirlar = []
+    for dn in veri["denemeler"]:
+        if not K.aralikta(dn["tarih"], donem["secili"]):
+            continue
+        eksikler = [ad.get(r["student_id"], f"#{r['student_id']}") for r in db.execute(
+            "SELECT student_id FROM kokpit_ogrenci WHERE exam_id = ? AND eksik = 1 AND grade IS ?",
+            (dn["exam_id"], veri["seviye"])).fetchall()]
+        yuklu = dn["katilanSeviye"] > 0
+        satirlar.append({
+            "id": dn["exam_id"], "ad": dn["ad"], "tarih": dn["tarih"],
+            "durum": "değerlendirildi" if yuklu else "yüklenmedi",
+            "katilan": dn["katilanSeviye"], "kayitli": kayitli,
+            "katilmayan": kayitli - dn["katilanSeviye"] if yuklu else None,
+            "eksikKarne": len(eksikler), "eksikOgrenciler": eksikler[:50],
+            "cevapAnahtari": bool(dn["anahtar_var"]), "kazanim": dn["kazanim_durumu"],
+            "sorunsuz": yuklu and not eksikler and bool(dn["anahtar_var"]) and dn["kazanim_durumu"] == "tam",
+        })
+    return satirlar
+
+
+@bp.route("/api/okullar/<int:okul_id>/kokpit/veri-durumu")
+@_korumali(analiz=False)
+def api_veri_durumu(db, okul_id, kapsam):
+    veri = _okul_verisi(db, okul_id, request.args.get("seviye"))
+    donem = _donem(veri)
+    out = _ortak(db, okul_id, veri, donem, kapsam)
+    out.update({"denemeler": veri_durumu_detayi(db, veri, donem), "ozet": _veri_durumu_paketi(veri, donem)})
+    return jsonify(out)

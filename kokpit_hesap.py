@@ -816,8 +816,11 @@ def risk_listesi(ogrenciler, ayar):
     out = []
     for o in dolu:
         nedenler = []
-        if o.get("oncekiNet") is not None and round(o["net"] - o["oncekiNet"], 2) <= -ayar["riskNetDusus"]:
-            nedenler.append(f"{fmt(o['oncekiNet'] - o['net'], 2)} net düştü")
+        degisim = o.get("degisim")
+        if degisim is None and o.get("oncekiNet") is not None:
+            degisim = o["net"] - o["oncekiNet"]
+        if degisim is not None and round(degisim, 2) <= -ayar["riskNetDusus"]:
+            nedenler.append(f"{fmt(-degisim, 2)} net düştü")
         if o["id"] in alt:
             nedenler.append(f"şubenin alt %{fmt(ayar['riskAltYuzde'], 0)} diliminde")
         if nedenler:

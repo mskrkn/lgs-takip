@@ -472,12 +472,19 @@
     menuCiz();
     const r = rota();
     if (ST.kapsam === 'veri' && !['ana', 'veri'].includes(r.ad)) { location.hash = 'veri'; return; }
-    if (EKRANLAR[r.ad]) { await EKRANLAR[r.ad](r.id); return; }
+    if (EKRANLAR[r.ad]) {
+      // Detay ekranı doğrudan açıldıysa (paylaşılan bağlantı) uyarı/yetki verisini de yükle
+      const anahtar = `${ST.okulId}${filtreQS()}`;
+      if (!ST.veri || ST.veriAnahtar !== anahtar) {
+        try { ST.veri = await api(okulYolu(filtreQS())); ST.veriAnahtar = anahtar; ST.kapsam = ST.veri.kapsam; } catch (e) { /* ekran kendi hatasını gösterir */ }
+      }
+      await EKRANLAR[r.ad](r.id); return;
+    }
     iskelet();
     try {
       const qs = filtreQS();
       const d = await api(okulYolu(qs));
-      ST.veri = d;
+      ST.veri = d; ST.veriAnahtar = `${ST.okulId}${qs}`;
       ST.kapsam = d.kapsam;
       if (r.ad !== rota().ad) return;  // bu arada ekran değişti
       if (r.ad === 'subeler') {

@@ -167,7 +167,7 @@ button, input, select { font: inherit; color: inherit; }
 .kp-vbar:hover .kp-vbar-col { filter: brightness(.92); }
 
 /* ---------------- tablo ---------------- */
-.kp-table-wrap { overflow-x: auto; border: 1px solid var(--kp-line); border-radius: 12px; }
+.kp-table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--kp-line); border-radius: 12px; }
 .kp-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .kp-table th, .kp-table td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--kp-line); white-space: nowrap; }
 .kp-table th:first-child, .kp-table td:first-child { text-align: left; }
