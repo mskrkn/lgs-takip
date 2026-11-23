@@ -185,7 +185,7 @@ function _omrHandleWorkerMessage(ev) {
 // importScripts'e de aktarir. (ogretmen.html'deki <script> etiketlerine ELLE
 // ?v= YAZILMAZ - server.py _version_static_assets her yeniden baslatmada
 // otomatik ekler; elle yazilan surum otomatigi devre disi birakir.)
-const OMR_ENGINE_VERSION = '20261106';
+const OMR_ENGINE_VERSION = '20261123';
 
 // Worker'ı (henüz yoksa) oluşturup hazır olmasını bekler - tek instance,
 // kamera ekranı kapanana kadar (kapatılınca terminate edilir) yaşar.
@@ -306,12 +306,14 @@ async function _omrOpenScanView(examDefId, examTitle) {
     <div style="position:relative;flex:1;overflow:hidden">
       <video id="omr-scan-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
       <div id="omr-scan-frame" style="position:absolute;top:10%;left:20%;width:60%;height:75%;border:3px dashed rgba(255,255,255,0.7);border-radius:8px;pointer-events:none;transition:border-color .15s"></div>
-      <div style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);left:0;right:0;text-align:center;font-size:13px;text-shadow:0 1px 3px #000">
+      <div id="omr-scan-exam-banner" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 6px);left:10px;right:54px;text-align:left;font-size:12px;font-weight:700;color:#e0f2fe;background:rgba(15,23,42,0.75);padding:5px 10px;border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none">📝 ${_omrEsc(examTitle || 'Deneme')}</div>
+      <div style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 38px);left:0;right:0;text-align:center;font-size:13px;text-shadow:0 1px 3px #000">
         <span id="omr-scan-hint">Kağıdı çerçeveye hizalayın</span>
       </div>
-      <div id="omr-engine-badge" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 38px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
-      <button id="omr-auto-approve" type="button" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 70px);left:10px;background:rgba(0,0,0,0.55);color:#fff;border:1px solid #4b5563;border-radius:18px;padding:6px 10px;font-size:12px;font-weight:700"></button>
-      <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 10px);right:10px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
+      <div id="omr-engine-badge" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 62px);left:50%;transform:translateX(-50%);font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(0,0,0,0.55);color:#fbbf24;white-space:nowrap">⏳ Optik motor yükleniyor...</div>
+      <button id="omr-auto-approve" type="button" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 92px);left:10px;background:rgba(0,0,0,0.55);color:#fff;border:1px solid #4b5563;border-radius:18px;padding:6px 10px;font-size:12px;font-weight:700"></button>
+      <button id="omr-torch-btn" type="button" style="display:none;position:absolute;top:calc(var(--omr-top-offset, 0px) + 92px);right:10px;background:rgba(0,0,0,0.55);color:#fff;border:1px solid #4b5563;border-radius:18px;padding:6px 10px;font-size:12px;font-weight:700">🔦 Işık</button>
+      <button id="omr-scan-close" style="position:absolute;top:calc(var(--omr-top-offset, 0px) + 6px);right:10px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:36px;height:36px;font-size:18px">✕</button>
       <div id="omr-scan-card" style="display:none;position:absolute;left:10px;right:10px;bottom:10px;background:rgba(17,24,39,0.96);border:1px solid #374151;border-radius:12px;padding:12px;box-shadow:0 4px 18px rgba(0,0,0,0.6)"></div>
       <div id="omr-scan-sheet" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
       <div id="omr-scan-queue" style="display:none;position:absolute;inset:0;background:#0b1220;overflow-y:auto;padding:12px;z-index:5"></div>
@@ -383,6 +385,8 @@ async function _omrOpenScanView(examDefId, examTitle) {
   }
   _omrScanState.questionCount = examMeta.question_count;
   _omrScanState.templateId = examMeta.form_template || 'compact';
+  const examBannerEl = document.getElementById('omr-scan-exam-banner');
+  if (examBannerEl) examBannerEl.textContent = `📝 ${examTitle || 'Deneme'} · ${examMeta.question_count} soru`;
 
   // Kamera + istemci motoru paralel başlatılır (ikisi de birkaç saniye
   // sürebilir) - hangisi önce biterse öbürünü beklemeden devam eder.
@@ -446,6 +450,26 @@ function _omrStartCamera() {
       v.srcObject = stream;
       const p = v.play && v.play();
       if (p && p.catch) p.catch(() => {});
+      // El feneri (torch) destekleyen telefonlarda tek dokunusla ac/kapa butonu
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+        const torchBtn = document.getElementById('omr-torch-btn');
+        if (caps && caps.torch && torchBtn) {
+          _omrScanState.torchOn = false;
+          torchBtn.style.display = '';
+          torchBtn.onclick = async () => {
+            if (!_omrScanState) return;
+            const next = !_omrScanState.torchOn;
+            try {
+              await track.applyConstraints({ advanced: [{ torch: next }] });
+              _omrScanState.torchOn = next;
+              torchBtn.textContent = next ? '🔦 Işık Açık' : '🔦 Işık';
+              torchBtn.style.borderColor = next ? '#facc15' : '#4b5563';
+            } catch (e) { /* desteklenmiyorsa sessiz gec */ }
+          };
+        }
+      } catch (e) { /* kritik degil */ }
     })
     .catch(err => {
       const name = err && err.name;

@@ -6685,6 +6685,81 @@ def api_teacher_omr_generate_papers(exam_def_id):
     )
 
 
+@app.route("/api/teacher/omr/student-cards", methods=["POST"])
+@login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
+def api_teacher_omr_student_cards():
+    """Kalici ogrenci karekodlu (her denemede yeniden kullanilabilir) standart
+    optik form PDF'i uretir. QR icinde 'EPS1:<student_id>:<template_id>'
+    tasiyan bu kagitlar donem basinda bir kez basilip fotokopiyle cogaltilir;
+    ogretmen her denemede sadece tarama ekraninda aktif denemeyi secip
+    okutur (bkz. _omr_match_student)."""
+    unavailable = _require_omr_form()
+    if unavailable:
+        return unavailable
+
+    db = get_db()
+    org_id = _effective_org_id(db)
+    if org_id is None:
+        return jsonify({"error": "Okul seçilmedi ya da bulunamadı."}), 400
+
+    data = request.get_json(silent=True) or {}
+    student_ids = data.get("studentIds")
+    class_name = (data.get("className") or "").strip() or None
+    template_id = (data.get("formTemplate") or "compact20").strip()
+    if template_id not in ("compact20", "quarter50", "quarter100"):
+        template_id = "compact20"
+    header_text = (data.get("headerText") or "").strip() or "Deneme: ___________________"
+
+    allowed_ids = get_allowed_student_ids(db)
+    if isinstance(student_ids, list) and student_ids:
+        if allowed_ids is not None:
+            student_ids = [sid for sid in student_ids if sid in allowed_ids]
+        if not student_ids:
+            return jsonify({"error": "Seçilen öğrencilere erişiminiz yok."}), 403
+        placeholders = ",".join("?" * len(student_ids))
+        students = db.execute(
+            f"SELECT id, first_name, last_name, class_name FROM students "
+            f"WHERE id IN ({placeholders}) AND organization_id = ? "
+            f"ORDER BY class_name, first_name, last_name",
+            (*student_ids, org_id),
+        ).fetchall()
+    else:
+        query = "SELECT id, first_name, last_name, class_name FROM students WHERE organization_id = ?"
+        params = [org_id]
+        if class_name:
+            query += " AND class_name = ?"
+            params.append(class_name)
+        if allowed_ids is not None:
+            if not allowed_ids:
+                return jsonify({"error": "Erişebileceğiniz öğrenci bulunamadı."}), 403
+            placeholders = ",".join("?" * len(allowed_ids))
+            query += f" AND id IN ({placeholders})"
+            params.extend(list(allowed_ids))
+        query += " ORDER BY class_name, first_name, last_name"
+        students = db.execute(query, params).fetchall()
+
+    if not students:
+        return jsonify({"error": "Seçime uyan öğrenci bulunamadı."}), 404
+
+    template = omr_form.TEMPLATES.get(template_id, omr_form.TEMPLATE_COMPACT20)
+    papers_for_pdf = [
+        {
+            "paper_token": f"EPS1:{s['id']}:{template.id}",
+            "student_name": f"{s['first_name'] or ''} {s['last_name'] or ''}".strip(),
+            "class_name": s["class_name"] or "",
+        }
+        for s in students
+    ]
+    log_audit(db, "OMR_PERMANENT_STUDENT_CARDS_GENERATED", resource_type="organization", resource_id=org_id)
+    pdf_bytes = omr_form.generate_omr_pdf(papers_for_pdf, header_text, template)
+    safe_cls = secure_filename(class_name or "tum-siniflar") or "sinif"
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="kalici-optik-{safe_cls}-{template.id}.pdf"'},
+    )
+
+
 @app.route("/api/teacher/omr/exams/<int:exam_def_id>/applications")
 @login_required(role=("teacher", "admin", "super_admin"), permission="results.create")
 def api_teacher_omr_exam_applications(exam_def_id):
@@ -7198,22 +7273,82 @@ def _omr_match_student(db, org_id, exam_def_id, match_status, paper_token):
     (api_teacher_omr_upload_scan) hem istemci-tarafi JSON sonuc ucu
     (api_teacher_omr_client_decoded_scan) AYNI bu fonksiyonu kullanir -
     eslestirme mantigi TEK YERDE, iki uc birbirinden sapmaz.
-    (2026-09-23: yedek "4 haneli okul no" eslestirme yontemi kaldirildi -
-    gercek kullanimda hic doldurulmuyordu, QR tek basina yeterliydi.)
+    Iki QR formati desteklenir:
+      1) Sinava ozel paper_token (mevcut): omr_papers tablosunda birebir eslesir.
+      2) Kalici ogrenci karekodu ('EPS1:<student_id>' veya 'EPS1:<student_id>:<template_id>'):
+         ogrenciyi organizasyon icinde dogrular, secili deneme icin otomatik
+         omr_papers + omr_exam_applications kaydi olusturur/baglar.
     Doner: (student_id, paper_id, match_status, warnings)."""
     student_id, paper_id = None, None
     warnings = []
     if match_status == "matched_qr" and paper_token:
-        paper = db.execute(
-            "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
-            "AND exam_definition_id = ? AND organization_id = ?",
-            (paper_token, exam_def_id, org_id),
-        ).fetchone()
-        if paper:
-            paper_id, student_id = paper["id"], paper["student_id"]
+        if paper_token.startswith("EPS1:"):
+            parts = paper_token.split(":")
+            try:
+                parsed_sid = int(parts[1])
+            except (IndexError, ValueError):
+                parsed_sid = None
+            qr_template = parts[2] if len(parts) >= 3 and parts[2] else None
+            if parsed_sid:
+                allowed_ids = get_allowed_student_ids(db)
+                st = db.execute(
+                    "SELECT id, class_name FROM students WHERE id = ? AND organization_id = ?",
+                    (parsed_sid, org_id),
+                ).fetchone()
+                if st and (allowed_ids is None or st["id"] in allowed_ids):
+                    student_id = st["id"]
+                    exam_row = db.execute(
+                        "SELECT form_template, question_count FROM omr_exam_definitions WHERE id = ? AND organization_id = ?",
+                        (exam_def_id, org_id),
+                    ).fetchone()
+                    exam_qcount = (exam_row["question_count"] if exam_row else 0) or 0
+                    if qr_template and qr_template in omr_form.TEMPLATES:
+                        card_cap = omr_form.TEMPLATES[qr_template].question_count_max
+                        if exam_qcount > card_cap:
+                            warnings.append(
+                                f"Dikkat: Sabit öğrenci kağıdı en fazla {card_cap} soruluk ({qr_template}), ancak bu test {exam_qcount} soruluk."
+                            )
+                    existing_paper = db.execute(
+                        "SELECT id FROM omr_papers WHERE exam_definition_id = ? AND organization_id = ? AND student_id = ? "
+                        "ORDER BY id DESC LIMIT 1",
+                        (exam_def_id, org_id, student_id),
+                    ).fetchone()
+                    now = datetime.now().isoformat()
+                    if existing_paper:
+                        paper_id = existing_paper["id"]
+                    else:
+                        auto_token = f"EPS1:{student_id}:E{exam_def_id}:{secrets.token_hex(4)}"
+                        cur = db.execute(
+                            "INSERT INTO omr_papers (exam_definition_id, organization_id, student_id, paper_token, "
+                            "class_name, printed_at) VALUES (?,?,?,?,?,?)",
+                            (exam_def_id, org_id, student_id, auto_token, st["class_name"], now),
+                        )
+                        paper_id = cur.lastrowid
+                    if st["class_name"]:
+                        db.execute(
+                            "INSERT OR IGNORE INTO omr_exam_applications "
+                            "(exam_definition_id, organization_id, class_name, applied_by, applied_at) "
+                            "VALUES (?,?,?,?,?)",
+                            (exam_def_id, org_id, st["class_name"], session.get("user_id"), now),
+                        )
+                    db.commit()
+                else:
+                    warnings.append("Sabit öğrenci karekodu okundu ama bu okul/sınıfta erişilebilir bir öğrenciyle eşleşmedi.")
+                    match_status = "unmatched"
+            else:
+                warnings.append("Sabit öğrenci karekodu biçimi geçersiz.")
+                match_status = "unmatched"
         else:
-            warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
-            match_status = "unmatched"
+            paper = db.execute(
+                "SELECT id, student_id FROM omr_papers WHERE paper_token = ? "
+                "AND exam_definition_id = ? AND organization_id = ?",
+                (paper_token, exam_def_id, org_id),
+            ).fetchone()
+            if paper:
+                paper_id, student_id = paper["id"], paper["student_id"]
+            else:
+                warnings.append("QR okundu ama bu teste ait bilinen bir kağıtla eşleşmedi.")
+                match_status = "unmatched"
     else:
         match_status = "unmatched"
     return student_id, paper_id, match_status, warnings

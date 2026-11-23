@@ -108,12 +108,18 @@ function _omrBuildFormHtml() {
       <div>
         <label class="form-label">Soru Sayısı</label>
         <input type="number" id="omr-f-count" class="form-control" min="1" max="${OMR_QUESTION_COUNT_MAX}" value="20">
-        <span class="text-muted" style="font-size:12px">1-25 arası normal, 26-50 ve 51-100 arası daha yoğun (küçük daireli) optik kağıt kullanılır - kağıt otomatik seçilir.</span>
+        <span class="text-muted" style="font-size:12px">1-20 arası 20'lik standart (6 kağıt/A4), 21-50 arası 50'lik ve 51-100 arası 100'lük (4 kağıt/A4) optik kağıt kullanılır — kalıcı 50'lik/100'lük kartlarla daha az sorulu testleri de okutabilirsiniz.</span>
       </div>
     </div>
 
     <div class="mt-2">
-      <label class="form-label">Cevap Anahtarı — doğru şıkkı optik taslak üzerinde işaretleyin</label>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+        <label class="form-label" style="margin:0">Cevap Anahtarı — doğru şıkkı optik taslak üzerinde işaretleyin veya tek satırda yapıştırın</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="omr-f-quick-key" class="form-control" style="width:220px;font-family:monospace;text-transform:uppercase" placeholder="Hızlı yapıştır: ABCDDACB...">
+          <button type="button" class="btn btn-sm" id="omr-f-quick-key-btn">⚡ Doldur</button>
+        </div>
+      </div>
       <div id="omr-answer-key-sheet" class="omr-sheet mt-1"></div>
     </div>
 
@@ -139,6 +145,19 @@ function _omrWireForm() {
   document.getElementById('omr-f-grade').addEventListener('change', _omrLoadCurriculumTopics);
   document.getElementById('omr-f-topic').addEventListener('change', _omrPopulateKazanimSelect);
   document.getElementById('omr-save-exam-btn').addEventListener('click', _omrSaveExam);
+  const quickBtn = document.getElementById('omr-f-quick-key-btn');
+  const quickInp = document.getElementById('omr-f-quick-key');
+  const applyQuickKey = () => {
+    const letters = ((quickInp && quickInp.value) || '').toUpperCase().replace(/[^ABCD]/g, '');
+    if (!letters) return;
+    const count = _omrGetQuestionCount();
+    for (let i = 0; i < Math.min(letters.length, count); i++) {
+      _omrAnswerKey[String(i + 1)] = letters[i];
+    }
+    _omrRenderAnswerKeySheet();
+  };
+  if (quickBtn) quickBtn.addEventListener('click', applyQuickKey);
+  if (quickInp) quickInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyQuickKey(); } });
 }
 
 // ---- Optik taslak üzerinde cevap anahtarı işaretleme ----
@@ -288,7 +307,51 @@ function _omrRenderExamList(exams) {
   // listesiyle (bkz. şube filtresi deseni) enjekte edilir, ayrı bir HTML
   // konteynerine ihtiyaç duymaz.
   const classNames = [...new Set(((_omrOverview && _omrOverview.students) || []).map(s => s.class_name).filter(Boolean))].sort();
-  const classReportHtml = classNames.length ? `
+  const permanentCardsHtml = `
+    <div class="card" style="margin-bottom:14px;border:1px solid rgba(59,130,246,0.35);background:linear-gradient(135deg,rgba(59,130,246,0.06),rgba(16,185,129,0.05))">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <h4 style="margin:0">🪪 Kalıcı Öğrenci Karekodlu Standart Optik Formlar</h4>
+          <p class="text-muted" style="margin:4px 0 0;font-size:12px">
+            Her öğrencinin kalıcı karekoduyla standart optik kağıdını <strong>bir kez</strong> indirip çoğaltın. Her denemede yeniden kağıt basmanıza gerek kalmaz; sadece yeni testi tanımlayıp <strong>📷 Kamerayla Tara</strong> ekranından okutmanız yeterlidir.
+          </p>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:10px">
+        <div>
+          <label class="form-label" style="font-size:12px">Sınıf</label>
+          <select id="omr-perm-class" class="form-control" style="min-width:150px" onchange="_omrPopulatePermStudents()">
+            <option value="">Tüm Öğrencilerim</option>
+            ${classNames.map(c => `<option value="${_omrEsc(c)}">${_omrEsc(c)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:12px">Öğrenci (Kayıp kart / yeni kayıt için)</label>
+          <select id="omr-perm-student" class="form-control" style="min-width:180px">
+            <option value="">Sınıftaki Tüm Öğrenciler</option>
+            ${(((_omrOverview && _omrOverview.students) || []).slice().sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, 'tr'))).map(s => `<option value="${s.id}">${_omrEsc(`${s.first_name || ''} ${s.last_name || ''}`.trim())} (${_omrEsc(s.class_name || '-')})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-size:12px">Standart Form Boyutu</label>
+          <select id="omr-perm-template" class="form-control" style="min-width:210px">
+            <option value="compact20">20 Soruluk Standart (6 kağıt / A4)</option>
+            <option value="quarter50">50 Soruluk Standart (4 kağıt / A4)</option>
+            <option value="quarter100">100 Soruluk Standart (4 kağıt / A4)</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:190px">
+          <label class="form-label" style="font-size:12px">Kağıt Üst Başlığı (boş = elle yazma çizgisi)</label>
+          <input type="text" id="omr-perm-header" class="form-control" placeholder="Deneme: ___________________">
+        </div>
+        <button type="button" class="btn btn-primary" id="omr-perm-download-btn" onclick="_omrDownloadPermanentCards()">
+          🖨️ Kalıcı Optik PDF İndir
+        </button>
+      </div>
+      <div id="omr-perm-status" class="text-muted" style="font-size:12px;margin-top:6px"></div>
+    </div>
+  `;
+  const classReportHtml = permanentCardsHtml + (classNames.length ? `
     <div class="card" style="margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <h4 style="margin:0">📊 Sınıf Kazanım Raporu</h4>
@@ -302,7 +365,7 @@ function _omrRenderExamList(exams) {
       <div id="omr-class-subject-body" style="margin-top:14px"></div>
       <div id="omr-class-student-body" style="margin-top:14px"></div>
     </div>
-  ` : '';
+  ` : '');
 
   if (!exams.length) {
     root.innerHTML = classReportHtml + '<p class="text-muted">Henüz tanımlı test yok.</p>';
@@ -335,6 +398,55 @@ function _omrRenderExamList(exams) {
       <div id="omr-report-panel-${e.id}" style="display:none;margin-top:10px;border-top:1px solid var(--border,#333);padding-top:10px"></div>
     </div>
   `).join('');
+}
+
+function _omrPopulatePermStudents() {
+  const cls = document.getElementById('omr-perm-class')?.value || '';
+  const sel = document.getElementById('omr-perm-student');
+  if (!sel) return;
+  const students = ((_omrOverview && _omrOverview.students) || [])
+    .filter(s => !cls || s.class_name === cls)
+    .slice()
+    .sort((a, b) => `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`, 'tr'));
+  sel.innerHTML = '<option value="">Sınıftaki Tüm Öğrenciler</option>' +
+    students.map(s => `<option value="${s.id}">${_omrEsc(`${s.first_name || ''} ${s.last_name || ''}`.trim())} (${_omrEsc(s.class_name || '-')})</option>`).join('');
+}
+
+async function _omrDownloadPermanentCards() {
+  const statusEl = document.getElementById('omr-perm-status');
+  const btn = document.getElementById('omr-perm-download-btn');
+  const className = document.getElementById('omr-perm-class')?.value || '';
+  const studentIdRaw = document.getElementById('omr-perm-student')?.value || '';
+  const studentIds = studentIdRaw ? [parseInt(studentIdRaw, 10)] : null;
+  const formTemplate = document.getElementById('omr-perm-template')?.value || 'compact20';
+  const headerText = (document.getElementById('omr-perm-header')?.value || '').trim();
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = '⏳ Kalıcı öğrenci optik formları hazırlanıyor...';
+  try {
+    const res = await fetch('/api/teacher/omr/student-cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ className: className || null, studentIds, formTemplate, headerText: headerText || null }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'PDF oluşturulamadı.');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kalici-optik-${className || 'tum-siniflar'}-${formTemplate}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    if (statusEl) statusEl.textContent = '✅ Kalıcı öğrenci optik PDF indirildi. Bu kağıtları tüm uygun denemelerde tekrar tekrar kullanabilirsiniz.';
+  } catch (err) {
+    if (statusEl) statusEl.textContent = '❌ ' + err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // Faz 3: sınıf boyutlu karşılaştırma tablosu - bkz. api_teacher_omr_class_report.

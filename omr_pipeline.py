@@ -410,16 +410,31 @@ def _classify_group(means, labels):
 
 def _read_questions(gray, question_count, template):
     results = []
+    # Balon ornekleme yaricapi: compact/compact20'de (4.4mm) kalibre 1.1mm
+    # korunur; daha kucuk balonlu quarter50 (3.6mm) ve quarter100 (2.8mm)
+    # sablonlarinda dis siyah cizgiye degmemesi icin orantili kuculur.
+    sample_r_mm = min(BUBBLE_SAMPLE_R_MM, template.answer_bubble_d_mm * 0.27)
     for q in range(1, question_count + 1):
         means = []
         for choice_idx in range(4):
             x_mm, y_mm = template.question_bubble_center_mm(q, choice_idx)
             cx, cy = _mm_to_px(x_mm, y_mm)
-            means.append(_disk_mean(gray, cx, cy, BUBBLE_SAMPLE_R_MM * PX_PER_MM))
+            means.append(_disk_mean(gray, cx, cy, sample_r_mm * PX_PER_MM))
         cls = _classify_group(means, F.CHOICES)
         results.append({"question": q, "answer": cls["value"], "status": cls["status"],
                          "means": [round(m, 1) for m in means]})
     return results
+
+
+def _template_from_permanent_qr(qr_data):
+    """Kalici ogrenci karekodu 'EPS1:<student_id>:<template_id>' icinden
+    kagidin gercek basili sablonunu cozer."""
+    if not qr_data or not isinstance(qr_data, str) or not qr_data.startswith("EPS1:"):
+        return None
+    parts = qr_data.split(":")
+    if len(parts) >= 3 and parts[2] in F.TEMPLATES:
+        return F.TEMPLATES[parts[2]]
+    return None
 
 
 def process_scan_image(image_bytes, question_count, template_id="compact"):
@@ -451,6 +466,13 @@ def process_scan_image(image_bytes, question_count, template_id="compact"):
     _data, qr_points = _detect_qr(img)
     if qr_points is None:
         raise OmrReadError("Kağıdın QR kodu/kimlik alanı bulunamadı - kağıt kadraja tam girmiyor olabilir.")
+
+    # Kalici ogrenci kartinda (EPS1:<sid>:<tpl>) kagidin gercek sablonu QR'da
+    # yazar; ornegin 50'lik kalici kartla 15 soruluk test okutuldugunda
+    # rektifikasyon ve balon okuma kagidin kendi sablonuyla yapilir.
+    qr_template = _template_from_permanent_qr(_data)
+    if qr_template is not None:
+        template = qr_template
 
     warped, _refined_fid, fid_info = _rectify(img, qr_points, template)
     if not fid_info["ok"]:
