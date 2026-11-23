@@ -2,7 +2,7 @@
 // LGS Deneme Takip - Service Worker (PWA Offline Support)
 // ============================================
 
-const CACHE_NAME = 'lgs-takip-v2.0';
+const CACHE_NAME = 'lgs-takip-v2.1';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

@@ -2035,17 +2035,17 @@ def _current_org_id(db):
     ).fetchone()
     if org_row and org_row["organization_id"]:
         return org_row["organization_id"]
-    # Platform sahibi (organization.manage izni olan) hesaplarin sabit bir
-    # okulu OLMAYABILIR (bkz. admin'in kendi okulunun kaldirilmasi) - bu
-    # durumda varsayilan kuruma SESSIZCE dusmek, bu hesabin (_effective_org_id
-    # KULLANMAYAN eski) uclara yanlislikla eristigi durumlarda BASKA/ARSIVLI
-    # bir okula veri yazmasina yol acabilir. Bu yuzden boyle bir hesap icin
-    # None donulur - cagiran taraf zaten "okul secilmedi" seklinde ele almali.
-    # Gercek bir okulu olan TUM normal kullanicilar (admin/teacher/parent/
-    # student) icin davranis birebir ayni kalir (ilk dal her zaman onlar icin
-    # devreye girer).
     if has_permission(db, session["user_id"], "organization.manage"):
-        return None
+        raw = request.args.get("school_id")
+        if raw:
+            try:
+                org_id = int(raw)
+            except (TypeError, ValueError):
+                return None
+            exists = db.execute("SELECT 1 FROM organizations WHERE id = ?", (org_id,)).fetchone()
+            if exists:
+                return org_id
+        return _get_default_org_id(db)
     return _get_default_org_id(db)
 
 
@@ -10905,13 +10905,361 @@ def api_ai_generate_assignment():
     })
 
 
+_AI_QUESTION_GENERATOR_SYSTEM_PROMPT = """Sen MEB ortaokul (5-8. sınıf) ve LGS müfredatına hakim uzman bir soru yazarısın.
+Kullanıcının verdiği ders, sınıf seviyesi, konu/kazanım, zorluk, soru kalıbı ve ek yönergelere göre özgün, pedagojik açıdan kusursuz, net ve hatasız çoktan seçmeli (A, B, C, D) sorular üretirsin.
+
+Kurallar:
+1. Sorular Türkçe dilbilgisi ve yazım kurallarına, MEB kazanımlarına ve seçilen sınıf seviyesine tam uygun olmalı.
+2. Her soruda 4 seçenek (A, B, C, D) olmalı; yalnızca 1 tanesi kesin doğru olmalı, çeldiriciler mantıklı ve öğretici olmalı.
+3. "soru_koku" alanında soru metnini (varsa öncül/paragraf/veri ve soru cümlesini) açık ve okunaklı biçimde yaz. Başında "1." gibi soru numarası YAZMA.
+4. "secenekler" alanında A, B, C, D şıklarını başında "A)" olmadan sadece şık metni olarak ver.
+5. "cozum" alanında doğru cevabın neden doğru olduğunu adım adım ve anlaşılır biçimde açıkla.
+6. İstenen soru adedi ({count}) kadar soru üret.
+7. Yanıtı SADECE aşağıdaki JSON şemasında ver, başka hiçbir açıklama veya markdown ekleme:
+
+{{
+  "questions": [
+    {{
+      "soru_koku": "Soru metni (öncüller ve soru kökü)...",
+      "secenekler": {{
+        "A": "A şıkkı metni",
+        "B": "B şıkkı metni",
+        "C": "C şıkkı metni",
+        "D": "D şıkkı metni"
+      }},
+      "dogru_cevap": "A",
+      "cozum": "Adım adım çözüm açıklaması...",
+      "zorluk": "kolay" | "orta" | "zor",
+      "soru_kalibi": "islem_sorusu" | "problem_sorusu" | "yorum_sorusu" | "yeni_nesil_soru",
+      "etiketler": ["#etiket1", "#etiket2"]
+    }}
+  ]
+}}
+"""
+
+
+def _render_question_card_png(question_number, stem_text, options_dict, out_path):
+    """Metin tabanlı (AI üretimi veya manuel yazılmış) bir soruyu, Soru Havuzu,
+    Ödevler ve Pratik Modu'ndaki görsel tabanlı soru kartlarıyla (%100 aynı
+    imageUrl akışı) uyumlu olması için yüksek çözünürlüklü PNG kartına dönüştürür.
+    (width_pt, height_pt) döndürür."""
+    import html as _html
+
+    doc = pdf_question_extractor.fitz.open()
+    try:
+        page_w, max_h = 480.0, 1400.0
+        margin = 20.0
+        page = doc.new_page(width=page_w, height=max_h)
+
+        stem_html = _html.escape((stem_text or "").strip()).replace("\n", "<br>")
+        opts_parts = []
+        for opt_key in ("A", "B", "C", "D", "E"):
+            val = (options_dict or {}).get(opt_key)
+            if val is not None and str(val).strip():
+                opt_html = _html.escape(str(val).strip()).replace("\n", "<br>")
+                opts_parts.append(f'<div style="margin-top:6pt"><b>{opt_key})</b> {opt_html}</div>')
+
+        num_prefix = f"<b>{int(question_number)}.</b> " if question_number else ""
+        html_content = (
+            f'<div style="font-family:sans-serif;font-size:11.5pt;line-height:1.45;color:#0f172a">'
+            f'<div>{num_prefix}{stem_html}</div>'
+            f'<div style="margin-top:8pt">{"".join(opts_parts)}</div>'
+            f'</div>'
+        )
+
+        box = pdf_question_extractor.fitz.Rect(margin, margin, page_w - margin, max_h - margin)
+        spare, _scale = page.insert_htmlbox(box, html_content)
+        used_h = (max_h - margin) - max(0.0, spare) + margin
+        final_h = max(110.0, min(max_h, used_h))
+
+        clip = pdf_question_extractor.fitz.Rect(0, 0, page_w, final_h)
+        pix = page.get_pixmap(clip=clip, dpi=200)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        pix.save(out_path)
+        return page_w, final_h
+    finally:
+        doc.close()
+
+
+def _generate_questions_with_ai(subject_name, grade_level, topic_name, kazanim_text,
+                                difficulty, question_pattern, count, custom_prompt):
+    if not GEMINI_SDK_AVAILABLE:
+        raise AIClassificationError("AI soru üretimi için gerekli kütüphane (google-genai) sunucuda kurulu değil.")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise AIClassificationError("AI soru üretimi yapılandırılmamış (GEMINI_API_KEY ayarlanmamış).")
+
+    system_prompt = _AI_QUESTION_GENERATOR_SYSTEM_PROMPT.format(count=count)
+    user_lines = [
+        f"Ders: {subject_name}",
+        f"Sınıf Seviyesi: {grade_level or '8'}. Sınıf",
+        f"İstenen Soru Adedi: {count}",
+        f"Zorluk Seviyesi: {difficulty or 'orta'}",
+        f"Soru Kalıbı / Tarzı: {question_pattern or 'yeni_nesil_soru'}",
+    ]
+    if topic_name:
+        user_lines.append(f"Konu / Ünite: {topic_name}")
+    if kazanim_text:
+        user_lines.append(f"MEB Kazanımı: {kazanim_text}")
+    if custom_prompt:
+        user_lines.append(f"Öğretmen Özel Yönergesi: {custom_prompt}")
+
+    client = gemini_sdk.Client(api_key=api_key)
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=["\n".join(user_lines)],
+            config=gemini_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                max_output_tokens=8192,
+            ),
+        )
+    except gemini_errors.ClientError as exc:
+        if exc.code in (401, 403):
+            raise AIClassificationError("AI soru üretimi yapılandırılmamış (GEMINI_API_KEY eksik veya geçersiz).")
+        if exc.code == 429:
+            raise AIClassificationError("AI servisi şu an yoğun (rate limit). Birazdan tekrar deneyin.")
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.ServerError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except gemini_errors.APIError as exc:
+        raise AIClassificationError(f"AI servisi hata döndü: {exc.message or exc}")
+    except Exception as exc:
+        raise AIClassificationError(f"AI servisine bağlanılamadı: {exc}")
+
+    text_content = (response.text or "").strip()
+    try:
+        payload = json.loads(text_content)
+    except ValueError:
+        raise AIClassificationError("AI yanıtı ayrıştırılamadı (beklenmeyen JSON formatı).")
+
+    raw_list = payload.get("questions") if isinstance(payload, dict) else (payload if isinstance(payload, list) else None)
+    if not isinstance(raw_list, list) or not raw_list:
+        raise AIClassificationError("AI geçerli bir soru listesi döndürmedi.")
+
+    cleaned = []
+    for item in raw_list[:count]:
+        if not isinstance(item, dict):
+            continue
+        stem = str(item.get("soru_koku") or "").strip()
+        opts = item.get("secenekler") if isinstance(item.get("secenekler"), dict) else {}
+        norm_opts = {k: str(opts.get(k) or "").strip() for k in ("A", "B", "C", "D") if str(opts.get(k) or "").strip()}
+        if not stem or len(norm_opts) < 2:
+            continue
+        ans = str(item.get("dogru_cevap") or "A").strip().upper()[:1]
+        if ans not in norm_opts:
+            ans = next(iter(norm_opts.keys()), "A")
+        diff = str(item.get("zorluk") or difficulty or "orta").strip().lower()
+        if diff not in QUESTION_DIFFICULTIES:
+            diff = difficulty if difficulty in QUESTION_DIFFICULTIES else "orta"
+        pat = str(item.get("soru_kalibi") or question_pattern or "yeni_nesil_soru").strip().lower()
+        if pat not in QUESTION_PATTERNS:
+            pat = question_pattern if question_pattern in QUESTION_PATTERNS else "yeni_nesil_soru"
+        raw_tags = item.get("etiketler") if isinstance(item.get("etiketler"), list) else []
+        tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+        cleaned.append({
+            "stem": stem,
+            "options": norm_opts,
+            "correctAnswer": ans,
+            "explanation": str(item.get("cozum") or "").strip(),
+            "difficulty": diff,
+            "questionPattern": pat,
+            "tags": tags,
+        })
+    if not cleaned:
+        raise AIClassificationError("AI tarafından üretilen sorular eksik veya geçersiz formatta.")
+    return cleaned
+
+
 @app.route("/api/admin/question-bank/ai-generate", methods=["POST"])
-@login_required(role="admin", permission="ai.generate_question")
+@login_required(role=("admin", "super_admin"), permission="ai.generate_question")
 def api_ai_generate_question():
-    return jsonify({
-        "placeholder": True,
-        "message": "AI ile soru üretimi yakında gelecek. Şu an için Soru Girişi sayfasından PDF yükleyerek soru ekleyebilirsiniz.",
-    })
+    """Soru Havuzu için AI (Gemini) ile hızlı soru üretimi ve/veya düzenlenmiş
+    soruları soru bankasına kaydetme ucu.
+    action='preview' (varsayılan): Gemini ile soruları üretip önizleme/düzenleme
+    için JSON döner (veritabanına henüz kaydetmez).
+    action='save': Önizlemede onaylanan/düzenlenen (veya doğrudan yazılan) soruları
+    PNG soru kartı + tam metin + kazanım/konu etiketleriyle yeni bir set (batch)
+    olarak question_bank tablosuna kaydeder."""
+    db = get_db()
+    org_id = _current_org_id(db)
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "preview").strip().lower()
+
+    subject_code = (data.get("subjectCode") or "").strip()
+    subject_id = data.get("subjectId")
+    if subject_code:
+        subject_row = db.execute("SELECT id, name, code FROM subjects WHERE code=?", (subject_code,)).fetchone()
+    elif subject_id:
+        subject_row = db.execute("SELECT id, name, code FROM subjects WHERE id=?", (subject_id,)).fetchone()
+    else:
+        subject_row = None
+    if not subject_row:
+        return jsonify({"error": "Geçerli bir ders seçin."}), 400
+
+    subject_id = subject_row["id"]
+    subject_name = subject_row["name"]
+
+    grade_level_id = data.get("gradeLevelId")
+    grade_level = (str(data.get("gradeLevel") or "").strip()) or None
+    if grade_level_id:
+        gl_row = db.execute("SELECT id, name FROM grade_levels WHERE id=?", (grade_level_id,)).fetchone()
+        if gl_row:
+            grade_level_id = gl_row["id"]
+            grade_level = gl_row["name"]
+        else:
+            grade_level_id = None
+    elif grade_level:
+        gl_row = db.execute("SELECT id, name FROM grade_levels WHERE name=?", (grade_level,)).fetchone()
+        if gl_row:
+            grade_level_id = gl_row["id"]
+
+    curriculum_node_id = data.get("curriculumNodeId")
+    kazanim_node = None
+    konu_name_from_curr = None
+    if curriculum_node_id:
+        kazanim_node = db.execute(
+            "SELECT id, code, name, parent_id, level FROM curriculum_nodes WHERE id=? AND subject_id=?",
+            (curriculum_node_id, subject_id),
+        ).fetchone()
+        if kazanim_node and kazanim_node["parent_id"]:
+            parent_row = db.execute("SELECT name FROM curriculum_nodes WHERE id=?", (kazanim_node["parent_id"],)).fetchone()
+            if parent_row:
+                konu_name_from_curr = parent_row["name"]
+
+    topic_name = (data.get("topicName") or konu_name_from_curr or "").strip() or None
+    kazanim_text = (
+        f"{kazanim_node['code']} - {kazanim_node['name']}" if kazanim_node else (data.get("kazanimText") or "").strip()
+    ) or None
+    difficulty = (data.get("difficulty") or "orta").strip().lower()
+    if difficulty not in QUESTION_DIFFICULTIES:
+        difficulty = "orta"
+    question_pattern = (data.get("questionPattern") or "yeni_nesil_soru").strip().lower()
+    if question_pattern not in QUESTION_PATTERNS:
+        question_pattern = "yeni_nesil_soru"
+
+    if action == "preview":
+        try:
+            count = max(1, min(10, int(data.get("count") or 3)))
+        except (TypeError, ValueError):
+            count = 3
+        custom_prompt = (data.get("customPrompt") or "").strip()[:1000]
+        try:
+            generated = _generate_questions_with_ai(
+                subject_name=subject_name,
+                grade_level=grade_level,
+                topic_name=topic_name,
+                kazanim_text=kazanim_text,
+                difficulty=difficulty,
+                question_pattern=question_pattern,
+                count=count,
+                custom_prompt=custom_prompt,
+            )
+        except AIClassificationError as exc:
+            return jsonify({"error": str(exc)}), 503
+        return jsonify({"ok": True, "questions": generated})
+
+    if action == "save":
+        questions_in = data.get("questions")
+        if not isinstance(questions_in, list) or not questions_in:
+            return jsonify({"error": "Kaydedilecek en az bir soru gerekli."}), 400
+
+        now = datetime.now().isoformat()
+        topic_id = None
+        if topic_name:
+            existing_topic = db.execute(
+                "SELECT id FROM topics WHERE subject_id=? AND LOWER(name)=LOWER(?)",
+                (subject_id, topic_name),
+            ).fetchone()
+            if existing_topic:
+                topic_id = existing_topic["id"]
+            else:
+                cur_t = db.execute(
+                    "INSERT INTO topics (subject_id, name, created_at) VALUES (?,?,?)",
+                    (subject_id, topic_name, now),
+                )
+                topic_id = cur_t.lastrowid
+
+        batch_title = (data.get("batchTitle") or "").strip()
+        if not batch_title:
+            label_part = topic_name or (kazanim_node["code"] if kazanim_node else subject_name)
+            batch_title = f"🤖 AI Soru Seti — {subject_name} ({label_part})"
+
+        os.makedirs(QUESTION_IMAGES_DIR, exist_ok=True)
+        cur_b = db.execute(
+            "INSERT INTO question_import_batches (organization_id, uploaded_by, source_filename, page_count, "
+            "pages_processed, status, booklet_code, subject_id, grade_level, grade_level_id, created_at) "
+            "VALUES (?,?,?,?,?,'ready_for_review','A',?,?,?,?)",
+            (org_id, user_id, batch_title[:180], len(questions_in), len(questions_in),
+             subject_id, grade_level, grade_level_id, now),
+        )
+        batch_id = cur_b.lastrowid
+
+        diff_level_map = {"kolay": 2, "orta": 3, "zor": 4}
+        saved_ids = []
+        for idx, q_in in enumerate(questions_in, start=1):
+            if not isinstance(q_in, dict):
+                continue
+            stem = str(q_in.get("stem") or "").strip()
+            opts = q_in.get("options") if isinstance(q_in.get("options"), dict) else {}
+            norm_opts = {k: str(opts.get(k) or "").strip() for k in ("A", "B", "C", "D") if str(opts.get(k) or "").strip()}
+            if not stem or len(norm_opts) < 2:
+                continue
+            ans = str(q_in.get("correctAnswer") or "A").strip().upper()[:1]
+            if ans not in norm_opts:
+                ans = next(iter(norm_opts.keys()), "A")
+            expl = str(q_in.get("explanation") or "").strip() or None
+            q_diff = str(q_in.get("difficulty") or difficulty).strip().lower()
+            if q_diff not in QUESTION_DIFFICULTIES:
+                q_diff = difficulty
+            q_pat = str(q_in.get("questionPattern") or question_pattern).strip().lower()
+            if q_pat not in QUESTION_PATTERNS:
+                q_pat = question_pattern
+            raw_tags = q_in.get("tags")
+            if isinstance(raw_tags, list):
+                tags_str = ",".join(str(t).strip() for t in raw_tags if str(t).strip()) or None
+            else:
+                tags_str = str(raw_tags or "").strip() or None
+
+            full_text = stem + "\n" + "\n".join(f"{k}) {v}" for k, v in norm_opts.items())
+            image_filename = f"{batch_id}_{idx}.png"
+            image_out_path = os.path.join(QUESTION_IMAGES_DIR, image_filename)
+            w_pt, h_pt = _render_question_card_png(idx, stem, norm_opts, image_out_path)
+
+            cur_q = db.execute(
+                "INSERT INTO question_bank (organization_id, batch_id, subject_id, grade_level, grade_level_id, "
+                "topic_id, question_type, difficulty_level, difficulty, question_pattern, tags, "
+                "image_path, question_number, source_page_number, crop_x, crop_y, crop_width, crop_height, "
+                "question_text, correct_answer, correct_answer_source, explanation, status, source, "
+                "created_by, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (org_id, batch_id, subject_id, grade_level, grade_level_id,
+                 topic_id, "multiple_choice", diff_level_map.get(q_diff, 3), q_diff, q_pat, tags_str,
+                 f"questions/{image_filename}", idx, idx, 0.0, 0.0, w_pt, h_pt,
+                 full_text, ans, "manual", expl, "pending_review", "ai_generated",
+                 user_id, now, now),
+            )
+            qid = cur_q.lastrowid
+            saved_ids.append(qid)
+
+            if kazanim_node and kazanim_node["level"] == "kazanim":
+                db.execute(
+                    "INSERT OR IGNORE INTO question_curriculum_tags (question_id, curriculum_node_id, weight, is_primary, created_at) "
+                    "VALUES (?,?,1.0,1,?)",
+                    (qid, kazanim_node["id"], now),
+                )
+
+        if not saved_ids:
+            db.rollback()
+            return jsonify({"error": "Geçerli soru verisi bulunamadı."}), 400
+
+        db.commit()
+        log_audit(db, "QUESTIONS_AI_GENERATED", resource_type="question_import_batch", resource_id=batch_id)
+        return jsonify({"ok": True, "batchId": batch_id, "savedCount": len(saved_ids), "questionIds": saved_ids})
+
+    return jsonify({"error": "Geçersiz işlem (action)."}), 400
 
 
 # ============================================================
@@ -11857,7 +12205,7 @@ def api_drive_havuzu_image(file_id):
 
 
 @app.route("/api/admin/question-bank/upload", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_upload():
     file = request.files.get("file")
     if not file or not (file.filename or "").lower().endswith(".pdf"):
@@ -12179,7 +12527,7 @@ def _try_advance_question_bank_queue():
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>/cancel", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_cancel_upload(batch_id):
     """'queued' durumundaki bir yüklemeyi ANINDA iptal eder (henüz hiçbir
     thread ona dokunmuyor, doğrudan 'cancelled' yapmak güvenli) - 'processing'
@@ -12224,7 +12572,7 @@ def api_question_bank_cancel_upload(batch_id):
 
 
 @app.route("/api/admin/question-bank/batches")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_batches():
     db = get_db()
     org_id = _current_org_id(db)
@@ -12257,7 +12605,7 @@ def api_question_bank_batches():
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_batch(batch_id):
     db = get_db()
     org_id = _current_org_id(db)
@@ -12614,7 +12962,7 @@ def api_admin_suggest_optical_template():
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>", methods=["DELETE"])
-@login_required(role="admin", permission="questions.delete")
+@login_required(role=("admin", "super_admin"), permission="questions.delete")
 def api_question_bank_delete_batch(batch_id):
     """Bir yukleme setini ve icindeki sorulari SOFT-DELETE yapar (bkz.
     question_import_batches.deleted_at migrasyonu). Eskiden bu uc
@@ -12650,7 +12998,7 @@ def api_question_bank_delete_batch(batch_id):
 
 
 @app.route("/api/admin/question-bank/image/<int:question_id>")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_image(question_id):
     db = get_db()
     row = db.execute(
@@ -12665,7 +13013,7 @@ def api_question_bank_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/context-image")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_context_image(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -12686,6 +13034,20 @@ def api_question_bank_context_image(question_id):
 
     pdf_path = _source_pdf_path(row["batch_id"])
     if not os.path.isfile(pdf_path):
+        # AI üretimi veya doğrudan yazılmış sorularda kaynak PDF yoktur;
+        # soru kartı PNG'sinin kendisini bağlam görüntüsü olarak döndürür.
+        q_img_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(row["image_path"] or ""))
+        if os.path.isfile(q_img_path):
+            with open(q_img_path, "rb") as f:
+                png_bytes = f.read()
+            w_pt = row["crop_width"] or 480.0
+            h_pt = row["crop_height"] or 240.0
+            resp = Response(png_bytes, mimetype="image/png")
+            resp.headers["Cache-Control"] = "no-cache"
+            resp.headers["X-Page-Width-Pt"] = str(w_pt)
+            resp.headers["X-Page-Height-Pt"] = str(h_pt)
+            resp.headers["X-Dpi"] = str(pdf_question_extractor.CONTEXT_DPI)
+            return resp
         return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
     try:
         png_bytes, page_w, page_h = pdf_question_extractor.render_page_image_bytes(
@@ -12706,7 +13068,7 @@ def api_question_bank_context_image(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/recrop", methods=["POST"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_recrop(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -12723,7 +13085,7 @@ def api_question_bank_recrop(question_id):
 
     pdf_path = _source_pdf_path(row["batch_id"])
     if not os.path.isfile(pdf_path):
-        return jsonify({"error": "Kaynak PDF bulunamadı (silinmiş olabilir)."}), 404
+        return jsonify({"error": "Bu soru PDF'ten kırpılmadığı (veya kaynak PDF silindiği) için yeniden kırpılamaz."}), 404
 
     out_path = os.path.join(QUESTION_IMAGES_DIR, os.path.basename(row["image_path"]))
     try:
@@ -12746,7 +13108,7 @@ def api_question_bank_recrop(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/ai-classify", methods=["POST"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_ai_classify(question_id):
     """Bir soru görselini AI'ya gönderip metin çıkarımı + metadata önerisi
     alır (bkz. yukarısı - _classify_question_with_ai). Taksonomiye (ünite/
@@ -12888,7 +13250,7 @@ def _apply_question_status(db, row, status, user_id, rejection_reason=None):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>", methods=["PATCH"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_update(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -13022,7 +13384,7 @@ def api_question_bank_update(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/bulk-update", methods=["PATCH"])
-@login_required(role="admin", permission="questions.approve")
+@login_required(role=("admin", "super_admin"), permission="questions.approve")
 def api_question_bank_bulk_update():
     """Onay ekranındaki ızgara görünümünden birden çok soruyu tek istekte
     onaylamak/hariç tutmak için - tek tek inceleme akışını değiştirmez,
@@ -13061,7 +13423,7 @@ def api_question_bank_bulk_update():
 
 
 @app.route("/api/admin/question-bank/questions/bulk-tag", methods=["PATCH"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_bulk_tag():
     """Bir batch'teki sorular cogunlukla ayni ders+sinif+genelde ayni unite
     oldugu icin (bkz. proje notu) toplu METADATA atama - status/onay/red
@@ -13129,7 +13491,7 @@ def api_question_bank_bulk_tag():
 
 
 @app.route("/api/admin/question-bank/grade-levels")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_grade_levels():
     db = get_db()
     # Site sadece ortaokulu (5-8) hedefliyor (2026-09-15, kullanici istegi) -
@@ -13145,7 +13507,7 @@ def api_question_bank_grade_levels():
 
 
 @app.route("/api/admin/question-bank/grade-levels", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_create_grade_level():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -13160,7 +13522,7 @@ def api_question_bank_create_grade_level():
 
 
 @app.route("/api/admin/question-bank/units")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_units():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
@@ -13173,7 +13535,7 @@ def api_question_bank_units():
 
 
 @app.route("/api/admin/question-bank/units", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_create_unit():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -13202,7 +13564,7 @@ def api_question_bank_create_unit():
 
 
 @app.route("/api/admin/question-bank/topics")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_topics():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
@@ -13226,7 +13588,7 @@ def api_question_bank_topics():
 
 
 @app.route("/api/admin/question-bank/topics", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_create_topic():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -13256,7 +13618,7 @@ def api_question_bank_create_topic():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_learning_outcomes():
     db = get_db()
     topic_id = request.args.get("topic_id", type=int)
@@ -13269,7 +13631,7 @@ def api_question_bank_learning_outcomes():
 
 
 @app.route("/api/admin/question-bank/learning-outcomes", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_create_learning_outcome():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -13301,6 +13663,10 @@ def api_question_bank_create_learning_outcome():
 def api_question_bank_curriculum():
     db = get_db()
     subject_id = request.args.get("subject_id", type=int)
+    subject_code = (request.args.get("subject_code") or "").strip()
+    if not subject_id and subject_code:
+        s_row = db.execute("SELECT id FROM subjects WHERE code=?", (subject_code,)).fetchone()
+        subject_id = s_row["id"] if s_row else None
     grade_level = request.args.get("grade_level")
     if not subject_id:
         return jsonify({"error": "subject_id gerekli."}), 400
@@ -13363,7 +13729,7 @@ def _propose_skill(db, name, description, user_id):
 
 
 @app.route("/api/admin/question-bank/skills")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_list_skills():
     db = get_db()
     status = request.args.get("status")
@@ -13394,7 +13760,7 @@ def api_question_bank_list_skills():
 
 
 @app.route("/api/admin/question-bank/skills", methods=["POST"])
-@login_required(role="admin", permission="questions.create")
+@login_required(role=("admin", "super_admin"), permission="questions.create")
 def api_question_bank_create_skill():
     db = get_db()
     data = request.get_json(silent=True) or {}
@@ -13421,7 +13787,7 @@ def api_teacher_create_skill():
 
 
 @app.route("/api/admin/question-bank/skills/<int:skill_id>", methods=["PATCH"])
-@login_required(role="admin", permission="questions.approve")
+@login_required(role=("admin", "super_admin"), permission="questions.approve")
 def api_question_bank_review_skill(skill_id):
     db = get_db()
     row = db.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
@@ -13454,7 +13820,7 @@ def api_question_bank_review_skill(skill_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/curriculum-tags", methods=["GET", "PUT"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_question_curriculum_tags(question_id):
     """Bir soruya bağlı kazanımları (ve ağırlıklarını) okur/günceller - bkz.
     question_skills sync deseni (yukarıda) ile aynı yaklaşım, farkla: ağırlık
@@ -13517,7 +13883,7 @@ def api_question_bank_question_curriculum_tags(question_id):
 
 
 @app.route("/api/admin/question-bank/export")
-@login_required(role="admin", permission="questions.publish")
+@login_required(role=("admin", "super_admin"), permission="questions.publish")
 def api_question_bank_export():
     """Yayınlanmış soruları (status='published') resim + manifest.csv olarak
     tek bir ZIP'te indirir - sadece onaylanmış (approved) ama henüz
@@ -13583,7 +13949,7 @@ def api_question_bank_export():
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers")
-@login_required(role="admin", permission="questions.view")
+@login_required(role=("admin", "super_admin"), permission="questions.view")
 def api_question_bank_get_booklet_numbers(question_id):
     db = get_db()
     row = _get_owned_question(db, question_id, _current_org_id(db))
@@ -13608,7 +13974,7 @@ def api_question_bank_get_booklet_numbers(question_id):
 
 
 @app.route("/api/admin/question-bank/questions/<int:question_id>/booklet-numbers", methods=["PUT"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_set_booklet_numbers(question_id):
     """Bir sorunun DİĞER kitapçıklardaki numaralarını topluca değiştirir -
     body: {numbers: {"B": 5, "C": 12}}. Sorunun kendi (native) kitapçık
@@ -13700,7 +14066,7 @@ def _parse_booklet_map_rows(file):
 
 
 @app.route("/api/admin/question-bank/batches/<int:batch_id>/import-booklet-map", methods=["POST"])
-@login_required(role="admin", permission="questions.update")
+@login_required(role=("admin", "super_admin"), permission="questions.update")
 def api_question_bank_import_booklet_map(batch_id):
     """CSV veya JSON yükler: her satır/kayıt bir mantıksal sorunun kitapçık
     başına numarası (bkz. _parse_booklet_map_rows). Bu batch'in kendi

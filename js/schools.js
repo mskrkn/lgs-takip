@@ -202,6 +202,8 @@ const Schools = {
       <div class="card" style="margin:0">
         <div class="card-header"><h3 class="card-title"><span class="card-icon">⚡</span> Hızlı İşlemler</h3></div>
         <div style="display:flex;flex-wrap:wrap;gap:10px">
+          <button class="btn btn-primary btn-sm" onclick="App.navigateTo('question-bank').then(() => App.tryAiGenerateQuestion('ai'))">🤖 AI ile Soru Üret</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('question-bank')">📝 Soru Girişi</button>
           <button class="btn btn-secondary btn-sm" onclick="Schools._scrollToNewSchoolForm()">➕ Yeni Okul Ekle</button>
           ${canManageAdmins ? `<button class="btn btn-secondary btn-sm" onclick="App.navigateTo('admins')">🔐 Admin Ekle</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="App.navigateTo('system-logs')">📜 Sistem Logları</button>

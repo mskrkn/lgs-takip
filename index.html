@@ -127,10 +127,9 @@
           <span>Konular</span>
           <span class="nav-badge">Yakında</span>
         </div>
-        <div class="nav-item" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')">
+        <div class="nav-item" onclick="App.navigateTo('question-bank').then(() => App.tryAiGenerateQuestion('ai'))">
           <span class="nav-icon">🤖</span>
-          <span>Edu AI</span>
-          <span class="nav-badge">Yakında</span>
+          <span>Edu AI (Soru Üret)</span>
         </div>
       </nav>
 
@@ -168,8 +167,7 @@
             </button>
             <div id="notification-panel" style="display:none;position:absolute;top:44px;right:0;width:340px;max-height:420px;overflow-y:auto;background:var(--bg-card,#0f1420);border:1px solid var(--bg-glass-border,rgba(255,255,255,0.1));border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.4);z-index:200;padding:10px"></div>
           </div>
-          <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
-          <button class="menu-toggle" onclick="UI.toast('Edu AI çok yakında burada olacak! 🚀','info')" title="Edu AI" style="color:var(--ai-purple-light)">🤖</button>
+          <button class="menu-toggle" onclick="App.navigateTo('question-bank').then(() => App.tryAiGenerateQuestion('ai'))" title="AI ile Soru Üret" style="color:var(--ai-purple-light)">🤖</button>
           <!-- Hesap Turu Rozeti: hangi yetki seviyesinde oturum acildigini
                her zaman gorunur kilar (bkz. App.init() -> App.renderRoleBadge) -->
           <div id="role-badge" class="sync-status-pill" style="display:none"></div>
