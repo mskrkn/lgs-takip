@@ -389,7 +389,8 @@
   function readQuestions(grayData, width, height, questionCount, template) {
     const G = root.OmrGeometry;
     const results = [];
-    const rPx = BUBBLE_SAMPLE_R_MM * G.PX_PER_MM;
+    const sampleRMm = Math.min(BUBBLE_SAMPLE_R_MM, (template.answerBubbleDMm || 4.4) * 0.27);
+    const rPx = sampleRMm * G.PX_PER_MM;
     for (let q = 1; q <= questionCount; q++) {
       const means = [];
       for (let ci = 0; ci < 4; ci++) {
@@ -546,13 +547,28 @@
   // OffscreenCanvas.convertToBlob (Promise) bekleniyor.
   async function decodeFrame(cv, jsQRFn, imageData, questionCount, templateId) {
     const G = root.OmrGeometry;
-    const template = G.TEMPLATES[templateId] || G.TEMPLATES.compact;
+    let template = G.TEMPLATES[templateId] || G.TEMPLATES.compact;
     const warnings = [];
 
     const qr = detectQr(jsQRFn, imageData, cv);
     if (!qr) {
       return { readable: false, matchStatus: 'unmatched', paperToken: null, failReason: 'qr',
         warnings: ["Kağıdın QR kodu bulunamadı - kağıt kadraja tam girmiyor olabilir."] };
+    }
+
+    // Kalici ogrenci karti (EPS1:<student_id>:<template_id>): kagidin kendi basili
+    // sablonunu QR'dan otomatik algilar (ornegin 50'lik kartla 15 soruluk sinav).
+    if (typeof qr.data === 'string' && qr.data.startsWith('EPS1:')) {
+      const parts = qr.data.split(':');
+      if (parts.length >= 3 && G.TEMPLATES[parts[2]]) {
+        template = G.TEMPLATES[parts[2]];
+      }
+      if (questionCount > template.questionCountMax) {
+        return {
+          readable: false, matchStatus: 'unmatched', paperToken: qr.data, failReason: 'other',
+          warnings: [`Bu sabit öğrenci kartı en fazla ${template.questionCountMax} soruluk; seçili test ${questionCount} soruluk.`],
+        };
+      }
     }
 
     const rgbaMat = cv.matFromImageData(imageData);
