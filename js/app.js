@@ -3319,7 +3319,10 @@ const App = {
         </div>
         <div id="qb-status" style="margin-top:14px"></div>
         <div id="qb-results"></div>
-        <button class="btn btn-secondary btn-sm mt-2" onclick="App.tryAiGenerateQuestion()">🤖 AI ile Soru Üret</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+          <button class="btn btn-primary btn-sm" onclick="App.tryAiGenerateQuestion('ai')">🤖 AI ile Hızlı Soru Üret</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.tryAiGenerateQuestion('manual')">✍️ Hızlı Soru Yaz (Editör)</button>
+        </div>
         <div id="qb-ai-note" class="text-muted" style="margin-top:8px;font-size:13px"></div>
       </div>
       <div class="card mt-2">
@@ -3463,15 +3466,434 @@ const App = {
     window.location.href = url;
   },
 
-  async tryAiGenerateQuestion() {
-    const note = document.getElementById('qb-ai-note');
-    note.textContent = '...';
+  _qbAiGenState: null,
+
+  async tryAiGenerateQuestion(initialMode = 'ai') {
+    const subjectSelect = document.getElementById('qb-subject-select');
+    const gradeSelect = document.getElementById('qb-grade-select');
+    const defaultSubjectCode = subjectSelect ? subjectSelect.value : 'matematik';
+    const defaultGradeId = gradeSelect ? gradeSelect.value : '';
+
+    let gradeLevels = [];
     try {
-      const res = await fetch('/api/admin/question-bank/ai-generate', { method: 'POST' });
+      const res = await fetch('/api/admin/question-bank/grade-levels');
       const data = await res.json();
-      note.textContent = '🤖 ' + (data.message || 'Şu an kullanılamıyor.');
+      if (res.ok) gradeLevels = data.gradeLevels || [];
+    } catch (_) {}
+
+    const subjectOptionsHtml = Object.keys(SUBJECT_SETS).map(examType => {
+      const opts = SUBJECT_SETS[examType]
+        .map(s => `<option value="${s.key}" ${s.key === defaultSubjectCode ? 'selected' : ''}>${s.name}</option>`).join('');
+      return `<optgroup label="${EXAM_TYPE_LABELS[examType] || examType}">${opts}</optgroup>`;
+    }).join('');
+
+    this._qbAiGenState = {
+      curriculumTree: [],
+      questions: initialMode === 'manual' ? [{
+        stem: '',
+        options: { A: '', B: '', C: '', D: '' },
+        correctAnswer: 'A',
+        explanation: '',
+        difficulty: 'orta',
+        questionPattern: 'yeni_nesil_soru',
+        tags: [],
+      }] : [],
+    };
+
+    let overlay = document.getElementById('qb-aigen-overlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'qb-aigen-overlay';
+    overlay.className = 'modal-overlay active';
+    overlay.style.zIndex = '1150';
+    overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) this._qbCloseAiGenModal();
+    });
+
+    overlay.innerHTML = `
+      <div class="modal modal-lg" style="max-width:1080px;max-height:92vh;display:flex;flex-direction:column">
+        <div class="modal-header">
+          <h2>🤖 Hızlı Soru Üretim & Yazım Stüdyosu</h2>
+          <button class="modal-close" onclick="App._qbCloseAiGenModal()">✕</button>
+        </div>
+        <div class="modal-body" style="overflow-y:auto;flex:1">
+          <div class="card" style="margin-top:0;padding:16px;background:rgba(20,184,166,0.04);border:1px solid rgba(20,184,166,0.2)">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Ders</label>
+                <select class="form-select" id="qbaig-subject" onchange="App._qbAiGenLoadCurriculum()">${subjectOptionsHtml}</select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Sınıf Seviyesi</label>
+                <select class="form-select" id="qbaig-grade" onchange="App._qbAiGenLoadCurriculum()">
+                  ${gradeLevels.map(g => `<option value="${g.id}" data-grade-name="${g.name}" ${String(g.id) === String(defaultGradeId) || (!defaultGradeId && g.name === '8') ? 'selected' : ''}>${g.name}. Sınıf</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Zorluk</label>
+                <select class="form-select" id="qbaig-difficulty">
+                  <option value="kolay">Kolay</option>
+                  <option value="orta" selected>Orta</option>
+                  <option value="zor">Zor</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Soru Kalıbı / Tarzı</label>
+                <select class="form-select" id="qbaig-pattern">
+                  <option value="yeni_nesil_soru" selected>Yeni Nesil (Beceri Temelli)</option>
+                  <option value="problem_sorusu">Problem Sorusu</option>
+                  <option value="yorum_sorusu">Yorum & Çıkarım Sorusu</option>
+                  <option value="islem_sorusu">Kazanım / İşlem Sorusu</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Üretilecek Soru Adedi</label>
+                <select class="form-select" id="qbaig-count">
+                  ${[1, 2, 3, 5, 10].map(n => `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n} Soru</option>`).join('')}
+                </select>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Ünite / Tema <span class="text-muted" style="font-weight:400">(MEB Müfredatı)</span></label>
+                <select class="form-select" id="qbaig-tema" onchange="App._qbAiGenOnTemaChange()"></select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Alt Konu</label>
+                <select class="form-select" id="qbaig-konu" onchange="App._qbAiGenOnKonuChange()"></select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">MEB Kazanımı</label>
+                <select class="form-select" id="qbaig-kazanim"></select>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr auto;gap:12px;margin-top:12px;align-items:end">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label">Özel Konu / Yönerge <span class="text-muted" style="font-weight:400">(opsiyonel — örn: "Günlük hayattan tablo yorumlama içersin", "Tuzak şıkta işaret hatası olsun")</span></label>
+                <input type="text" class="form-control" id="qbaig-prompt" placeholder="Özel bir senaryo, bağlam veya dikkat edilmesini istediğiniz noktayı yazın...">
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-secondary" onclick="App._qbAiGenAddEmptyQuestion()">➕ Boş Soru Kartı Ekle</button>
+                <button class="btn btn-primary" id="qbaig-generate-btn" onclick="App._qbAiGenRunPreview()">✨ AI ile Soru Üret</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="qbaig-status" style="margin-top:12px"></div>
+          <div id="qbaig-questions-wrap" style="margin-top:12px"></div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;align-items:center">
+          <div style="display:flex;gap:10px;align-items:center;flex:1;max-width:460px">
+            <label class="text-muted" style="font-size:12.5px;white-space:nowrap">Set Adı:</label>
+            <input type="text" class="form-control" id="qbaig-batch-title" placeholder="Otomatik adlandırılır (isteğe bağlı)">
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" onclick="App._qbCloseAiGenModal()">Kapat</button>
+            <button class="btn btn-primary" id="qbaig-save-btn" onclick="App._qbAiGenSaveToBank()">💾 Soruları Havuza Kaydet</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    await this._qbAiGenLoadCurriculum();
+    this._qbAiGenRenderQuestions();
+  },
+
+  _qbCloseAiGenModal() {
+    const overlay = document.getElementById('qb-aigen-overlay');
+    if (overlay) overlay.remove();
+    document.body.style.overflow = '';
+    this._qbAiGenState = null;
+  },
+
+  async _qbAiGenLoadCurriculum() {
+    const s = this._qbAiGenState;
+    if (!s) return;
+    const subjectCode = document.getElementById('qbaig-subject')?.value || '';
+    const gradeSel = document.getElementById('qbaig-grade');
+    const gradeName = gradeSel?.selectedOptions[0]?.dataset.gradeName || '';
+    try {
+      const res = await fetch(`/api/admin/question-bank/curriculum?subject_code=${encodeURIComponent(subjectCode)}&grade_level=${encodeURIComponent(gradeName)}`);
+      const data = await res.json();
+      s.curriculumTree = res.ok ? (data.curriculum || []) : [];
+    } catch (_) {
+      s.curriculumTree = [];
+    }
+    const temaSel = document.getElementById('qbaig-tema');
+    if (!temaSel) return;
+    if (!s.curriculumTree.length) {
+      temaSel.innerHTML = `<option value="">— Müfredat kaydı yok (serbest yönerge kullanın) —</option>`;
+    } else {
+      temaSel.innerHTML = `<option value="">— Tüm Üniteler / Serbest —</option>` +
+        s.curriculumTree.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+    }
+    this._qbAiGenOnTemaChange();
+  },
+
+  _qbAiGenOnTemaChange() {
+    const s = this._qbAiGenState;
+    const temaSel = document.getElementById('qbaig-tema');
+    const konuSel = document.getElementById('qbaig-konu');
+    if (!s || !temaSel || !konuSel) return;
+    const tema = (s.curriculumTree || []).find(t => String(t.id) === temaSel.value);
+    const konular = tema ? (tema.children || []) : [];
+    konuSel.innerHTML = konular.length
+      ? `<option value="">— Tüm Alt Konular —</option>` + konular.map(k => `<option value="${k.id}">${k.name}</option>`).join('')
+      : `<option value="">—</option>`;
+    this._qbAiGenOnKonuChange();
+  },
+
+  _qbAiGenOnKonuChange() {
+    const s = this._qbAiGenState;
+    const temaSel = document.getElementById('qbaig-tema');
+    const konuSel = document.getElementById('qbaig-konu');
+    const kazSel = document.getElementById('qbaig-kazanim');
+    if (!s || !temaSel || !konuSel || !kazSel) return;
+    const tema = (s.curriculumTree || []).find(t => String(t.id) === temaSel.value);
+    const konu = tema ? (tema.children || []).find(k => String(k.id) === konuSel.value) : null;
+    const kazanimlar = konu ? (konu.children || []) : [];
+    kazSel.innerHTML = kazanimlar.length
+      ? kazanimlar.map(k => `<option value="${k.id}">${k.code} — ${k.name}</option>`).join('')
+      : `<option value="">—</option>`;
+  },
+
+  _qbAiGenSyncDomToState() {
+    const s = this._qbAiGenState;
+    if (!s || !s.questions) return;
+    const cards = document.querySelectorAll('.qbaig-q-card');
+    cards.forEach((card) => {
+      const idx = parseInt(card.dataset.qIndex, 10);
+      const q = s.questions[idx];
+      if (!q) return;
+      q.stem = card.querySelector('.qbaig-q-stem')?.value || '';
+      q.options = {
+        A: card.querySelector('.qbaig-q-opt-A')?.value || '',
+        B: card.querySelector('.qbaig-q-opt-B')?.value || '',
+        C: card.querySelector('.qbaig-q-opt-C')?.value || '',
+        D: card.querySelector('.qbaig-q-opt-D')?.value || '',
+      };
+      q.correctAnswer = card.querySelector('.qbaig-q-ans')?.value || 'A';
+      q.explanation = card.querySelector('.qbaig-q-expl')?.value || '';
+      q.difficulty = card.querySelector('.qbaig-q-diff')?.value || 'orta';
+      q.questionPattern = card.querySelector('.qbaig-q-pat')?.value || 'yeni_nesil_soru';
+    });
+  },
+
+  _qbAiGenAddEmptyQuestion() {
+    const s = this._qbAiGenState;
+    if (!s) return;
+    this._qbAiGenSyncDomToState();
+    const diff = document.getElementById('qbaig-difficulty')?.value || 'orta';
+    const pat = document.getElementById('qbaig-pattern')?.value || 'yeni_nesil_soru';
+    s.questions.push({
+      stem: '',
+      options: { A: '', B: '', C: '', D: '' },
+      correctAnswer: 'A',
+      explanation: '',
+      difficulty: diff,
+      questionPattern: pat,
+      tags: [],
+    });
+    this._qbAiGenRenderQuestions();
+  },
+
+  _qbAiGenRemoveQuestion(index) {
+    const s = this._qbAiGenState;
+    if (!s) return;
+    this._qbAiGenSyncDomToState();
+    s.questions.splice(index, 1);
+    this._qbAiGenRenderQuestions();
+  },
+
+  _qbAiGenRenderQuestions() {
+    const s = this._qbAiGenState;
+    const wrap = document.getElementById('qbaig-questions-wrap');
+    const saveBtn = document.getElementById('qbaig-save-btn');
+    if (!s || !wrap) return;
+    if (saveBtn) saveBtn.disabled = !s.questions.length;
+    if (!s.questions.length) {
+      wrap.innerHTML = `
+        <div style="text-align:center;padding:28px;border:1px dashed var(--bg-glass-border);border-radius:12px;color:var(--text-muted)">
+          Yukarıdan ders, kazanım, zorluk ve soru kalıbını seçip <b>"✨ AI ile Soru Üret"</b> butonuna basın veya <b>"➕ Boş Soru Kartı Ekle"</b> ile doğrudan kendiniz yazın.
+        </div>`;
+      return;
+    }
+    const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    wrap.innerHTML = s.questions.map((q, i) => `
+      <div class="card qbaig-q-card" data-q-index="${i}" style="margin-top:12px;padding:16px;border:1px solid var(--bg-glass-border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+          <div style="font-weight:700;font-size:15px">📝 Soru ${i + 1}</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:12px;color:var(--text-muted)">Doğru Cevap:</label>
+            <select class="form-select qbaig-q-ans" style="width:74px;padding:4px 8px">
+              ${['A', 'B', 'C', 'D'].map(k => `<option value="${k}" ${q.correctAnswer === k ? 'selected' : ''}>${k}</option>`).join('')}
+            </select>
+            <select class="form-select qbaig-q-diff" style="width:95px;padding:4px 8px">
+              <option value="kolay" ${q.difficulty === 'kolay' ? 'selected' : ''}>Kolay</option>
+              <option value="orta" ${q.difficulty === 'orta' ? 'selected' : ''}>Orta</option>
+              <option value="zor" ${q.difficulty === 'zor' ? 'selected' : ''}>Zor</option>
+            </select>
+            <select class="form-select qbaig-q-pat" style="width:150px;padding:4px 8px">
+              <option value="yeni_nesil_soru" ${q.questionPattern === 'yeni_nesil_soru' ? 'selected' : ''}>Yeni Nesil</option>
+              <option value="problem_sorusu" ${q.questionPattern === 'problem_sorusu' ? 'selected' : ''}>Problem</option>
+              <option value="yorum_sorusu" ${q.questionPattern === 'yorum_sorusu' ? 'selected' : ''}>Yorum</option>
+              <option value="islem_sorusu" ${q.questionPattern === 'islem_sorusu' ? 'selected' : ''}>İşlem</option>
+            </select>
+            <button class="btn btn-danger btn-sm" onclick="App._qbAiGenRemoveQuestion(${i})" title="Bu soruyu kaldır">🗑️</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:10px">
+          <label class="form-label" style="font-size:12px">Soru Kökü & Öncüller (Hızlıca düzenleyebilirsiniz)</label>
+          <textarea class="form-control qbaig-q-stem" rows="4" placeholder="Soru metnini buraya yazın...">${esc(q.stem)}</textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:10px">
+          ${['A', 'B', 'C', 'D'].map(k => `
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-weight:700;min-width:22px;color:var(--accent-primary)">${k})</span>
+              <input type="text" class="form-control qbaig-q-opt-${k}" value="${esc((q.options || {})[k] || '')}" placeholder="${k} seçeneği...">
+            </div>
+          `).join('')}
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:12px">Çözüm / Açıklama <span class="text-muted" style="font-weight:400">(Öğrenci pratik modunda zorlandığında ipucu olarak gösterilir)</span></label>
+          <textarea class="form-control qbaig-q-expl" rows="2" placeholder="Adım adım çözüm...">${esc(q.explanation)}</textarea>
+        </div>
+      </div>`).join('');
+  },
+
+  async _qbAiGenRunPreview() {
+    const s = this._qbAiGenState;
+    if (!s) return;
+    this._qbAiGenSyncDomToState();
+
+    const btn = document.getElementById('qbaig-generate-btn');
+    const statusEl = document.getElementById('qbaig-status');
+    const subjectCode = document.getElementById('qbaig-subject')?.value || '';
+    const gradeSel = document.getElementById('qbaig-grade');
+    const gradeLevelId = parseInt(gradeSel?.value, 10) || null;
+    const gradeLevel = gradeSel?.selectedOptions[0]?.dataset.gradeName || '8';
+    const difficulty = document.getElementById('qbaig-difficulty')?.value || 'orta';
+    const questionPattern = document.getElementById('qbaig-pattern')?.value || 'yeni_nesil_soru';
+    const count = parseInt(document.getElementById('qbaig-count')?.value, 10) || 3;
+    const customPrompt = document.getElementById('qbaig-prompt')?.value.trim() || '';
+
+    const temaSel = document.getElementById('qbaig-tema');
+    const konuSel = document.getElementById('qbaig-konu');
+    const kazSel = document.getElementById('qbaig-kazanim');
+    const curriculumNodeId = parseInt(kazSel?.value, 10) || null;
+    const topicName = (konuSel?.value && konuSel.selectedOptions[0]?.textContent)
+      || (temaSel?.value && temaSel.selectedOptions[0]?.textContent)
+      || '';
+    const kazanimText = (kazSel?.value && kazSel.selectedOptions[0]?.textContent) || '';
+
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = '⏳ AI Soruları Yazıyor...';
+    statusEl.innerHTML = `<p class="text-muted">🤖 Gemini MEB kazanımlarına uygun ${count} adet özgün soru hazırlıyor, lütfen birkaç saniye bekleyin...</p>`;
+
+    try {
+      const res = await fetch('/api/admin/question-bank/ai-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'preview',
+          subjectCode,
+          gradeLevelId,
+          gradeLevel,
+          curriculumNodeId,
+          topicName,
+          kazanimText,
+          difficulty,
+          questionPattern,
+          count,
+          customPrompt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Soru üretilemedi.');
+      const newQuestions = data.questions || [];
+      // Mevcut dolu sorular varsa altına ekle, sadece boş şablon varsa değiştir
+      const existingNonEmpty = s.questions.filter(q => q.stem.trim() || Object.values(q.options || {}).some(v => v.trim()));
+      s.questions = [...existingNonEmpty, ...newQuestions];
+      this._qbAiGenRenderQuestions();
+      statusEl.innerHTML = `<p style="color:var(--success)">✅ ${newQuestions.length} yeni soru üretildi! Metinleri ve şıkları aşağıdan inceleyip düzenleyebilir veya doğrudan havuza kaydedebilirsiniz.</p>`;
     } catch (err) {
-      note.textContent = '❌ ' + err.message;
+      statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  },
+
+  async _qbAiGenSaveToBank() {
+    const s = this._qbAiGenState;
+    if (!s) return;
+    this._qbAiGenSyncDomToState();
+
+    const validQuestions = s.questions.filter(q => q.stem.trim() && Object.values(q.options || {}).filter(v => v.trim()).length >= 2);
+    if (!validQuestions.length) {
+      UI.toast('Kaydetmek için en az bir sorunun soru kökünü ve şıklarını doldurun.', 'warning');
+      return;
+    }
+
+    const saveBtn = document.getElementById('qbaig-save-btn');
+    const statusEl = document.getElementById('qbaig-status');
+    const subjectCode = document.getElementById('qbaig-subject')?.value || '';
+    const gradeSel = document.getElementById('qbaig-grade');
+    const gradeLevelId = parseInt(gradeSel?.value, 10) || null;
+    const gradeLevel = gradeSel?.selectedOptions[0]?.dataset.gradeName || '8';
+    const difficulty = document.getElementById('qbaig-difficulty')?.value || 'orta';
+    const questionPattern = document.getElementById('qbaig-pattern')?.value || 'yeni_nesil_soru';
+    const batchTitle = document.getElementById('qbaig-batch-title')?.value.trim() || '';
+
+    const temaSel = document.getElementById('qbaig-tema');
+    const konuSel = document.getElementById('qbaig-konu');
+    const kazSel = document.getElementById('qbaig-kazanim');
+    const curriculumNodeId = parseInt(kazSel?.value, 10) || null;
+    const topicName = (konuSel?.value && konuSel.selectedOptions[0]?.textContent)
+      || (temaSel?.value && temaSel.selectedOptions[0]?.textContent)
+      || '';
+
+    saveBtn.disabled = true;
+    const origText = saveBtn.textContent;
+    saveBtn.textContent = '💾 Kaydediliyor...';
+
+    try {
+      const res = await fetch('/api/admin/question-bank/ai-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          subjectCode,
+          gradeLevelId,
+          gradeLevel,
+          curriculumNodeId,
+          topicName,
+          difficulty,
+          questionPattern,
+          batchTitle,
+          questions: validQuestions,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sorular kaydedilemedi.');
+      UI.toast(`✅ ${data.savedCount} soru yüksek çözünürlüklü kart olarak Soru Havuzu'na eklendi!`, 'success');
+      this._qbCloseAiGenModal();
+      await this.loadQuestionBankBatches();
+      if (data.batchId) {
+        this._qbShowBatchGrid(data.batchId);
+      }
+    } catch (err) {
+      if (statusEl) statusEl.innerHTML = `<p style="color:var(--danger)">❌ ${err.message}</p>`;
+      UI.toast(err.message, 'danger');
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = origText;
+      }
     }
   },
 
